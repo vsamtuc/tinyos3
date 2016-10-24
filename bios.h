@@ -1,0 +1,356 @@
+#ifndef BIOS_H
+#define BIOS_H
+
+#include <stdint.h>
+
+/**
+	@file bios.h
+
+	@brief The Virtual Machine API
+
+	This file contains the API for a virtual machine (simulated computer) 
+	which we will refer to as VM. This VM is used to implement tinyos3 on.
+
+	The VM has a multicore CPU and peripherals.
+
+	A simulation starts by calling function @c vm_boot. The description of the
+	VM (currently, the number of simulated cores and the number of terminal
+	devices), and also the initial function executed by each 
+	core at boot time, are given as arguments.
+
+	The VM (virtual) hardware is controlled by a BIOS (Basic I/O System) through
+	the BIOS API. We now describe the concepts of the BIOS in detail.
+
+	CPU
+	---
+
+	A CPU has 1 or more cores. Each core executes independently of each other.
+	Variable cpu_core_id contains the id number of the current core.
+
+	Interrupts
+	----------
+
+	Each CPU core has its own interrupt vector---it can set its own interrupt 
+	handlers, independently of other cores. Setting an interrupt handler
+	to @c NULL (the default), ignores the interrupt for this core.
+
+	- When an interrupt handler executes, interrupts are initially disabled.
+
+	- Interrupts can also be enabled and disabled programmatically.
+
+	- If an interrupt is raised while interrupts are disabled, it will be marked as
+	raised and the interrupt handler (if non-NULL) will be called as soon as 
+	interrupts are re-enabled.
+
+	- The <b>ICI</b> (Inter-Core Interrupt) interrupt can be sent from one core to
+	another (or to itself!).
+
+	Peripherals
+	-----------
+
+	The peripherals are managed via the 'bios_...' functions. 
+
+	There are two types of simulated peripherals:  _timers_ and _serial ports_ 
+	(connected to terminals). Each type of peripheral is documented below.
+
+	Timers
+	-------
+
+	Each simulated core has its own timer. A timer can be activated by initializing
+	it with some time interval. When the timer expires, the ALARM interrupt is raised 
+	for the core.
+
+	Serial ports
+	------------- 
+
+	The virtual machine has a number of serial ports connected to terminals.
+
+	Each serial port/terminal can support reading and writing of single bytes.
+	The reads return keyboard input, whereas the writes send characters to display
+	on the screen.
+
+	Terminals are numbered from 0, up to @c MAX_TERMINALS-1. 
+
+	Implementation-wise, for each terminal/serial port, two 
+	Unix named pipes must exist in the current
+	directory:  one named  con@f$ N @f$ and one named kbd@f$ N @f$, where @f$ N @f$ is the
+	number of the serial port. For example, if the computer has 2 serial ports,
+	the following named pipes must be defined in the current directory at runtime:
+	con0 kbd0 con1 kbd1
+
+	Also, program  'terminal' must be executed twice (in two different windows):
+	
+	./terminal 0
+
+	./terminal 1
+
+	Data can be read from  a serial port, one byte at a time. A read
+	may fail if the device is not-ready to perform the operation. On a device
+	which is ready, the read will succeed. When a non-ready device becomes ready,
+	a @c SERIAL_RX_READY interrupt is raised.
+
+	Data can be written to a serial port, one byte at a time. A write
+	may fail if the device is not-ready to perform the operation. On a device
+	which is ready, the write will succeed. When a non-ready device becomes ready,
+	a @c SERIAL_TX_READY interrupt is raised.
+
+	Also, each interrupt is sent if the serial device timeouts (is inactive for
+	about 300 msec).
+
+ */
+
+
+/**
+	@brief The signature type of interrupt handlers.
+ */
+typedef void interrupt_handler();
+
+/** @brief Helper declaration */
+typedef unsigned int uint;
+
+/** @brief A type for time intervals measured in microseconds */
+typedef uint64_t TimerDuration;
+
+/** @brief The interrupts supported by the CPU */
+typedef enum Interrupt
+{
+	ICI,				/**< Raised by some core, via cpu_ici() */
+	ALARM,            	/**< Raised when the core's timer expires. */
+	SERIAL_RX_READY,	/**< Raised when data is available for reading 
+						   from a serial port */
+	SERIAL_TX_READY,	/**< Raised when a serial port is ready to accept 
+						   data */
+
+	maximum_interrupt_no 
+} Interrupt;
+
+
+/** @brief Maximum number of cores for a virtual machine. */
+#define MAX_CORES 32
+
+/** @brief Maximum number of terminals for a virtual machine. */
+#define MAX_TERMINALS 4
+
+/**
+	@brief Boot a CPU with the given number of cores and boot function.
+
+	This function sets up a number of simulated cores, each starting to
+	execute function bootfunc.
+
+	The number of cores must be between 1 and MAX_CORES.
+
+	Also, this function initializes the simulated peripherals (timers and
+	terminals).
+
+	The simulation ends (and this function returns) when (and if) all
+	cores return from bootfunc, in which case the VM shuts down.
+
+	@param bootfunc The function that each simulated core will execute at 
+			boot time. When all cores return from this function, the virtual
+			machine shuts down.
+	@param cores The number of cores simulated by the virtual machine
+	@param serialno the number of serial ports connected to terminals that
+		the computer will support. The terminals can be accessed via named 
+		pipes (aka FIFOs), which must already exist. See the serial API below 
+		for more details.
+
+ */
+void vm_boot(interrupt_handler bootfunc, uint cores, uint serialno);
+
+
+/**
+	@brief Contains the id of the current core.
+ */
+extern _Thread_local uint cpu_core_id;
+
+/**
+   	@brief Returns the number of cores.
+ */
+uint cpu_cores();
+
+
+/**
+	@brief Barrier synchronization for all cores.
+
+	Each core calling this function stops, until all cores have
+	called it. Then, all cores proceed.	
+
+	This is mostly useful when the machine boots the operating
+	system, or at shutdown.
+ */
+void cpu_core_barrier_sync();
+
+
+/**
+	@brief Raise an ICI interrupt to the given core. 
+
+	This is a simple way that one core may interrupt another.
+ */
+void cpu_ici(uint core);
+
+
+/**
+	@brief Define an interrupt handler for this core.
+
+	This function set the interrupt handler of the calling core, for the given
+	interrupt. If @c handler is NULL, then the interrupt will be ignored by this core.
+
+	@param interrupt the interrupt to set the handler for
+	@param handler the handler function to call
+
+	@see interrupt_handler
+	@see Interrupt
+*/
+void cpu_interrupt_handler(Interrupt interrupt, interrupt_handler handler);
+
+
+/**
+	@brief Disable interrupts for this core.
+
+	If an interrupt arrives while interrupts are disabled, it will be
+	marked as _pending_ and will be raised when interrupts are re-enabled.
+
+	@see cpu_enable_interrupts
+ */
+void cpu_disable_interrupts();
+
+
+/**
+	@brief Enable interrupts for this core.
+
+	If an interrupt is pending, i.e., it arrived while interrupts were disabled, 
+	it will be raised as soon as this call is made.
+
+	@see cpu_disable_interrupts
+*/
+void cpu_enable_interrupts();
+
+
+/**
+	@brief Halt the core until an interrupt arrives. 
+
+	This function will block the core on which it is called, until an interrupt
+	arrives for the core.
+
+	This function is useful when a core becomes idle. An idle core does not
+	consume simulation resources (in particular CPU time).
+*/
+void cpu_core_halt();
+
+
+/**
+	@brief Restart the given core.
+
+	This call will restart the given core, if it was halted.
+	@param c the core to restart
+*/
+void cpu_core_restart(uint c);
+
+/**
+	@brief Restart some halted core.
+
+	This call will restart some halted core, if at least one exists.
+*/
+void cpu_core_restart_one();
+
+/**
+	@brief Signal all halted cores to restart.
+
+	When this function is called, all halted cores will be restarted. 
+*/
+void cpu_core_restart_all();
+
+
+/********************************************************************************
+ ********************************************************************************/
+
+/** 
+	@brief Reset the core timer to the specified interval.
+
+	The interval for the timer is given in microseconds, but the 
+	accuracy of the alarm is much coarser, to the order of 10 msec
+	(that is, 10,000 microseconds). After the interval expires, the
+	core receives an ALARM interrupt.
+
+	This function can be called even if the timer is already activated;
+	in this case, the previous timer countdown is canceled and the timer resets
+	to the new value.
+
+	If @c usec is specified as 0, any existing timer count is canceled.
+
+	@param usec the timer countdown interval in microseconds
+	@see bios_cancel_timer
+ */
+void bios_set_timer(TimerDuration usec);
+
+/**
+	@brief Cancel the current activated timer, if any.
+
+	This can be called even if the timer is not already activated.
+	This call is equivalent to bios_set_timer(0).
+
+	@see bios_set_timer
+ */
+void bios_cancel_timer();
+
+
+
+/**
+	@brief Return the number of serial ports/terminals.
+
+	This is the number specified at the initialization of the
+	VM.
+ */
+uint bios_serial_ports();
+
+/**
+	@brief Assign a core to interrupts from a specific serial device.
+
+	Make interrupts of type @c intno for serial port port @c serial be sent
+	to @c core.  By default, initially all interrupts are sent to core 0.
+
+	@param serial the serial device whose interrupt is assigned, it must be
+	         greater of equal to 
+	         @c 0 and less than @c bios_serial_ports().
+	@param intno the interrupt to assign (one of @c SERIAL_RX_READY and 
+			@c SERIAL_TX_READY)
+	@param core th 
+ */
+void bios_serial_interrupt_core(uint serial, Interrupt intno, uint core);
+
+
+/**
+	@brief Read a byte from a serial port.
+
+	Try to read a byte from serial port @c serial and store it into the location
+	pointed by @c ptr.  If the operation succeds, 1 is returned. If not, 0 is returned.
+	The operation may not succeed, if the terminal connected to the serial port has
+	not sent any data. 
+	
+	If this operation returns 0, a @c SERIAL_RX_READY interrupt will be raised when
+	data is ready to be received, but the contents of @c *ptr will not be touched.
+
+	@param serial the serial device to read from
+	@param ptr the location in which to store the read byte
+	@return a integer designating success (non-zero) or failure (zero)
+ */
+int bios_read_serial(uint serial, char* ptr);
+
+
+/**
+	@brief Write a byte to a serial port.
+
+	Try to write byte @c value to serial port @c serial. If the operation succeds, 
+	1 is returned. If not, 0 is returned.
+
+	If this operation returns 0, a @c SERIAL_TX_READY interrupt will be raised when
+	the device is ready to accept data.
+
+	@param serial the serial device to write to
+	@param value the value to send to the serial device
+	@return a integer designating success (non-zero) or failure (zero)
+ */
+int bios_write_serial(uint serial, char value);
+
+
+#endif
