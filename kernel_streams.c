@@ -26,8 +26,11 @@ void initialize_files()
 
 FCB* acquire_FCB()
 {
-  if(! is_rlist_empty(& FCB_freelist))
-    return rlist_pop_front(& FCB_freelist)->fcb;
+  if(! is_rlist_empty(& FCB_freelist)) {
+    FCB* fcb = rlist_pop_front(& FCB_freelist)->fcb;
+    fcb->refcount = 0;
+    return fcb;
+  }
   else
     return NULL;
 }
@@ -84,8 +87,10 @@ int FCB_reserve(size_t num, Fid_t *fid, FCB** fcb)
 	return 0;
     }
     /* Found all */
-    for(i=0;i<num;i++)
+    for(i=0;i<num;i++) {
 	cur->FIDT[fid[i]]=fcb[i];
+	FCB_incref(fcb[i]);
+    }
     return 1;
 }
 
