@@ -8,11 +8,20 @@
 #define __KERNEL_CC_H
 
 
+
+
 /**
 	@file kernel_cc.h
 	@brief Concurrency and preemption control API.
 
-	@defgroup cc Concurrency control.
+*/
+
+
+/*! @defgroup kernel  The TinyOS Kenrel.
+ */
+
+
+/**	@defgroup cc Concurrency control.
 	@ingroup kernel
 	@brief Concurrency and preemption control API.
 

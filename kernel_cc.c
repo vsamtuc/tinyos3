@@ -14,11 +14,6 @@
   */
 
 
-/**
-	@defgroup kernel  The TinyOS Kenrel
- */
-
-
 
 
 /*

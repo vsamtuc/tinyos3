@@ -26,7 +26,10 @@ void initialize_files()
 
 FCB* acquire_FCB()
 {
-  return rlist_pop_front(& FCB_freelist)->fcb;
+  if(! is_rlist_empty(& FCB_freelist))
+    return rlist_pop_front(& FCB_freelist)->fcb;
+  else
+    return NULL;
 }
 
 void release_FCB(FCB* fcb)
@@ -51,6 +54,55 @@ int FCB_decref(FCB* fcb)
   else
     return 0;
 }
+
+
+
+int FCB_reserve(size_t num, Fid_t *fid, FCB** fcb)
+{
+    PCB* cur = CURPROC;
+    size_t f=0;
+    uint i;
+
+    /* Find distinct fids */
+    for(i=0; i<num; i++) {
+	while(f<MAX_FILEID && cur->FIDT[f]!=NULL)
+	    f++;
+	if(f==MAX_FILEID) break;
+	fid[i] = f; f++;
+    }
+    if(i<num) return 0;
+    /* Allocate FCBs */
+    for(i=0;i<num;i++)
+	if((fcb[i] = acquire_FCB()) == NULL)
+	    break;
+    if(i<num) {
+	/* Roll back */
+	while(i>0) {
+	    release_FCB(fcb[i-1]);
+	    i--;
+	}
+	return 0;
+    }
+    /* Found all */
+    for(i=0;i<num;i++)
+	cur->FIDT[fid[i]]=fcb[i];
+    return 1;
+}
+
+
+
+void FCB_unreserve(size_t num, Fid_t *fid, FCB** fcb)
+{
+    PCB* cur = CURPROC;
+    for(size_t i=0; i<num ; i++) {
+	assert(cur->FIDT[fid[i]]==fcb[i]);
+	cur->FIDT[fid[i]] = NULL;
+	release_FCB(fcb[i]);
+    }
+}
+
+
+
 
 
 
@@ -207,25 +259,18 @@ unsigned int GetTerminalDevices()
 Fid_t open_stream(Device_type major, unsigned int minor)
 {
   Fid_t fid;
+  FCB* fcb;
   Mutex_Lock(&kernel_mutex);
 
-  /* Try to get a free fid in FIDT */
-  for(fid=0; fid<MAX_FILEID; fid++)
-    if(CURPROC->FIDT[fid]==NULL) break;
 
-  /* Report an error */
-  if(fid==MAX_FILEID) 
-    goto finerr;
-
-  /* See if we can acquire a FCB */
-  FCB* fcb = acquire_FCB();
-  if(fcb==NULL) goto finerr;
-
-  if(device_open(major, minor, & fcb->streamobj, &fcb->streamfunc)) 
-    goto finerr;
-
-  CURPROC->FIDT[fid] = fcb;
-
+  if(! FCB_reserve(1, &fid, &fcb))
+      goto finerr;
+  
+  if(device_open(major, minor, & fcb->streamobj, &fcb->streamfunc)) {
+      FCB_unreserve(1, &fid, &fcb);
+      goto finerr;
+  }
+  
   goto finok;
 finerr:
   fid = NOFILE;
