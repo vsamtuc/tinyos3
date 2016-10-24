@@ -728,9 +728,7 @@ BOOT_TEST(test_exit_many_threads,
 {
 
 	int task(int argl, void* args) {
-		MSG("Computing\n");
 		fibo(45);
-		MSG("Done computing\n");
 		return 2;
 	}
 
@@ -739,20 +737,11 @@ BOOT_TEST(test_exit_many_threads,
 			ASSERT(CreateThread(task, 0, NULL) != NOTHREAD);
 
 		fibo(35);
-		MSG("Exiting\n");
 		return 0;
 	}
 
 	Exec(mthread, 0, NULL);
 	ASSERT(WaitChild(NOPROC, NULL)!=NOPROC);
-	MSG("Exited\n");
-
-	/* Good, now launch a symposium, to make sure all was ok */
-	Fid_t fnull = OpenNull();
-	Dup2(fnull, 1);
-	int a[4] = {15, 3, 0, 0};
-	Exec(Symposium_adjusted, sizeof(a), a);
-
 	return 0;
 }
 

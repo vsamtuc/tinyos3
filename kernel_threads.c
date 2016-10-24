@@ -8,7 +8,7 @@
   */
 Tid_t CreateThread(Task task, int argl, void* args)
 {
-	return -1;
+	return NOTHREAD;
 }
 
 /**
