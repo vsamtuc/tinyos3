@@ -279,9 +279,10 @@ void cpu_core_restart_all();
 	If @c usec is specified as 0, any existing timer count is canceled.
 
 	@param usec the timer countdown interval in microseconds
+	@returns 
 	@see bios_cancel_timer
  */
-void bios_set_timer(TimerDuration usec);
+TimerDuration bios_set_timer(TimerDuration usec);
 
 /**
 	@brief Cancel the current activated timer, if any.
@@ -291,7 +292,7 @@ void bios_set_timer(TimerDuration usec);
 
 	@see bios_set_timer
  */
-void bios_cancel_timer();
+TimerDuration bios_cancel_timer();
 
 
 

@@ -822,7 +822,7 @@ void cpu_enable_interrupts()
  */
 
 
-void bios_set_timer(TimerDuration usec)
+TimerDuration bios_set_timer(TimerDuration usec)
 {
 	time_t sec = usec / 1000000;
 	long nsec = (usec % 1000000) * 1000ull;
@@ -832,13 +832,18 @@ void bios_set_timer(TimerDuration usec)
 		.it_interval = {.tv_sec=0, .tv_nsec=0}
 	};
 
-	timer_settime(curr_core()->timer_id, 0, &newtime, NULL);
+	struct itimerspec oldtime;
+	
+	timer_settime(curr_core()->timer_id, 0, &newtime, &oldtime);
 	curr_core()->intpending[ALARM] = 0;
+
+	assert(oldtime.it_interval.tv_sec ==0 && oldtime.it_interval.tv_nsec==0);
+	return 1000000*oldtime.it_value.tv_sec + oldtime.it_value.tv_nsec/1000ull;
 }
 
-void bios_cancel_timer()
+TimerDuration bios_cancel_timer()
 {
-	bios_set_timer(0);
+	return bios_set_timer(0);
 }
 
 uint bios_serial_ports()
