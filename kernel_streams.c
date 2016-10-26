@@ -242,7 +242,9 @@ int Dup2(int oldfd, int newfd)
     retcode = -1;
   }
   else if(old!=new) {
-    if(new) FCB_decref(new);
+    if(new)
+      FCB_decref(new);
+    FCB_incref(old);
     CURPROC->FIDT[newfd] = old;
   }
 
