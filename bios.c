@@ -511,7 +511,7 @@ static void PIC_daemon(uint serialno)
 	/* Change the thread name */
 	char oldname[16];
 	CHECKRC(pthread_getname_np(pthread_self(), oldname, 16));
-	CHECKRC(pthread_setname_np(pthread_self(), "PIC_thread"));
+	CHECKRC(pthread_setname_np(pthread_self(), "tinyos_vm"));
 
 	for(uint i=0; i<nterm; i++)
 		open_terminal(& TERM[i], i);
