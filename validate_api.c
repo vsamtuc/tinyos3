@@ -69,6 +69,22 @@ BARE_TEST(test_boot,
 }
 
 
+
+
+/*********************************************
+ *
+ *
+ *
+ *  Process tests
+ *
+ *
+ *
+ *********************************************/
+
+
+
+
+
 /*
 	Test that the child process created, gets the same pid as the
 	parent got returned from exec.
@@ -327,6 +343,19 @@ BOOT_TEST(test_orphans_adopted_by_init,
 
 
 
+/*********************************************
+ *
+ *
+ *
+ *  I/O  tests
+ *
+ *
+ *
+ *********************************************/
+
+
+
+
 BOOT_TEST(test_get_terminals,
 	"Test that the number returned by GetTerminalDevices() is equal to the\n"
 	"number of serial ports in the VM."
@@ -369,6 +398,7 @@ BOOT_TEST(test_open_terminals,
 	}
 	return 0;
 }
+
 
 BOOT_TEST(test_close_error_on_invalid_fid,
 	"Test that Close returns error on invalid fid."
@@ -700,6 +730,58 @@ BOOT_TEST(test_write_to_many_terminals,
 
 
 
+
+TEST_SUITE(basic_tests, 
+	"A suite of basic tests, focusing on the functional behaviour of the\n"
+	"tinyos3 API, but not the operational (concurrency and I/O multiplexing)."
+	)
+{
+	&test_boot,
+	&test_pid_of_init_is_one,
+	&test_waitchild_error_on_nonchild,
+	&test_waitchild_error_on_invalid_pid,
+	&test_exec_getpid_wait,
+	&test_exec_copies_arguments,
+	&test_exit_returns_status,
+	&test_main_return_returns_status,
+	&test_wait_for_any_child,
+	&test_orphans_adopted_by_init,
+	&test_null_device,
+	&test_get_terminals,
+	&test_open_terminals,
+	&test_dup2_error_on_nonfile,
+	&test_dup2_error_on_invalid_fid,
+	&test_dup2_copies_file,
+	&test_close_error_on_invalid_fid,
+	&test_close_success_on_valid_nonfile_fid,
+	&test_close_terminals,
+	&test_read_kbd,
+	&test_read_kbd_big,
+	&test_read_error_on_bad_fid,
+	&test_read_from_many_terminals,
+	&test_write_con,
+	&test_write_con_big,
+	&test_write_error_on_bad_fid,
+	&test_write_to_many_terminals,
+	&test_child_inherits_files,
+	NULL
+};
+
+
+
+/*********************************************
+ *
+ *
+ *
+ *  Thread tests
+ *
+ *
+ *
+ *********************************************/
+
+
+
+
 BOOT_TEST(test_create_join_thread,
 	"Test that a process thread can be created and joined. Also, that "
 	"the argument of the thread is passed correctly."
@@ -742,6 +824,7 @@ BOOT_TEST(test_exit_many_threads,
 
 	Exec(mthread, 0, NULL);
 	ASSERT(WaitChild(NOPROC, NULL)!=NOPROC);
+
 	return 0;
 }
 
@@ -749,43 +832,819 @@ BOOT_TEST(test_exit_many_threads,
 
 
 
-TEST_SUITE(basic_tests, 
-	"A suite of basic tests, focusing on the functional behaviour of the\n"
-	"tinyos3 API, but not the operational (concurrency and I/O multiplexing)."
+
+TEST_SUITE(thread_tests, 
+	"A suite of tests for threads."
 	)
 {
-	&test_boot,
-	&test_pid_of_init_is_one,
-	&test_waitchild_error_on_nonchild,
-	&test_waitchild_error_on_invalid_pid,
-	&test_exec_getpid_wait,
-	&test_exec_copies_arguments,
-	&test_exit_returns_status,
-	&test_main_return_returns_status,
-	&test_wait_for_any_child,
-	&test_orphans_adopted_by_init,
-	&test_null_device,
-	&test_get_terminals,
-	&test_open_terminals,
-	&test_dup2_error_on_nonfile,
-	&test_dup2_error_on_invalid_fid,
-	&test_dup2_copies_file,
-	&test_close_error_on_invalid_fid,
-	&test_close_success_on_valid_nonfile_fid,
-	&test_close_terminals,
-	&test_read_kbd,
-	&test_read_kbd_big,
-	&test_read_error_on_bad_fid,
-	&test_read_from_many_terminals,
-	&test_write_con,
-	&test_write_con_big,
-	&test_write_error_on_bad_fid,
-	&test_write_to_many_terminals,
-	&test_child_inherits_files,
 	&test_create_join_thread,
 	&test_exit_many_threads,
 	NULL
 };
+
+
+
+
+
+
+
+/*********************************************
+ *
+ *
+ *
+ *  Pipe tests
+ *
+ *
+ *
+ *********************************************/
+
+
+
+BOOT_TEST(test_pipe_open,
+	"Open a pipe and put just a little data in it"
+	)
+{
+	pipe_t pipe;
+	ASSERT(Pipe(&pipe)==0);	
+	int rc;
+
+	for(int i=0;i<3;i++) {
+		ASSERT((rc=Write(pipe.write, "Hello world", 12))==12);
+	}
+	char buffer[12] = { [0] = 0 };
+	for(int i=0;i<3;i++) {
+		ASSERT((rc=Read(pipe.read, buffer, 12))==12);
+		ASSERT(strcmp(buffer, "Hello world")==0);
+	}
+	return 0;
+}
+
+
+BOOT_TEST(test_pipe_fails_on_exhausted_fid,
+	"Test that Pipe will fail if the fids are exhausted."
+	)
+{
+	pipe_t pipe;
+	for(uint i=0; i< (MAX_FILEID/2); i++ )
+		ASSERT(Pipe(&pipe)==0);
+	for(uint i=0; i< (MAX_FILEID/2); i++ )
+		ASSERT(Pipe(&pipe)==-1);	
+	return 0;
+}
+
+
+
+BOOT_TEST(test_pipe_close_reader,
+	"Open a pipe and put just a little data in it"
+	)
+{
+	pipe_t pipe;
+	ASSERT(Pipe(&pipe)==0);	
+	int rc;
+
+	for(int i=0;i<3;i++) {
+		ASSERT((rc=Write(pipe.write, "Hello world", 12))==12);
+	}
+	Close(pipe.read);
+	for(int i=0;i<3;i++) {
+		ASSERT((rc=Write(pipe.write, "Hello world", 12))==-1);
+	}
+	return 0;
+}
+
+BOOT_TEST(test_pipe_close_writer,
+	"Open a pipe and put just a little data in it"
+	)
+{
+	pipe_t pipe;
+	ASSERT(Pipe(&pipe)==0);	
+	int rc;
+
+	for(int i=0;i<3;i++) {
+		ASSERT((rc=Write(pipe.write, "Hello world", 12))==12);
+	}
+
+	char buffer[12] = { [0] = 0 };
+	for(int i=0;i<3;i++) {
+		ASSERT((rc=Read(pipe.read, buffer, 12))==12);
+		ASSERT(strcmp(buffer, "Hello world")==0);
+	}
+	Close(pipe.write);
+	for(int i=0;i<3;i++) {
+		ASSERT((rc=Read(pipe.read, buffer, 12))==0);
+	}
+	return 0;
+}
+
+
+/* Takes one integer argument, writes that many bytes to stdout.
+ */
+int data_producer(int argl, void* args)
+{
+	assert(argl == sizeof(int));
+	int nbytes = *(int*)args;
+
+	Close(0);
+
+	char buffer[32768];
+
+	while(nbytes>0) {
+		unsigned int n = (nbytes<32768) ? nbytes : 32768;
+		int rc = Write(1, buffer, n);
+		assert(rc>0);
+		nbytes -= rc;
+	}
+	Close(1);
+	return 0;
+}
+
+/* Takes one integer argument. Reads its standard input to exhaustion,
+   asserts it read that many bytes. */
+int data_consumer(int argl, void* args) 
+{
+	assert(argl == sizeof(int));
+	int nbytes = *(int*)args;
+	Close(1);
+
+	char buffer[16384];
+	int count = 0;
+
+	int rc = 1;
+	while(rc) {
+		rc = Read(0, buffer, 16384);
+		assert(rc>=0);
+		count += rc;
+	}
+	ASSERT(count == nbytes);
+	return 0;
+}
+
+
+BOOT_TEST(test_pipe_single_producer,
+	"Test blocking in the pipe by a single producer single consumer sending 10Mbytes of data."
+	)
+{
+	pipe_t pipe;
+	ASSERT(Pipe(&pipe)==0);	
+
+	/* First, make pipe.read be zero. We cannot just Dup, because we may close pipe.write */
+	if(pipe.read != 0) {
+		if(pipe.write==0) {
+			/* Get a null stream! */
+			Fid_t fid = OpenNull();
+			assert(fid!=NOFILE);
+			Dup2(0, fid);
+			pipe.write = fid;
+		}
+		Dup2(pipe.read, 0);
+		Close(pipe.read);
+	}
+	if(pipe.write!=1)  {
+		Dup2(pipe.write, 1);
+		Close(pipe.write);
+	}
+
+	int N = 10000000;
+	ASSERT(Exec(data_consumer, sizeof(N), &N)!=NOPROC);
+	ASSERT(Exec(data_producer, sizeof(N), &N)!=NOPROC);
+
+	Close(0);
+	Close(1);
+
+	WaitChild(NOPROC,NULL);
+	WaitChild(NOPROC,NULL);
+	return 0;
+}
+
+BOOT_TEST(test_pipe_multi_producer,
+	"Test blocking in the pipe by 10 producers and single consumer sending 10Mbytes of data."
+	)
+{
+	pipe_t pipe;
+	ASSERT(Pipe(&pipe)==0);	
+
+	/* First, make pipe.read be zero. We cannot just Dup, because we may close pipe.write */
+	if(pipe.read != 0) {
+		if(pipe.write==0) {
+			/* Get a null stream! */
+			Fid_t fid = OpenNull();
+			assert(fid!=NOFILE);
+			Dup2(0, fid);
+			pipe.write = fid;
+		}
+		Dup2(pipe.read, 0);
+		Close(pipe.read);
+	}
+	if(pipe.write!=1)  {
+		Dup2(pipe.write, 1);
+		Close(pipe.write);
+	}
+
+	int N = 1000000;
+	for(int i=0;i<10;i++)
+		ASSERT(Exec(data_producer, sizeof(N), &N)!=NOPROC);
+	N = 10*N;
+	ASSERT(Exec(data_consumer, sizeof(N), &N)!=NOPROC);
+
+	Close(0);
+	Close(1);
+
+	for(int i=0;i<10;i++)
+		WaitChild(NOPROC,NULL);
+	WaitChild(NOPROC,NULL);
+	return 0;
+}
+
+
+TEST_SUITE(pipe_tests,
+	"A suite of tests for pipes. We are focusing on correctness, not performance."
+	)
+{
+	&test_pipe_open,
+	&test_pipe_fails_on_exhausted_fid,
+	&test_pipe_close_reader,
+	&test_pipe_close_writer,
+	&test_pipe_single_producer,
+	&test_pipe_multi_producer,
+	NULL
+};
+
+
+
+
+/*********************************************
+ *
+ *
+ *
+ *  Socket tests
+ *
+ *
+ *
+ *********************************************/
+
+
+
+
+void connect_sockets(Fid_t sock1, Fid_t lsock, Fid_t* sock2, port_t port)
+{
+	int accept_thread(int argl, void* args) {
+		*sock2 = Accept(lsock);
+		ASSERT(*sock2 != NOFILE);
+		return 0;
+	}
+	int connect_thread(int argl, void* args) {
+		ASSERT(Connect(sock1, port, 1000)==0);
+		return 0;
+	}
+
+	Tid_t t1,t2;
+	t1 = CreateThread(accept_thread, 0, NULL);
+	t2 = CreateThread(connect_thread, 0, NULL);
+	ASSERT(t1!=NOTHREAD);
+	ASSERT(t2!=NOTHREAD);
+	ASSERT(ThreadJoin(t1, NULL)==0);
+	ASSERT(ThreadJoin(t2, NULL)==0);
+
+}
+void check_transfer(Fid_t from, Fid_t to)
+{
+	char buffer[12] = {[0]=0};
+	int rc;
+	ASSERT((rc=Write(from,"Hello world", 12))==12);
+	ASSERT((rc=Read(to, buffer, 12))==12);
+	ASSERT((rc=strcmp("Hello world", buffer))==0);
+}
+
+
+BOOT_TEST(test_socket_constructor_many_per_port,
+	"Test that Socket succeeds opening many sockets on the same port"
+	)
+{
+	for(Fid_t f=0; f<MAX_FILEID; f++) {
+		ASSERT(Socket(100)!=NOFILE);
+	}
+	return 0;
+}
+
+BOOT_TEST(test_socket_constructor_out_of_fids,
+	"Test that the socket constructor fails on running out of Fids"
+	)
+{
+	for(int i=0;i<MAX_FILEID;i++)
+		ASSERT(Socket(100)!=NOFILE);
+	for(int i=0;i<MAX_FILEID;i++)
+		ASSERT(Socket(100)==NOFILE);	
+	return 0;
+}
+
+BOOT_TEST(test_socket_constructor_illegal_port,
+	"Test that the socket constructor fails on illegal port"
+	)
+{
+	ASSERT(Socket(NOPORT)!=NOFILE);
+	ASSERT(Socket(1)!=NOFILE);
+	ASSERT(Socket(MAX_PORT)!=NOFILE);
+
+	ASSERT(Socket(NOPORT-1)==NOFILE);
+	ASSERT(Socket(MAX_PORT+1)==NOFILE);	
+	ASSERT(Socket(MAX_PORT+10)==NOFILE);
+	return 0;	
+}
+
+BOOT_TEST(test_listen_success,
+	"Test that Listen succeeds on an unbound socket"
+	)
+{
+	ASSERT(Listen(Socket(100))==0);
+	return 0;
+}
+
+BOOT_TEST(test_listen_fails_on_bad_fid,
+	"Test that Listen fails on an invalid fid"
+	)
+{
+	ASSERT(Listen(7)==-1);
+	ASSERT(Listen(OpenNull())==-1);
+	ASSERT(Listen(NOFILE)==-1);
+	ASSERT(Listen(MAX_FILEID)==-1);	
+	return 0;
+}
+
+BOOT_TEST(test_listen_fails_on_NOPORT,
+	"Test that Listen fails on a socket defined on NOPORT"
+	)
+{
+	ASSERT(Listen(Socket(NOPORT))==-1);
+	return 0;
+}
+
+BOOT_TEST(test_listen_fails_on_occupied_port,
+	"Test that Listen fails on an occupied port"
+	)
+{
+	Fid_t f = Socket(100);
+	ASSERT(Listen(f)==0);
+	ASSERT(Listen(Socket(100))==-1);
+	Close(f);
+	ASSERT(Listen(Socket(100))==0);	
+	return 0;
+}
+
+BOOT_TEST(test_listen_fails_on_initialized_socket,
+	"Test that Listen fails on a socket that has been previously initialized by Listen"
+	)
+{
+	Fid_t lsock = Socket(100);
+	ASSERT(Listen(lsock)==0);	
+	ASSERT(Listen(lsock)==-1);	
+	Fid_t sock[2];
+	sock[0] = Socket(200);
+	connect_sockets(sock[0], lsock, sock+1, 100);
+	ASSERT(Listen(sock[0])==-1);
+	ASSERT(Listen(sock[1])==-1);
+	return 0;
+}
+
+
+BOOT_TEST(test_accept_succeds,
+	"Test that accept succeeds on a legal connection"
+	)
+{
+	Fid_t lsock = Socket(100);
+	ASSERT(Listen(lsock)==0);
+	Fid_t cli = Socket(NOPORT);
+	Fid_t srv;
+	connect_sockets(cli, lsock, &srv, 100);
+	return 0;
+}
+
+BOOT_TEST(test_accept_fails_on_bad_fid,
+	"Test that Accept fails on an invalid fid"
+	)
+{
+	ASSERT(Accept(7)==-1);
+	ASSERT(Accept(OpenNull())==-1);
+	ASSERT(Accept(NOFILE)==-1);
+	ASSERT(Accept(MAX_FILEID)==-1);
+	
+	return 0;
+}
+
+BOOT_TEST(test_accept_fails_on_unbound_socket,
+	"Test that Accept fails on an uninitialized socket"
+	)
+{
+	ASSERT(Accept(Socket(100))==-1);
+	return 0;
+}
+
+BOOT_TEST(test_accept_fails_on_connected_socket,
+	"Test that Accept fails on a connected socket"
+	)
+{
+	Fid_t lsock = Socket(100);
+	ASSERT(Listen(lsock)==0);
+	Fid_t cli = Socket(NOPORT);
+	Fid_t srv;
+	connect_sockets(cli, lsock, &srv, 100);
+	ASSERT(Accept(srv)==-1);		
+	return 0;
+}
+
+BOOT_TEST(test_accept_reusable,
+	"Test that Accept can be called on the same socket many times to create different connections."
+	)
+{
+	Fid_t lsock = Socket(100);
+	ASSERT(lsock!=NOFILE);
+	ASSERT(Listen(lsock)==0);
+	uint n = MAX_FILEID/2 - 1;
+	Fid_t cli[n], srv[n];
+
+	for(uint i=0;i<n;i++) {
+		cli[i] = Socket(NOPORT);
+		connect_sockets(cli[i], lsock, srv+i, 100);
+	}
+	for(uint i=0;i<n;i++)
+		for(uint j=0;j<n;j++)  {
+			ASSERT(cli[i]!=srv[j]);
+			if(i==j) continue;
+			ASSERT(srv[i]!=srv[j]);
+			ASSERT(cli[i]!=cli[j]);
+		}
+
+	return 0;
+}
+
+
+BOOT_TEST(test_accept_fails_on_exhausted_fid,
+	"Test that Accept will fail if the fids of the process are exhausted."
+	)
+{
+	Fid_t lsock = Socket(100);
+	ASSERT(lsock!=NOFILE);
+	ASSERT(Listen(lsock)==0);
+
+	/* If MAX_FILEID is odd, allocate an extra fid */
+	if( (MAX_FILEID & 1) == 1 )  OpenNull();
+
+	/* Allocate pairs of fids */
+	for(uint i=0;i< (MAX_FILEID-1)/2 ; i++) {		
+		Fid_t cli = Socket(NOPORT);
+		Fid_t srv;
+		ASSERT(cli != NOFILE);
+		connect_sockets(cli,lsock,&srv,100);
+	}
+
+	/* Ok, we should be able to get another client */
+	Fid_t cli = Socket(NOPORT); ASSERT(cli!=NOFILE);
+
+	/* Now, if we try a connection we should fail! */
+	int accept_connection(int argl, void* args) {
+		ASSERT(Accept(lsock)==NOFILE);
+		return 0;
+	}
+
+	Tid_t t = CreateThread(accept_connection, 0, NULL);
+	ASSERT(Connect(cli, 100, 1000)==-1);
+
+	ThreadJoin(t,NULL);
+	return 0;
+}
+
+BOOT_TEST(test_accept_unblocks_on_close,
+	"Test that Accept will unblock if the listening socket is closed."
+	)
+{
+	Fid_t lsock = Socket(100);
+	ASSERT(lsock!=NOFILE);
+	ASSERT(Listen(lsock)==0);
+
+	int accept_connection(int argl, void* args) {
+		ASSERT(Accept(lsock)==NOFILE);
+		return 0;
+	}
+	Tid_t t = CreateThread(accept_connection, 0, NULL);
+
+	/* Here, we just wait some time, (of course, this is technically a race condition :-( */
+	fibo(30);
+	Close(lsock);
+
+	ThreadJoin(t,NULL);
+	return 0;
+}
+
+
+BOOT_TEST(test_connect_fails_on_bad_fid,
+	"Test that Connect will fail if given a bad fid."
+	)
+{
+	ASSERT(Accept(7)==-1);
+	ASSERT(Accept(OpenNull())==-1);
+	ASSERT(Accept(NOFILE)==-1);
+	ASSERT(Accept(MAX_FILEID)==-1);
+
+	return 0;
+}
+
+BOOT_TEST(test_connect_fails_on_bad_socket,
+	"Test that Connect will fail if given a listening or connected socket."
+	)
+{
+	Fid_t lsock = Socket(100);
+	ASSERT(lsock!=NOFILE);
+	ASSERT(Listen(lsock)==0);
+
+	ASSERT(Connect(lsock, 100, 1000)==-1);
+	Fid_t cli, srv;
+	cli = Socket(NOPORT);
+	ASSERT(cli!=NOFILE);
+	connect_sockets(cli, lsock, &srv, 100);
+
+	ASSERT(Connect(cli, 100, 1000)==-1);
+	ASSERT(Connect(srv, 100, 1000)==-1);
+
+	return 0;
+}
+
+BOOT_TEST(test_connect_fails_on_illegal_port,
+	"Test that connect fails if given an illegal port."
+	)
+{
+	Fid_t cli = Socket(10);
+	ASSERT(Connect(cli, NOPORT, 100)==-1);
+	ASSERT(Connect(cli, MAX_PORT+1, 100)==-1);
+
+	return 0;
+}
+
+BOOT_TEST(test_connect_fails_on_non_listened_port,
+	"Test that Connect fails on a port that has no listener."
+	)
+{
+	Fid_t cli = Socket(10);
+	ASSERT(Connect(cli, 100, 100)==-1);
+
+	return 0;
+}
+
+BOOT_TEST(test_connect_fails_on_timeout,
+	"Test that connect fails on timeout.",
+	.timeout = 2
+	)
+{
+	Fid_t lsock = Socket(100);
+	ASSERT(lsock!=NOFILE);
+	ASSERT(Listen(lsock)==0);
+
+	Fid_t cli = Socket(10);
+	/* Give it a short timeout */
+	ASSERT(Connect(cli, 100, 100)==-1);
+
+	return 0;
+}
+
+
+
+BOOT_TEST(test_socket_small_transfer,
+	"Open a socket and put just a little data in it, in both directions, for many times."
+	)
+{
+	Fid_t sock[2], lsock;
+
+	lsock = Socket(100);   ASSERT(lsock!=NOFILE);
+	if(lsock!=0) { Dup2(lsock,0); Close(lsock); }
+
+	sock[0] = Socket(NOPORT); ASSERT(sock[0]!=NOFILE);
+
+	ASSERT(Listen(lsock)==0);
+
+	connect_sockets(sock[0], lsock, sock+1, 100);
+	for(uint i=0; i< 32768; i++) {
+		check_transfer(sock[0], sock[1]);
+		check_transfer(sock[1], sock[0]);		
+	}
+
+	return 0;
+}
+
+
+BOOT_TEST(test_socket_single_producer,
+	"Test blocking in the socket by a single producer single consumer sending 10Mbytes of data."
+	)
+{
+	Fid_t fid = Socket(NOPORT);
+	ASSERT(fid!=NOFILE);
+	if(fid!=0) {
+		ASSERT(Dup2(fid,0)==0);
+		ASSERT(Close(fid)==0);
+	}
+
+	Fid_t lsock = Socket(100);
+	ASSERT(lsock!=NOFILE);
+	if(lsock!=2) {
+		ASSERT(Dup2(lsock,2)==0);
+		ASSERT(Close(lsock)==0);
+	}
+
+	ASSERT(Listen(2)==0);
+
+	Fid_t srv;
+	connect_sockets(0, 2, &srv, 100);
+
+	if(srv!=1) {
+		ASSERT(Dup2(srv,1)==0);
+		ASSERT(Close(srv)==0);
+	}
+
+	int N = 10000000;
+	ASSERT(Exec(data_consumer, sizeof(N), &N)!=NOPROC);
+	ASSERT(Exec(data_producer, sizeof(N), &N)!=NOPROC);
+
+	Close(0);
+	Close(1);
+
+	WaitChild(NOPROC,NULL);
+	WaitChild(NOPROC,NULL);
+	return 0;
+}
+
+BOOT_TEST(test_socket_multi_producer,
+	"Test blocking in the pipe by 10 producers and single consumer sending 10Mbytes of data."
+	)
+{
+	Fid_t fid = Socket(NOPORT);
+	ASSERT(fid!=NOFILE);
+	if(fid!=0) {
+		ASSERT(Dup2(fid,0)==0);
+		ASSERT(Close(fid)==0);
+	}
+
+	Fid_t lsock = Socket(100);
+	ASSERT(lsock!=NOFILE);
+	if(lsock!=2) {
+		ASSERT(Dup2(lsock,2)==0);
+		ASSERT(Close(lsock)==0);
+	}
+
+	ASSERT(Listen(2)==0);
+
+	Fid_t srv;
+	connect_sockets(0, 2, &srv, 100);
+
+	if(srv!=1) {
+		ASSERT(Dup2(srv,1)==0);
+		ASSERT(Close(srv)==0);
+	}
+
+	int N = 1000000;
+	for(int i=0;i<10;i++)
+		ASSERT(Exec(data_producer, sizeof(N), &N)!=NOPROC);
+	N = 10*N;
+	ASSERT(Exec(data_consumer, sizeof(N), &N)!=NOPROC);
+
+	Close(0);
+	Close(1);
+
+	for(int i=0;i<10;i++)
+		WaitChild(NOPROC,NULL);
+	WaitChild(NOPROC,NULL);
+	return 0;
+}
+
+
+
+BOOT_TEST(test_shudown_read,
+	"Test that ShutDown with SHUTDOWN_READ blocks Write"
+	)
+{
+	Fid_t lsock;
+	lsock = Socket(100);   ASSERT(lsock!=NOFILE);
+	if(lsock!=0) { Dup2(lsock,0); Close(lsock); }
+	ASSERT(Listen(lsock)==0);
+
+	Fid_t cli = Socket(NOPORT); ASSERT(cli!=NOFILE);
+	Fid_t srv;
+
+	connect_sockets(cli, lsock, &srv, 100);
+
+	for(uint i=0; i< 2000; i++) {
+		check_transfer(cli, srv);
+		check_transfer(srv, cli);
+	}
+
+	ASSERT(Write(srv, "Hello world",12)==12);
+
+	ShutDown(cli, SHUTDOWN_READ);
+	char buffer[12];
+	ASSERT(Read(cli, buffer, 12)==-1);
+	ASSERT(Write(srv, "Hello world",12)==-1);
+
+	for(uint i=0; i< 2000; i++) {
+		ASSERT(Write(srv, "Hello world",12)==-1);
+		check_transfer(cli, srv);
+	}
+
+	return 0;
+}
+
+
+BOOT_TEST(test_shudown_write,
+	"Test that ShutDown with SHUTDOWN_WRITE first exhausts buffers and then causes Read to return 0"
+	)
+{
+	Fid_t lsock;
+	lsock = Socket(100);   ASSERT(lsock!=NOFILE);
+	if(lsock!=0) { Dup2(lsock,0); Close(lsock); }
+	ASSERT(Listen(lsock)==0);
+
+	Fid_t cli = Socket(NOPORT); ASSERT(cli!=NOFILE);
+	Fid_t srv;
+
+	connect_sockets(cli, lsock, &srv, 100);
+
+	for(uint i=0; i< 2000; i++) {
+		check_transfer(cli, srv);
+		check_transfer(srv, cli);
+	}
+
+	ASSERT(Write(srv, "Hello world",12)==12);
+	ASSERT(Write(srv, "Hello world",12)==12);
+	ASSERT(Write(srv, "Hello world",12)==12);
+
+	ShutDown(srv, SHUTDOWN_WRITE);
+	ASSERT(Write(srv, "Hello world",12)==-1);
+
+	/* We should still read the three writes before the close. */
+	char buffer[12];
+	for(uint i=0;i<3;i++) {
+		ASSERT(Read(cli, buffer, 12)==12);
+		ASSERT(strcmp(buffer,"Hello world")==0);
+	}
+
+	for(uint i=0; i< 2000; i++) {
+		ASSERT(Read(cli, buffer, 12)==0);
+		check_transfer(cli, srv);
+	}
+
+	return 0;
+}
+
+
+
+
+TEST_SUITE(socket_tests,
+	"A suite of tests for sockets."
+	)
+{
+	&test_socket_constructor_many_per_port,
+	&test_socket_constructor_out_of_fids,
+	&test_socket_constructor_illegal_port,
+	
+	&test_listen_success,
+	&test_listen_fails_on_bad_fid,
+	&test_listen_fails_on_NOPORT,
+	&test_listen_fails_on_occupied_port,
+	&test_listen_fails_on_initialized_socket,
+
+	&test_accept_succeds,
+	&test_accept_fails_on_bad_fid,
+	&test_accept_fails_on_unbound_socket,
+	&test_accept_fails_on_connected_socket,
+	&test_accept_reusable,
+	&test_accept_fails_on_exhausted_fid,
+	&test_accept_unblocks_on_close,
+
+	&test_connect_fails_on_bad_fid,
+	&test_connect_fails_on_bad_socket,
+	&test_connect_fails_on_illegal_port,
+	&test_connect_fails_on_non_listened_port,
+	&test_connect_fails_on_timeout,
+
+	&test_socket_small_transfer,
+	&test_socket_single_producer,
+	&test_socket_multi_producer,
+
+	&test_shudown_read,
+	&test_shudown_write,
+
+	NULL
+};
+
+
+
+
+/*********************************************
+ *
+ *
+ *
+ *  Concurrency tests
+ *
+ *
+ *
+ *********************************************/
+
+
 
 
 
@@ -948,6 +1807,20 @@ TEST_SUITE(concurrency_tests,
 
 
 
+/*********************************************
+ *
+ *
+ *
+ *  Terminal I/O tests
+ *
+ *
+ *
+ *********************************************/
+
+
+
+
+
 BOOT_TEST(test_input_concurrency,
 	"Test that input from one terminal does not obstruct input from other terminals.",
 	.minimum_terminals = 2
@@ -1067,6 +1940,7 @@ BOOT_TEST(test_term_input_driver_interrupt,
 
 
 
+
 TEST_SUITE(io_tests,
 	"A suite of tests which test the concurrency of terminal I/O."
 	)
@@ -1078,12 +1952,29 @@ TEST_SUITE(io_tests,
 
 
 
+
+/*********************************************
+ *
+ *
+ *
+ *  Main program
+ *
+ *
+ *
+ *********************************************/
+
+
+
+
 TEST_SUITE(all_tests,
 	"A suite containing all tests.")
 {
 	&basic_tests,
 	//&concurrency_tests,
 	//&io_tests,
+	&thread_tests,
+	&pipe_tests,
+	&socket_tests,
 	NULL
 };
 

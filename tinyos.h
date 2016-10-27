@@ -632,7 +632,7 @@ typedef long int timeout_t;
 	The connect call will block for approximately the specified amount of time.
 	The resolution of this timeout is implementation specific, but should be
 	in the order of 100's of msec. Therefore, a timeout of at least 500 msec is
-	reasonable.
+	reasonable. If a negative timeout is given, it means, "infinite timeout".
 
 	@params sock the socket to connect to the other end
 	@params port the port on which to seek a listening socket
@@ -640,6 +640,7 @@ typedef long int timeout_t;
 	        connection.
 	@returns 0 on success and -1 on error. Possible reasons for error:
 	   - the file id @c sock is not legal (i.e., an unconnected, non-listening socket)
+	   - the given port is illegal.
 	   - the port does not have a listening socket bound to it by @c Listen.
 	   - the timeout has expired without a successful connection.
 */

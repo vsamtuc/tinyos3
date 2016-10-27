@@ -333,18 +333,23 @@ void con_proc(proxy_daemon* this, const char* pattern)
 		/* Read, skipping EINTR */
 		int rc;
 
-		while( (rc = read(this->fd, coninput, (plen<1024)? plen : 1024)) == -1  && errno==EINTR) ;
+		while( (rc = read(this->fd, coninput, (plen<1024)? plen : 1024)) == -1  
+			&& errno==EINTR) ;
 
 		/* Check for EAGAIN */
 		if(rc==-1) {
 			assert(errno==EAGAIN);
-			if(oldcomplete) break;
+			if(oldcomplete) { 
+				break;
+			}
 		}
 		else {
 			assert(rc>0);
 			/* Mismatch */
 			int matched = (memcmp(pat, coninput, rc) == 0);
-			if(! matched) break;
+			if(! matched) {
+				break;
+			}
 		}
 
 		/* ok, either we are not 'complete' or we are matched */
@@ -468,7 +473,7 @@ int execute_fork(void (*procfunc)(void), unsigned int timeout)
 		procfunc();
 
 		if(FLAG_FAILURE) abort();
-		exit(0);
+		exit(129);
 	} 
 
 	/* Block SIGALRM also */
@@ -505,9 +510,20 @@ int execute_fork(void (*procfunc)(void), unsigned int timeout)
 int execute_nofork(void (*procfunc)(void), unsigned int timeout)
 {
 	FLAG_FAILURE=0;
+	/* Note: timeout is ignored, we allow the test to run forever!
+	   It is the user's job to interrupt!
+	 */
 	procfunc();
-	if(FLAG_FAILURE) abort();
-	return 0;
+	/* Here, we could allow tests to continue */
+	if(FLAG_FAILURE) {
+		/* Here, we could allow tests to continue, still reporting
+		   failure. However, since --nofork is most often used for
+		   testing in the debugger, actually dumping the process
+		   seems more useful!
+	    */
+		abort();
+	}
+	return W_EXITCODE(129,0);
 }
 
 
@@ -600,7 +616,7 @@ int run_test(const Test* test)
 		case BARE_FUNC:
 			status = execute(test->bare, test->timeout);
 
-			result = WIFEXITED(status) ? 1 : 0;
+			result = WIFEXITED(status) && WEXITSTATUS(status)==129  ? 1 : 0;
 			if(WIFSIGNALED(status))
 				MSG("Test crashed, signal=%d (%s)\n", 
 					WTERMSIG(status), strsignal(WTERMSIG(status)));
