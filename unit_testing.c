@@ -225,21 +225,20 @@ void term_proxy_daemon_init(proxy_daemon* this, const char* fifoname, uint fifon
 	char thread_name[16];
 	CHECK(snprintf(thread_name, 16, "%s%d",fifoname,fifono));
 	CHECKRC(pthread_setname_np(this->thread, thread_name));
+
+	/* Restore signal mask */
 	CHECKRC(pthread_sigmask(SIG_SETMASK, &oldmask, NULL));
 }
 
 void term_proxy_daemon_add(proxy_daemon* this, const char* pattern)
 {
 	CHECKRC(pthread_mutex_lock(& this->mx));
-	if(pattern==NULL)
-		this->complete = 1;
-	else {
-		assert(! this->complete);
-		rlnode* newnode = (rlnode*)malloc(sizeof(rlnode));
-		if(newnode==NULL)  FATAL("Out of memory!");
-		rlnode_init(newnode, strdup(pattern));
-		rlist_push_back(& this->pattern , newnode);
-	}
+	assert(pattern!=NULL);
+	assert(! this->complete);
+	rlnode* newnode = (rlnode*)malloc(sizeof(rlnode));
+	if(newnode==NULL)  FATAL("Out of memory!");
+	rlnode_init(newnode, strdup(pattern));
+	rlist_push_back(& this->pattern , newnode);
 	CHECKRC(pthread_cond_signal(& this->pat));
 	CHECKRC(pthread_mutex_unlock(& this->mx));	
 }
@@ -264,7 +263,10 @@ const char* term_proxy_daemon_get(proxy_daemon* this)
 
 void term_proxy_daemon_close(proxy_daemon* this)
 {
-	term_proxy_daemon_add(this, NULL);
+	CHECKRC(pthread_mutex_lock(& this->mx));
+	this->complete = 1;
+	CHECKRC(pthread_cond_signal(& this->pat));
+	CHECKRC(pthread_mutex_unlock(& this->mx));	
 	CHECKRC(pthread_join(this->thread, NULL));	
 }
 
@@ -308,48 +310,62 @@ int term_proxy_daemon_complete(proxy_daemon* this)
 }
 
 
-/* Read fd and check that it matches pattern. Break when 'complete'. */
+/* 
+	Read fd and check that it matches pattern. 
+	Return when there is a mismatch, or there is no available
+	input and the daemon is marked 'complete'. 
+*/
 void con_proc(proxy_daemon* this, const char* pattern)
 {
 	const char* pat = pattern;
 	int plen = strlen(pat);
+	int patlen = plen;
+	int complete = 0; 
 	struct pollfd fdp = { .fd = this->fd, .events = POLLIN };
 
-	while(*pat != '\0') {
+	char coninput[1024];
+	int rc;
 
-		/* If we are not complete, poll the fd for reading, for 100ms */
-		while(! term_proxy_daemon_complete(this)) {
-			poll(&fdp, 1, 100);
+/* completion is stable, so we only need to check it if it is false */
+#define COMPLETE  (complete || (complete=term_proxy_daemon_complete(this)))
+
+	while(plen > 0) {
+
+		/* Poll and if we are not complete poll again, for 100ms */
+		int  have_data;
+
+		not_ready:
+		have_data = 0;
+		do {
+			int timeout = (COMPLETE)?0:100;
+
+			poll(&fdp, 1, timeout);
 			assert( (fdp.revents & (POLLERR|POLLHUP|POLLNVAL)) == 0  );
-			if(fdp.revents & POLLIN) break;
+			have_data = fdp.revents & POLLIN;
+		} while(! (have_data || COMPLETE ));
+
+		if(! have_data) {
+			break;
 		}
 
-		/* Save complete status */
-		int oldcomplete = term_proxy_daemon_complete(this);
+		assert(have_data);
 
-		/* Read input and check it */
-		char coninput[1024];
-		
-		/* Read, skipping EINTR */
-		int rc;
-
+		/* Read input and check it, skipping EINTR */
 		while( (rc = read(this->fd, coninput, (plen<1024)? plen : 1024)) == -1  
 			&& errno==EINTR) ;
 
-		/* Check for EAGAIN */
-		if(rc==-1) {
-			assert(errno==EAGAIN);
-			if(oldcomplete) { 
-				break;
-			}
-		}
-		else {
-			assert(rc>0);
-			/* Mismatch */
-			int matched = (memcmp(pat, coninput, rc) == 0);
-			if(! matched) {
-				break;
-			}
+		if(rc==-1 && errno==EAGAIN)
+			goto not_ready;
+
+		CHECK(rc);  /* This is fatal on error! */
+		assert(rc>0); /* We should not get rc==0 ! */
+		assert(rc<=1024); /* We should not get rc>1024 ! */
+
+		/* Mismatch ? */
+		int matched = (memcmp(pat, coninput, rc) == 0);
+		if(! matched) {
+			break_mismatch: __attribute__((unused));				
+			break;
 		}
 
 		/* ok, either we are not 'complete' or we are matched */
@@ -357,9 +373,14 @@ void con_proc(proxy_daemon* this, const char* pattern)
 		plen -= rc;
 	}
 
-	ASSERT_MSG(plen==0, "Mismatched expect(\"%.50s%s\")\n", 
+	checking_time: __attribute__((unused));
+	ASSERT_MSG(plen==0, "Mismatched expect(\"%.20s%s\") at pos %d\n", 
 		   pattern,
-		   (strlen(pattern)>50)?"...":"");
+		   (strlen(pattern)>20)?"...":"",
+		   patlen - plen
+		   );
+
+#undef COMPLETE
 }
 
 /* Write pattern to fd, check that the whole thing is written before 'complete'. */
@@ -409,7 +430,7 @@ void kbd_proc(proxy_daemon* this, const char* pattern)
 	}
 
 finish:
-	ASSERT_MSG(*pat=='\0', "Sendme(\"%.50s%s\") faild\n", 
+	ASSERT_MSG(*pat=='\0', "Sendme(\"%.50s%s\") failed\n", 
 		   pattern,
 		   (lpattern>50)?"...":"");	
 }
@@ -575,7 +596,7 @@ int run_boot_test(const Test* test, uint ncores, uint nterm, int argl, void* arg
 
 	if(! skipped) {
 		status = execute_boot(ncores, nterm, test->boot, argl, args, test->timeout);
-		result = WIFEXITED(status) ? 1 : 0;
+		result = WIFEXITED(status) && WEXITSTATUS(status)==129 ? 1 : 0;
 		if(WIFSIGNALED(status))
 			MSG("Test crashed, signal=%d (%s)\n", 
 				WTERMSIG(status), strsignal(WTERMSIG(status)));
