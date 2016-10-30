@@ -118,7 +118,7 @@ void FCB_unreserve(size_t num, Fid_t *fid, FCB** fcb)
  */
 
 
-static FCB* get_fcb(Fid_t fid)
+FCB* get_fcb(Fid_t fid)
 {
   if(fid < 0 || fid >= MAX_FILEID) return NULL;
 

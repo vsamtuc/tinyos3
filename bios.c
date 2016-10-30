@@ -737,6 +737,7 @@ void cpu_core_halt()
 	/* unmask signals and call sigsuspend */
 	Core* core = curr_core();
 	assert(! core->int_disabled);
+	CHECKRC(pthread_sigmask(SIG_BLOCK, &sigusr1_set, NULL));
 	pthread_mutex_lock(& core_halt_mutex);
 	core->halted = 1;
 	rlist_push_front(&halted_list, & core->halted_node);
@@ -744,6 +745,7 @@ void cpu_core_halt()
 		pthread_cond_wait(& core->halt_cond, & core_halt_mutex);
 	assert(! core->halted);
 	pthread_mutex_unlock(& core_halt_mutex);
+	CHECKRC(pthread_sigmask(SIG_UNBLOCK, &sigusr1_set, NULL));
 	dispatch_interrupts(core);
 }
 

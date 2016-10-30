@@ -64,7 +64,7 @@ void tinyos_replace_stdio()
 {
 	assert(saved_in == NULL);
 	assert(saved_out == NULL);
-	if(GetTerminalDevices()==0) return;
+	//if(GetTerminalDevices()==0) return;
 
 	FILE* termin = get_std_stream(0, "r");
 	FILE* termout = get_std_stream(1, "w");
@@ -90,6 +90,7 @@ void tinyos_restore_stdio()
 }
 
 
+
 static int exec_wrapper(int argl, void* args)
 {
 	/* unpack the program pointer */
@@ -109,6 +110,39 @@ static int exec_wrapper(int argl, void* args)
 	/* Make the call */
 	return prog(argc, argv);
 }
+
+
+int ParseProcInfo(procinfo* pinfo, Program* prog, int argc, const char** argv )
+{
+	if(pinfo->main_task != exec_wrapper)
+		/* We do not recognize the format! */
+		return -1;
+
+	if(pinfo->argl > PROCINFO_MAX_ARGS_SIZE) 
+		/* The full argument is not available */
+		return -1;
+
+	int argl = pinfo->argl;
+	void* args = pinfo->args;
+
+	/* unpack the program pointer */
+	if(prog) memcpy(&prog, args, sizeof(prog));
+
+	argl -= sizeof(Program*);
+	args += sizeof(Program*);
+
+	/* unpack the string vector */
+	size_t N = argscount(argl, args);
+	if(argv) {
+		if(argc>N)
+			argc = N;
+		argvunpack(argc, argv, argl, args);
+	}
+
+	return N;		
+}
+
+
 
 int Execute(Program prog, size_t argc, const char** argv)
 {
@@ -131,6 +165,4 @@ int Execute(Program prog, size_t argc, const char** argv)
 	/* Execute the process */
 	return Exec(exec_wrapper, argl, args);
 }
-
-
 

@@ -348,3 +348,10 @@ void Exit(int exitval)
   sleep_releasing(EXITED, & kernel_mutex);
 }
 
+
+
+Fid_t OpenInfo()
+{
+	return NOFILE;
+}
+

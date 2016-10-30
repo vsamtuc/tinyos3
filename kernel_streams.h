@@ -1,32 +1,39 @@
 #ifndef __KERNEL_STREAMS_H
 #define __KERNEL_STREAMS_H
 
+#include "tinyos.h"
+#include "kernel_dev.h"
 
-/**	@file kernel_streams.h
+/**
+	@file kernel_streams.h
 	@brief Support for I/O streams.
 
-	This is it
-*/
 
-/**	@defgroup streams Streams.
+	@defgroup streams Streams.
 	@ingroup kernel
 	@brief Support for I/O streams.
 
 	The stream model of tinyos3 is similar to the Unix model.
 	Streams are objects that are shared between processes.
 	Streams are accessed by file IDs (similar to file descriptors
-	in Unix). They specialize to devices by virtue of a @c file_operations
+	in Unix).
+
+	The streams of each process are held in the file table of the
+	PCB of the process. The system calls generally use the API
+	of this file to access FCBs: @ref get_fcb, @ref FCB_reserve
+	and @ref FCB_unreserve.
+
+	Streams are connected to devices by virtue of a @c file_operations
 	object, which provides pointers to device-specific implementations
 	for read, write and close.
 
 	@{
 */
 
-#include "kernel_dev.h"
 
 
 /** @brief The file control block.
-    @ingroup streams
+
 	A file control block provides a uniform object to the
 	system calls, and contains pointers to device-specific
 	functions.
@@ -49,14 +56,15 @@ typedef struct file_control_block
 void initialize_files();
 
 
-/** 
-   @brief Increase the reference count of an fcb 
-   @param fcb the fcb whose reference count will be increased
+/**
+	@brief Increase the reference count of an fcb 
+
+	@param fcb the fcb whose reference count will be increased
 */
 void FCB_incref(FCB* fcb);
 
 
-/** 
+/**
 	@brief Decrease the reference count of the fcb.
 
 	If the reference count drops to 0, release the FCB, calling the 
@@ -64,9 +72,8 @@ void FCB_incref(FCB* fcb);
 	If the reference count is still >0, return 0. 
 
 	@param fcb  the fcb whose reference count is decreased
-	@returns if the reference count is still >0, return 0, else 
-	    return the value returned by the
-	    `Close()` operation
+	@returns if the reference count is still >0, return 0, else return the value returned by the
+	     `Close()` operation
 */
 int FCB_decref(FCB* fcb);
 
@@ -110,7 +117,17 @@ int FCB_reserve(size_t num, Fid_t *fid, FCB** fcb);
 */
 void FCB_unreserve(size_t num, Fid_t *fid, FCB** fcb);
 
-/* @} streams  */
 
+/** @brief Translate an fid to an FCB.
+
+	This routine will return NULL if the fid is not legal.
+
+	@param fid the file ID to translate to a pointer to FCB
+	@returns a pointer to the corresponding FCB, or NULL.
+ */
+FCB* get_fcb(Fid_t fid);
+
+
+/** @} */
 
 #endif

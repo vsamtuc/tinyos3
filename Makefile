@@ -7,14 +7,14 @@ endif
 #PROFILE=1
 
 # disable valgrind support
-VALGRIND_FLAG=-DNVALGRIND
+#VALGRIND_FLAG=-DNVALGRIND
 
 CC = gcc
 
 BASICFLAGS= -pthread -std=c11 -fno-builtin-printf $(VALGRIND_FLAG)
 
-DEBUGFLAGS=  -g 
-OPTFLAGS= -g -finline -march=native -O3 -DNDEBUG
+DEBUGFLAGS=  -g3 
+OPTFLAGS= -g3 -finline -march=native -O3 -DNDEBUG
 
 ifeq ($(PROFILE),1)
 PROFFLAGS= -g -pg 
@@ -48,7 +48,7 @@ EXAMPLE_PROG= $(wildcard *_example*.c)
 #
 #  Add kernel source files here
 #
-C_SRC= bios.c $(wildcard kernel_*.c) tinyoslib.c symposium.c util.c unit_testing.c
+C_SRC= bios.c $(wildcard kernel_*.c) tinyoslib.c symposium.c util.c unit_testing.c console.c
 C_OBJ=$(C_SRC:.c=.o)
 
 C_SOURCES= $(C_PROG) $(C_SRC)

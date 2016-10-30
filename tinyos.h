@@ -700,6 +700,11 @@ int ShutDown(Fid_t sock, shutdown_mode how);
  *******************************************/
 
 /**
+  @brief The max. size of args returned by a procinfo structure.
+  */
+#define PROCINFO_MAX_ARGS_SIZE (128)
+
+/**
 	@brief A struct containing process-related information for a non-free
 	pid.
 
@@ -708,13 +713,27 @@ int ShutDown(Fid_t sock, shutdown_mode how);
   */
 typedef struct procinfo
 {
-	Pid_t pid;				
-	Pid_t ppid;
-	int alive;
-	unsigned long thread_count;
-	Task main_task;
-	int argl;
-	char args[128];
+	Pid_t pid;	    /**< @brief The pid of the process. */
+	Pid_t ppid;     /**< @brief The parent pid of the process.
+
+                This is equal to NOPROC for parentless procs. */
+  
+  int alive;      /**< @brief Non-zero if process is alive, zero if process is zombie. */
+	
+  unsigned long thread_count; /**< Current no of threads. */
+	
+  Task main_task;  /**< @brief The main task of the process. */
+	
+  int argl;        /**< @brief Argument length of main task. 
+
+            Note that this is the
+            real argument length, not just the length of the @c args field, which is
+            limited at @c PROCINFO_MAX_ARGS_SIZE. */
+	char args[PROCINFO_MAX_ARGS_SIZE]; /**< @brief The first 
+    @c PROCINFO_MAX_ARGS_SIZE bytes of the argument of the main task. 
+
+    If the task's argument is longer (as designated by the @c argl field), the
+    bytes contained in this field are just the prefix.  */
 } procinfo;
 
 

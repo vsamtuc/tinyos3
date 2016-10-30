@@ -19,26 +19,29 @@
  */
 int boot_symposium(int argl, void* args)
 {
-  /* Open standard input */
-  int fid = OpenTerminal(0);
-  assert(GetTerminalDevices()>0 ? (fid>=0 && fid<MAX_FILEID) : fid==NOFILE);
-  if(fid!=NOFILE && fid!=0) {
-    Dup2(fid,0);
-    Close(fid);
-  }
-
-  /* Open standard output */
-  fid = OpenTerminal(0);
-  assert(GetTerminalDevices()>0 ? (fid>=0 && fid<MAX_FILEID) : fid==NOFILE);
-  if(fid!=NOFILE && fid!=1) {
-    Dup2(fid,1);
-    Close(fid);
-  }
 
   tinyos_replace_stdio();
 
+  if(GetTerminalDevices()>0) {
+    int fid = OpenTerminal(0);
+    if(fid!=NOFILE && fid!=0) {
+      Dup2(fid,0);
+      Close(fid);
+    }
+
+    /* Open standard output */
+    fid = OpenTerminal(0);
+    if(fid!=NOFILE && fid!=1) {
+      Dup2(fid,1);
+      Close(fid);
+    }
+  } else {
+    tinyos_pseudo_console();
+  }
+  /* Open standard input */
+
   /* Just start task Symposium */
-  Exec(Symposium, argl, args);
+  Exec(SymposiumOfProcesses, argl, args);
 
   Close(0);
   Close(1);
@@ -86,21 +89,15 @@ int main(int argc, const char** argv)
   if( (bites <= 0) ) usage(argv[0]); 
 
   /* adjust work per fibo call (to adapt to many philosophers/bites) */
-  if(1) {
-    FMIN = FBASE - (int)( log((double)(2*nphil*bites))/log(.5+.5*sqrt(5.)));
-    FMAX = FMIN + FGAP;
-    printf("FMIN = %d    FMAX = %d\n",FMIN,FMAX);
-  }
+  symposium_t symp;
+  symp.N = nphil;
+  symp.bites = bites;
+  adjust_symposium(&symp, 0, 0);
+  printf("FMIN = %d    FMAX = %d\n",symp.fmin,symp.fmax);
 
   /* boot TinyOS */
-  {
-    int args[4];
-    args[0] = nphil; args[1] = bites;
-    args[2] = FMIN; args[3] = FMAX;
-
-    printf("*** Booting TinyOS\n");
-    boot(ncores, nterm, boot_symposium, sizeof(args), args);
-  }
+  printf("*** Booting TinyOS\n");
+  boot(ncores, nterm, boot_symposium, sizeof(symp), &symp);
   printf("*** TinyOS halted. Bye!\n");
 
   return 0;
