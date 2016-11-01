@@ -30,6 +30,7 @@
   a pointer to a file_ops object, which contains driver routines
   for this device.
 
+  @{ 
 */
 
 
@@ -152,5 +153,6 @@ int device_open(Device_type major, uint minor, void** obj, file_ops** ops);
   */
 uint device_no(Device_type major);
 
+/** @} */
 
 #endif

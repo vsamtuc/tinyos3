@@ -15,6 +15,8 @@
   This file contains the system calls offered by TinyOS to the 
   applications. These calls are split into three groups:
   (a) process control  (b) concurrency control and (c) I/O
+
+  @{
  */
 
 /*******************************************
@@ -778,5 +780,7 @@ Fid_t OpenInfo();
    */
 void boot(unsigned int ncores, unsigned int terminals, Task boot_task, int argl, void* args);
 
+
+/** @} */
 
 #endif

@@ -11,6 +11,8 @@
 
   This file defines the PCB structure and basic helpers for
   process access.
+
+  @{
 */ 
 
 #include "tinyos.h"
@@ -87,5 +89,7 @@ PCB* get_pcb(Pid_t pid);
   @returns the PID of the process, or NOPROC.
 */
 Pid_t get_pid(PCB* pcb);
+
+/** @} */
 
 #endif
