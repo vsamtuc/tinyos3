@@ -7,7 +7,7 @@ endif
 #PROFILE=1
 
 # disable valgrind support
-#VALGRIND_FLAG=-DNVALGRIND
+VALGRIND_FLAG=-DNVALGRIND
 
 CC = gcc
 
