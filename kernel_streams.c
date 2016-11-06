@@ -43,11 +43,13 @@ void release_FCB(FCB* fcb)
 
 void FCB_incref(FCB* fcb)
 {
+  assert(fcb);
   fcb->refcount++;
 }
 
 int FCB_decref(FCB* fcb)
 {
+  assert(fcb);
   fcb->refcount --;
   if(fcb->refcount==0) {
     int retval = fcb->streamfunc->Close(fcb->streamobj);
