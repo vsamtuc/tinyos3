@@ -223,7 +223,7 @@ static void* bootfunc_wrapper(void* _core)
 
 	/* Stop PIC daemon */
 	if(core->id==0) {
-		PIC_active = 0;
+		__atomic_store_n(&PIC_active, 0, __ATOMIC_RELEASE);
 		interrupt_pic_thread();
 	}
 
@@ -262,7 +262,7 @@ static void dispatch_interrupts(Core* core)
 			core->irq_delivered[intno]++;
 			interrupt_handler* handler =  core->intvec[intno];
 			if(handler != NULL) { 
-			 	handler();
+				handler();
 			}
 		}
 	}	
@@ -283,7 +283,7 @@ static void sigusr1_handler(int signo, siginfo_t* si, void* ctx)
 
 
 /*
- 	Peripherals
+	Peripherals
  */
 
 
@@ -298,9 +298,9 @@ coarse_clock_t get_coarse_time()
 
 
 /*
-  	An io_device handles a file descriptor that is connected to some
-  	'peripheral' in stream (byte-oriented) mode. The file descriptor must be
-  	'select-able' (i.e. not a disk file) and support non-blocking mode.
+	An io_device handles a file descriptor that is connected to some
+	'peripheral' in stream (byte-oriented) mode. The file descriptor must be
+	'select-able' (i.e. not a disk file) and support non-blocking mode.
 
 	Model outline:
 
@@ -498,7 +498,7 @@ static void pic_drain_sigusr1(int sigusr1fd)
 	Interrupts sent include
 	(a) ALARM, when the per-core timer expires
 	(b) SERIAL_RX_READY  &  SERIAL_TX_READY, when some 
-	    io_device becomes ready.
+		io_device becomes ready.
 
  */
 static void PIC_daemon(uint serialno)
@@ -529,7 +529,7 @@ static void PIC_daemon(uint serialno)
 	pthread_barrier_wait(& system_barrier);
 	
 	/* The PIC multiplexing loop */
-	while(PIC_active) {
+	while(__atomic_load_n(&PIC_active, __ATOMIC_ACQUIRE)) {
 		int maxfd = 0;
 		fd_set readfds, writefds;
 
@@ -811,11 +811,11 @@ void cpu_disable_interrupts()
 void cpu_enable_interrupts()
 {
 	Core* core = curr_core();
-    if(core->int_disabled) {        
-        core->int_disabled = 0;
-        CHECKRC(pthread_sigmask(SIG_UNBLOCK, &sigusr1_set, NULL));      
-        dispatch_interrupts(curr_core());
-    }
+	if(core->int_disabled) {        
+		core->int_disabled = 0;
+		CHECKRC(pthread_sigmask(SIG_UNBLOCK, &sigusr1_set, NULL));      
+		dispatch_interrupts(curr_core());
+	}
 }
 
 
