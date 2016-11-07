@@ -135,6 +135,9 @@ typedef struct core_control_block {
 /** @brief The priority table*/
 rlnode priority_table[MAX_PRIORITY];
 
+/** @brief */
+extern int is_IO;
+
 /** @brief the array of Core Control Blocks (CCB) for the kernel */
 extern CCB cctx[MAX_CORES];
 
@@ -227,7 +230,7 @@ void thread_list_priority_calculation(void);
   This function calculates the priority of the current thread after its execution 
   by checking its quantum consumption and if it is I/O  or CPU Bounded.
 */
-void current_priority_calculation();
+void current_priority_calculation(int quantum_left);
 
 /**
   @brief Enter the scheduler.

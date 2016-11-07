@@ -116,6 +116,7 @@ int serial_read(void* dev, char *buf, unsigned int size)
       count++;
     }
     else if(count==0) {
+      is_IO = 1;
       Cond_Wait(&dcb->spinlock, &dcb->rx_ready);
     }
     else
