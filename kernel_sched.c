@@ -152,6 +152,8 @@ TCB* spawn_thread(PCB* pcb, void (*func)())
   tcb->phase = CTX_CLEAN;
   tcb->state_spinlock = MUTEX_INIT;
   tcb->thread_func = func;
+  tcb->priority = MAX_PRIORITY/2;
+  tcb->quantums_passed = 0;
   rlnode_init(& tcb->sched_node, tcb);  /* Intrusive list node */
 
 
@@ -218,7 +220,7 @@ CCB cctx[MAX_CORES];
 */
 
 
-rlnode SCHED;                         /* The scheduler queue */
+//rlnode SCHED;                         /* The scheduler queue */
 Mutex sched_spinlock = MUTEX_INIT;    /* spinlock for scheduler queue */
 
 
@@ -243,7 +245,7 @@ void sched_queue_add(TCB* tcb)
 {
   /* Insert at the end of the scheduling list */
   Mutex_Lock(& sched_spinlock);
-  rlist_push_back(& SCHED, & tcb->sched_node);
+  rlist_push_back(& priority_table[tcb->priority], & tcb->sched_node);
   Mutex_Unlock(& sched_spinlock);
 
   /* Restart possibly halted cores */
@@ -258,9 +260,14 @@ void sched_queue_add(TCB* tcb)
 TCB* sched_queue_select()
 {
   Mutex_Lock(& sched_spinlock);
-  rlnode * sel = rlist_pop_front(& SCHED);
+  rlnode * sel = NULL;
+  for(int i=MAX_PRIORITY-1;i>=0;i--){
+    if(!is_rlist_empty(&priority_table[i])){
+      sel = rlist_pop_front(& priority_table[i]);
+      break;
+    }
+  }
   Mutex_Unlock(& sched_spinlock);
-
   return sel->tcb;  /* When the list is empty, this is NULL */
 } 
 
@@ -356,6 +363,10 @@ void yield()
   }
   Mutex_Unlock(& current->state_spinlock);
 
+  /*Our edits*/
+  current_priority_calculation();
+  thread_list_priority_calculation();
+
   /* Get next */
   TCB* next = sched_queue_select();
 
@@ -383,6 +394,30 @@ void yield()
   gain(preempt);
 }
 
+  void current_priority_calculation(){
+
+  }
+
+  void thread_list_priority_calculation(){
+    for(int i=0;i<MAX_PRIORITY-1;i++){
+      if(!is_rlist_empty(priority_table[i])){
+        rlnode* tmp = &priority_table[i];
+        for(int j=0;j<rlist_len(&priority_table[i]);j++){
+          tmp->tcb->quantums_passed++;
+          tmp=tmp->next;
+        }      
+      }
+    }
+
+    for(int i=0;i<MAX_PRIORITY-1;i++){
+      if(!is_rlist_empty(priority_table[i])){
+        if(priority_table[i]->tcb->quantums_passed>=MAX_QUANTUMS_PASSED){
+          priority_table[i]->tcb->quantums_passed=0;
+          rlist_push_back(&priority_table[i+1],rlist_pop_front(&priority_table[i]));
+        }    
+      }
+    }
+  }
 
 /*
   This function must be called at the beginning of each new timeslice.
@@ -405,6 +440,8 @@ void gain(int preempt)
   Mutex_Lock(& current->state_spinlock);
   current->state = RUNNING;
   current->phase = CTX_DIRTY;
+  /*Our edits*/
+  current->quantums_passed = 0; /* Set the current thread's quantums_passed to 0 because it is going to execute again*/
   Mutex_Unlock(& current->state_spinlock);
 
   /* Take care of the previous thread */
@@ -456,12 +493,16 @@ static void idle_thread()
 }
 
 
+
+/*Our edits*/
 /*
-  Initialize the scheduler queue
+  Initialize the scheduler priority table queues
  */
 void initialize_scheduler()
 {
-  rlnode_init(&SCHED, NULL);
+  for(int i=0;i<MAX_PRIORITY;i++){
+    rlnode_new(&priority_table[i]);
+  }
 }
 
 

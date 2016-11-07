@@ -93,6 +93,10 @@ typedef struct thread_control_block
   struct thread_control_block * prev;  /**< previous context */
   struct thread_control_block * next;  /**< next context */
   
+
+  /*Our edits*/
+  int priority;   /**<the TCB's current priority value*/
+  int quantums_passed; /**<The number of quantums passed after the last execution of the current trhead*/
 } TCB;
 
 
@@ -121,10 +125,18 @@ typedef struct core_control_block {
 
 } CCB;
  
+/*Our edits*/
+/** @brief The max priority value*/
+#define MAX_PRIORITY 5;
+
+/** @brief The max quantums number to pass before increasing priority to too much waiting thread*/
+#define MAX_QUANTUMS_PASSED 100;
+
+/** @brief The priority table*/
+rlnode priority_table[MAX_PRIORITY];
 
 /** @brief the array of Core Control Blocks (CCB) for the kernel */
 extern CCB cctx[MAX_CORES];
-
 
 /** @brief The current core's CCB */
 #define CURCORE  (cctx[cpu_core_id])
@@ -196,6 +208,26 @@ void sleep_releasing(Thread_state newstate, Mutex* mx);
   it will renew the quantum for the current thread.
  */
 void yield(void);
+
+/*Our edits*/
+/**
+  @brief Calculate all threads priorities
+
+  This function is called just before the choosing for the next thread to be executed
+  in the yield function. It increases by 1 the @c quantums_passed property of each thread
+  in the Multilevel Feedback Queue and then it increases by 1 the priority of the first 
+  node of each list in the @c priority_table if its quantums_passed value exceeds the 
+  @c MAX_QUANTUMS_PASSED constant.
+*/
+void thread_list_priority_calculation(void);
+
+/**
+  @brief It calculates the priority of the current thread after its execution.
+
+  This function calculates the priority of the current thread after its execution 
+  by checking its quantum consumption and if it is I/O  or CPU Bounded.
+*/
+void current_priority_calculation();
 
 /**
   @brief Enter the scheduler.
