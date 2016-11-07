@@ -21,6 +21,7 @@ DCB DT[MAX_TERMINALS];
 
   ====================================*/
 
+int is_IO = 0;
 
 int nulldev_read(void* dev, char *buf, unsigned int size)
 {

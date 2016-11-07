@@ -127,10 +127,10 @@ typedef struct core_control_block {
  
 /*Our edits*/
 /** @brief The max priority value*/
-#define MAX_PRIORITY 5;
+#define MAX_PRIORITY (5)
 
 /** @brief The max quantums number to pass before increasing priority to too much waiting thread*/
-#define MAX_QUANTUMS_PASSED 100;
+#define MAX_QUANTUMS_PASSED (100)
 
 /** @brief The priority table*/
 rlnode priority_table[MAX_PRIORITY];

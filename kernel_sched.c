@@ -400,7 +400,7 @@ void yield()
 /*Our edits*/
 void thread_list_priority_calculation(){
   for(int i=0;i<MAX_PRIORITY-1;i++){
-    if(!is_rlist_empty(priority_table[i])){
+    if(!is_rlist_empty(&priority_table[i])){
       rlnode* tmp = &priority_table[i];
       for(int j=0;j<rlist_len(&priority_table[i]);j++){
         tmp->tcb->quantums_passed++;
@@ -410,9 +410,9 @@ void thread_list_priority_calculation(){
   }
 
   for(int i=0;i<MAX_PRIORITY-1;i++){
-    if(!is_rlist_empty(priority_table[i])){
-      if(priority_table[i]->tcb->quantums_passed>=MAX_QUANTUMS_PASSED){
-        priority_table[i]->tcb->quantums_passed=0;
+    if(!is_rlist_empty(&priority_table[i])){
+      if(priority_table[i].tcb->quantums_passed>=MAX_QUANTUMS_PASSED){
+        priority_table[i].tcb->quantums_passed=0;
         rlist_push_back(&priority_table[i+1],rlist_pop_front(&priority_table[i]));
       }    
     }
