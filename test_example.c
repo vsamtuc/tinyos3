@@ -7,9 +7,16 @@ BARE_TEST(my_test, "This is a silly test")
   ASSERT(2*2*2 < 10);
 }
 
+BARE_TEST(tzanis, "This is tzanis test")
+{
+  ASSERT(1+1+1==3);
+  ASSERT(2*2*2*2 > 10);
+}
+
 TEST_SUITE(all_my_tests, "These are mine")
 {
   &my_test,
+  &tzanis,
   NULL
 };
 
