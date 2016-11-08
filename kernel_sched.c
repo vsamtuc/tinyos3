@@ -59,8 +59,6 @@ Mutex active_threads_spinlock = MUTEX_INIT;
 //#define MMAPPED_THREAD_MEM 
 #ifdef MMAPPED_THREAD_MEM 
 
-int is_IO = 0;
-
 /*
   Use mmap to allocate a thread. A more detailed implementation can allocate a
   "sentinel page", and change access to PROT_NONE, so that a stack overflow
@@ -402,27 +400,33 @@ void thread_list_priority_calculation(){
   for(int i=0;i<MAX_PRIORITY-1;i++){
     if(!is_rlist_empty(&priority_table[i])){
       rlnode* tmp = &priority_table[i];
-      for(int j=0;j<rlist_len(&priority_table[i]);j++){
-        tmp->tcb->quantums_passed++;
-        tmp=tmp->next;
+      int length = rlist_len(&priority_table[i]);
+      for(int j=0;j<length;j++){
+        if(tmp->tcb!=NULL){
+          tmp->tcb->quantums_passed++;
+          tmp=tmp->next;
+        }
       }      
     }
   }
 
   for(int i=0;i<MAX_PRIORITY-1;i++){
     if(!is_rlist_empty(&priority_table[i])){
-      if(priority_table[i].tcb->quantums_passed>=MAX_QUANTUMS_PASSED){
-        priority_table[i].tcb->quantums_passed=0;
-        rlist_push_back(&priority_table[i+1],rlist_pop_front(&priority_table[i]));
+      if(priority_table[i].tcb!=NULL){
+        if(priority_table[i].tcb->quantums_passed>=MAX_QUANTUMS_PASSED){
+          priority_table[i].tcb->quantums_passed=0;
+          rlist_push_back(&priority_table[i+1],rlist_pop_front(&priority_table[i]));
+        }
       }    
     }
   }
 }
 
-
 /*Our edits*/
+int is_IO = 0;
+
 void current_priority_calculation(int quantum_left){
-  if(is_IO){
+  if(is_IO==1){
     CURTHREAD->priority = (CURTHREAD->priority+1)>=MAX_PRIORITY-1?MAX_PRIORITY-1:CURTHREAD->priority+1;
     is_IO = 0;
   }else if(quantum_left<=0){
