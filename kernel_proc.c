@@ -236,7 +236,7 @@ static Pid_t wait_for_specific_child(Pid_t cpid, int* status)
 
   /* Ok, child is a legal child of mine. Wait for it to exit. */
   while(child->pstate == ALIVE)
-    Cond_Wait(& kernel_mutex, & parent->child_exit);
+    Cond_Wait(& kernel_mutex, & parent->child_exit,0);
   
   cleanup_zombie(child, status);
   
@@ -260,7 +260,7 @@ static Pid_t wait_for_any_child(int* status)
   }
 
   while(is_rlist_empty(& parent->exited_list)) {
-    Cond_Wait(& kernel_mutex, & parent->child_exit);
+    Cond_Wait(& kernel_mutex, & parent->child_exit,0);
   }
 
   PCB* child = parent->exited_list.next->pcb;
@@ -345,7 +345,7 @@ void Exit(int exitval)
   curproc->exitval = exitval;
 
   /* Bye-bye cruel world */
-  sleep_releasing(EXITED, & kernel_mutex);
+  sleep_releasing(EXITED, & kernel_mutex,0);
 }
 
 

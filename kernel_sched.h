@@ -135,9 +135,6 @@ typedef struct core_control_block {
 /** @brief The priority table*/
 rlnode priority_table[MAX_PRIORITY];
 
-/** @brief */
-extern int is_IO;
-
 /** @brief the array of Core Control Blocks (CCB) for the kernel */
 extern CCB cctx[MAX_CORES];
 
@@ -201,7 +198,7 @@ void wakeup(TCB* tcb);
     @param newstate the new state for the thread
     @param mx the mutex to unlock.
    */
-void sleep_releasing(Thread_state newstate, Mutex* mx);
+void sleep_releasing(Thread_state newstate, Mutex* mx, int is_IO);
 
 /**
   @brief Give up the CPU.
@@ -210,7 +207,7 @@ void sleep_releasing(Thread_state newstate, Mutex* mx);
   and possibly switch to a different thread. The scheduler may decide that 
   it will renew the quantum for the current thread.
  */
-void yield(void);
+void yield(int is_IO);
 
 /*Our edits*/
 /**
@@ -230,7 +227,7 @@ void thread_list_priority_calculation(void);
   This function calculates the priority of the current thread after its execution 
   by checking its quantum consumption and if it is I/O  or CPU Bounded.
 */
-void current_priority_calculation(int quantum_left);
+void current_priority_calculation(int quantum_left, int is_IO);
 
 /**
   @brief Enter the scheduler.

@@ -227,7 +227,7 @@ Mutex sched_spinlock = MUTEX_INIT;    /* spinlock for scheduler queue */
 /* Interrupt handler for ALARM */
 void yield_handler()
 {
-  yield();
+  yield(0);
 }
 
 /* Interrupt handle for inter-core interrupts */
@@ -268,7 +268,7 @@ TCB* sched_queue_select()
     }
   }
   Mutex_Unlock(& sched_spinlock);
-  return sel->tcb;  /* When the list is empty, this is NULL */
+  return sel==NULL?NULL:sel->tcb;  /* When the list is empty, this is NULL */
 } 
 
 
@@ -300,7 +300,7 @@ void wakeup(TCB* tcb)
 /*
   Atomically put the current process to sleep, after unlocking mx.
  */
-void sleep_releasing(Thread_state state, Mutex* mx)
+void sleep_releasing(Thread_state state, Mutex* mx, int is_IO)
 {
   assert(state==STOPPED || state==EXITED);
 
@@ -323,7 +323,7 @@ void sleep_releasing(Thread_state state, Mutex* mx)
   Mutex_Unlock(& tcb->state_spinlock);
   
   /* call this to schedule someone else */
-  yield();
+  yield(is_IO);
 
   /* Restore preemption state */
   if(preempt) preempt_on;
@@ -332,7 +332,7 @@ void sleep_releasing(Thread_state state, Mutex* mx)
 
 /* This function is the entry point to the scheduler's context switching */
 
-void yield()
+void yield(int is_IO)
 { 
   /* Reset the timer, so that we are not interrupted by ALARM */
   int quantum_left = bios_cancel_timer();
@@ -365,7 +365,7 @@ void yield()
 
   /*Our edits*/
   thread_list_priority_calculation();
-  current_priority_calculation(quantum_left);
+  current_priority_calculation(quantum_left, is_IO);
 
   /* Get next */
   TCB* next = sched_queue_select();
@@ -415,6 +415,7 @@ void thread_list_priority_calculation(){
       if(priority_table[i].tcb!=NULL){
         if(priority_table[i].tcb->quantums_passed>=MAX_QUANTUMS_PASSED){
           priority_table[i].tcb->quantums_passed=0;
+          priority_table[i].tcb->priority++;
           rlist_push_back(&priority_table[i+1],rlist_pop_front(&priority_table[i]));
         }
       }    
@@ -422,13 +423,10 @@ void thread_list_priority_calculation(){
   }
 }
 
-/*Our edits*/
-int is_IO = 0;
 
-void current_priority_calculation(int quantum_left){
+void current_priority_calculation(int quantum_left, int is_IO){
   if(is_IO==1){
     CURTHREAD->priority = (CURTHREAD->priority+1)>=MAX_PRIORITY-1?MAX_PRIORITY-1:CURTHREAD->priority+1;
-    is_IO = 0;
   }else if(quantum_left<=0){
     CURTHREAD->priority = (CURTHREAD->priority-1)<=0?0:CURTHREAD->priority-1;
   }
@@ -495,12 +493,12 @@ void gain(int preempt)
 static void idle_thread()
 {
   /* When we first start the idle thread */
-  yield();
+  yield(0);
 
   /* We come here whenever we cannot find a ready thread for our core */
   while(active_threads>0) {
     cpu_core_halt();
-    yield();
+    yield(0);
   }
 
   /* If the idle thread exits here, we are leaving the scheduler! */

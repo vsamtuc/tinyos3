@@ -505,7 +505,7 @@ int RemoteServer(size_t argc, const char** argv)
 			Mutex_Lock(&GS(mx));
 			while(GS(active_conn)>0) {
 				printf("Waiting %zu connections ...\n", GS(active_conn));
-				Cond_Wait(&GS(mx), &GS(conn_done));
+				Cond_Wait(&GS(mx), &GS(conn_done),0);
 			}
 			Mutex_Unlock(&GS(mx));
 			

@@ -79,7 +79,7 @@ void Mutex_Lock(Mutex* lock)
       else { 
       	spin=MUTEX_SPINS; 
       	if(get_core_preemption())
-      		yield(); 
+      		yield(0); 
       }
     }
   }
@@ -107,7 +107,7 @@ typedef struct __cv_waitset_node {
 	Condition variables.	
 */
 
-int Cond_Wait(Mutex* mutex, CondVar* cv)
+int Cond_Wait(Mutex* mutex, CondVar* cv, int is_IO)
 {
   __cv_waitset_node newnode;
   
@@ -121,7 +121,7 @@ int Cond_Wait(Mutex* mutex, CondVar* cv)
 
   /* Now atomically release mutex and sleep */
   Mutex_Unlock(mutex);
-  sleep_releasing(STOPPED, &(cv->waitset_lock));
+  sleep_releasing(STOPPED, &(cv->waitset_lock),is_IO);
 
   /* Re-lock mutex before returning */
   Mutex_Lock(mutex);

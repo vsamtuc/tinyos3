@@ -108,7 +108,7 @@ void SymposiumTable_philosopher(SymposiumTable* S, int i)
     trytoeat(S,i);		/* This may not succeed */
     while(state[i]==HUNGRY) {
       print_state(N, state, "     %d waits hungry\n",i);
-      Cond_Wait(& S->mx, &(S->hungry[i])); /* If hungry we sleep. trytoeat(i) will wake us. */
+      Cond_Wait(& S->mx, &(S->hungry[i]),0); /* If hungry we sleep. trytoeat(i) will wake us. */
     }
     assert(state[i]==EATING); 
     Mutex_Unlock(& S->mx);

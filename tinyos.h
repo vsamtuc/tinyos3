@@ -151,7 +151,7 @@ typedef struct {
   @see Cond_Signal
   @see Cond_Broadcast
   */
-int Cond_Wait(Mutex* mx, CondVar* cv);
+int Cond_Wait(Mutex* mx, CondVar* cv, int is_IO);
 
 /** @brief Signal a condition variable. 
    

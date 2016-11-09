@@ -116,8 +116,7 @@ int serial_read(void* dev, char *buf, unsigned int size)
       count++;
     }
     else if(count==0) {
-      is_IO = 1;
-      Cond_Wait(&dcb->spinlock, &dcb->rx_ready);
+      Cond_Wait(&dcb->spinlock, &dcb->rx_ready,1);
     }
     else
       break;
@@ -157,7 +156,7 @@ int serial_write(void* dev, const char* buf, unsigned int size)
     } 
     else if(count==0)
     {
-      yield();
+      yield(0);
     }
     else
       break;
