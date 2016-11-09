@@ -345,7 +345,7 @@ void Exit(int exitval)
   curproc->exitval = exitval;
 
   /* Bye-bye cruel world */
-  sleep_releasing(EXITED, & kernel_mutex,0);
+  sleep_releasing(EXITED, & kernel_mutex);
 }
 
 

@@ -26,6 +26,7 @@
 #include "bios.h"
 #include "tinyos.h"
 
+#include "unit_testing.h"
 /*****************************
  *
  *  The Thread Control Block
@@ -62,6 +63,12 @@ typedef enum {
   NORMAL_THREAD   /**< Marks a normal thread */
 } Thread_type;
 
+typedef enum {
+  DEFAULT,
+  IO,
+  DEADLOCKED
+} Yield_state;
+
 /**
   @brief The thread control block
 
@@ -97,6 +104,7 @@ typedef struct thread_control_block
   /*Our edits*/
   int priority;   /**<the TCB's current priority value*/
   int quantums_passed; /**<The number of quantums passed after the last execution of the current trhead*/
+  Yield_state yield_state;
 } TCB;
 
 
@@ -127,10 +135,10 @@ typedef struct core_control_block {
  
 /*Our edits*/
 /** @brief The max priority value*/
-#define MAX_PRIORITY (5)
+#define MAX_PRIORITY (15)
 
 /** @brief The max quantums number to pass before increasing priority to too much waiting thread*/
-#define MAX_QUANTUMS_PASSED (100)
+#define MAX_QUANTUMS_PASSED (80)
 
 /** @brief The priority table*/
 rlnode priority_table[MAX_PRIORITY];
@@ -198,7 +206,7 @@ void wakeup(TCB* tcb);
     @param newstate the new state for the thread
     @param mx the mutex to unlock.
    */
-void sleep_releasing(Thread_state newstate, Mutex* mx, int is_IO);
+void sleep_releasing(Thread_state newstate, Mutex* mx);
 
 /**
   @brief Give up the CPU.
@@ -207,7 +215,7 @@ void sleep_releasing(Thread_state newstate, Mutex* mx, int is_IO);
   and possibly switch to a different thread. The scheduler may decide that 
   it will renew the quantum for the current thread.
  */
-void yield(int is_IO);
+void yield();
 
 /*Our edits*/
 /**
@@ -227,7 +235,7 @@ void thread_list_priority_calculation(void);
   This function calculates the priority of the current thread after its execution 
   by checking its quantum consumption and if it is I/O  or CPU Bounded.
 */
-void current_priority_calculation(int quantum_left, int is_IO);
+void current_priority_calculation(int quantum_left);
 
 /**
   @brief Enter the scheduler.

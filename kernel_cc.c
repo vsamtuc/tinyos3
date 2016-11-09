@@ -60,26 +60,33 @@ Mutex kernel_mutex = MUTEX_INIT;          /* lock for resource tables */
 
 /*
  	Pre-emption aware mutex.
- 	-------------------------
+  -------------------------
 
- 	This mutex will act as a spinlock if preemption is off, and a
- 	yielding mutex if it is on.
+  This mutex will act as a spinlock if preemption is off, and a
+  yielding mutex if it is on.
 
  */
+  /*Our edits*/
 void Mutex_Lock(Mutex* lock)
 {
 #define MUTEX_SPINS 1000
-
+#define MAX_SPIN_COUNTER (10)
   int spin=MUTEX_SPINS;
+  int spin_counter = 0;
   while(__atomic_test_and_set(lock,__ATOMIC_ACQUIRE)) {
     while(__atomic_load_n(lock, __ATOMIC_RELAXED)) {
       __builtin_ia32_pause();      
       if(spin>0) 
-      	spin--; 
+        spin--; 
       else { 
-      	spin=MUTEX_SPINS; 
-      	if(get_core_preemption())
-      		yield(0); 
+        spin=MUTEX_SPINS; 
+        spin_counter++;
+        if(get_core_preemption()){
+          if(spin_counter>=MAX_SPIN_COUNTER){
+            CURTHREAD->yield_state=DEADLOCKED;
+          }
+          yield();
+        }
       }
     }
   }
@@ -112,7 +119,9 @@ int Cond_Wait(Mutex* mutex, CondVar* cv, int is_IO)
   __cv_waitset_node newnode;
   
   newnode.thread = CURTHREAD;
-
+  if(is_IO){
+    CURTHREAD->yield_state=IO;
+  }
   Mutex_Lock(&(cv->waitset_lock));
 
   /* We just push the current thread to the head of the list */
@@ -121,7 +130,7 @@ int Cond_Wait(Mutex* mutex, CondVar* cv, int is_IO)
 
   /* Now atomically release mutex and sleep */
   Mutex_Unlock(mutex);
-  sleep_releasing(STOPPED, &(cv->waitset_lock),is_IO);
+  sleep_releasing(STOPPED, &(cv->waitset_lock));
 
   /* Re-lock mutex before returning */
   Mutex_Lock(mutex);
