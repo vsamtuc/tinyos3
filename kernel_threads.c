@@ -3,12 +3,12 @@
 #include "kernel_sched.h"
 #include "kernel_proc.h"
 
-/** 
+/**
   @brief Create a new thread in the current process.
   */
 Tid_t CreateThread(Task task, int argl, void* args)
 {
-	return NOTHREAD;
+  return NOTHREAD;
 }
 
 /**
@@ -16,7 +16,7 @@ Tid_t CreateThread(Task task, int argl, void* args)
  */
 Tid_t ThreadSelf()
 {
-	return (Tid_t) CURTHREAD;
+  return (Tid_t) CURTHREAD;
 }
 
 /**
@@ -24,7 +24,7 @@ Tid_t ThreadSelf()
   */
 int ThreadJoin(Tid_t tid, int* exitval)
 {
-	return -1;
+  return -1;
 }
 
 /**
@@ -32,7 +32,7 @@ int ThreadJoin(Tid_t tid, int* exitval)
   */
 int ThreadDetach(Tid_t tid)
 {
-	return -1;
+  return -1;
 }
 
 /**
@@ -40,7 +40,6 @@ int ThreadDetach(Tid_t tid)
   */
 void ThreadExit(int exitval)
 {
-
 }
 
 
@@ -53,17 +52,17 @@ void ThreadExit(int exitval)
   */
 int ThreadInterrupt(Tid_t tid)
 {
-	return -1;
+  return -1;
 }
 
 
 /**
-  @brief Return the interrupt flag of the 
+  @brief Return the interrupt flag of the
   current thread.
   */
 int ThreadIsInterrupted()
 {
-	return 0;
+  return 0;
 }
 
 /**
@@ -72,6 +71,4 @@ int ThreadIsInterrupted()
   */
 void ThreadClearInterrupt()
 {
-
 }
-
