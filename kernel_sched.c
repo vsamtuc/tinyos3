@@ -152,6 +152,9 @@ TCB* spawn_thread(PCB* pcb, void (*func)())
   tcb->phase = CTX_CLEAN;
   tcb->state_spinlock = MUTEX_INIT;
   tcb->thread_func = func;
+  tcb->priority = MAX_PRIORITY/2;
+  tcb->quantums_passed = 0;
+  tcb->yield_state = DEFAULT;
   rlnode_init(& tcb->sched_node, tcb);  /* Intrusive list node */
 
 
@@ -195,7 +198,6 @@ void release_TCB(TCB* tcb)
   Mutex_Unlock(&active_threads_spinlock);
 }
 
-
 /*
  *
  * Scheduler
@@ -218,7 +220,7 @@ CCB cctx[MAX_CORES];
 */
 
 
-rlnode SCHED;                         /* The scheduler queue */
+//rlnode SCHED;                         /* The scheduler queue */
 Mutex sched_spinlock = MUTEX_INIT;    /* spinlock for scheduler queue */
 
 
@@ -243,7 +245,7 @@ void sched_queue_add(TCB* tcb)
 {
   /* Insert at the end of the scheduling list */
   Mutex_Lock(& sched_spinlock);
-  rlist_push_back(& SCHED, & tcb->sched_node);
+  rlist_push_back(& priority_table[tcb->priority], & tcb->sched_node);
   Mutex_Unlock(& sched_spinlock);
 
   /* Restart possibly halted cores */
@@ -258,10 +260,15 @@ void sched_queue_add(TCB* tcb)
 TCB* sched_queue_select()
 {
   Mutex_Lock(& sched_spinlock);
-  rlnode * sel = rlist_pop_front(& SCHED);
+  rlnode * sel = NULL;
+  for(int i=MAX_PRIORITY-1;i>=0;i--){
+    if(!is_rlist_empty(&priority_table[i])){
+      sel = rlist_pop_front(& priority_table[i]);
+      break;
+    }
+  }
   Mutex_Unlock(& sched_spinlock);
-
-  return sel->tcb;  /* When the list is empty, this is NULL */
+  return sel==NULL?NULL:sel->tcb;  /* When the list is empty, this is NULL */
 } 
 
 
@@ -328,7 +335,7 @@ void sleep_releasing(Thread_state state, Mutex* mx)
 void yield()
 { 
   /* Reset the timer, so that we are not interrupted by ALARM */
-  bios_cancel_timer();
+  int quantum_left = bios_cancel_timer();
 
   /* We must stop preemption but save it! */
   int preempt = preempt_off;
@@ -355,6 +362,10 @@ void yield()
       assert(0);  /* It should not be READY or EXITED ! */
   }
   Mutex_Unlock(& current->state_spinlock);
+
+  /*Our edits*/
+    thread_list_priority_calculation();
+    current_priority_calculation(quantum_left);
 
   /* Get next */
   TCB* next = sched_queue_select();
@@ -384,6 +395,47 @@ void yield()
 }
 
 
+/*Our edits*/
+void thread_list_priority_calculation(){
+  for(int i=0;i<MAX_PRIORITY-1;i++){
+    if(!is_rlist_empty(&priority_table[i])){
+      rlnode* tmp = &priority_table[i];
+      int length = rlist_len(&priority_table[i]);
+      for(int j=0;j<length;j++){
+        if(tmp->tcb!=NULL){
+          tmp->tcb->quantums_passed++;
+          tmp=tmp->next;
+        }
+      }      
+    }
+  }
+
+  for(int i=0;i<MAX_PRIORITY-1;i++){
+    if(!is_rlist_empty(&priority_table[i])){
+      if(priority_table[i].tcb!=NULL){
+        if(priority_table[i].tcb->quantums_passed>=MAX_QUANTUMS_PASSED){
+          priority_table[i].tcb->quantums_passed=0;
+          priority_table[i].tcb->priority++;
+          rlist_push_back(&priority_table[i+1],rlist_pop_front(&priority_table[i]));
+        }
+      }    
+    }
+  }
+}
+
+
+void current_priority_calculation(int quantum_left){
+  if(CURTHREAD->yield_state==IO){
+    CURTHREAD->priority = (CURTHREAD->priority+1)>=MAX_PRIORITY-1?MAX_PRIORITY-1:CURTHREAD->priority+1;
+  }else if(CURTHREAD->yield_state==DEADLOCKED){
+      CURTHREAD->priority=0;
+      CURTHREAD->yield_state=DEFAULT;
+  }else if(quantum_left<=0){
+    CURTHREAD->priority = (CURTHREAD->priority-1)<=0?0:CURTHREAD->priority-1;
+  }
+}
+
+
 /*
   This function must be called at the beginning of each new timeslice.
   This is done mostly from inside yield(). 
@@ -405,6 +457,8 @@ void gain(int preempt)
   Mutex_Lock(& current->state_spinlock);
   current->state = RUNNING;
   current->phase = CTX_DIRTY;
+  /*Our edits*/
+  current->quantums_passed = 0; /* Set the current thread's quantums_passed to 0 because it is going to execute again*/
   Mutex_Unlock(& current->state_spinlock);
 
   /* Take care of the previous thread */
@@ -456,12 +510,16 @@ static void idle_thread()
 }
 
 
+
+/*Our edits*/
 /*
-  Initialize the scheduler queue
+  Initialize the scheduler priority table queues
  */
 void initialize_scheduler()
 {
-  rlnode_init(&SCHED, NULL);
+  for(int i=0;i<MAX_PRIORITY;i++){
+    rlnode_new(&priority_table[i]);
+  }
 }
 
 
