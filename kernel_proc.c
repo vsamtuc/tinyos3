@@ -318,13 +318,13 @@ void sys_Exit(int exitval)
      and signal the initial task */
   if(!is_rlist_empty(& curproc->exited_list)) {
     rlist_append(& initpcb->exited_list, &curproc->exited_list);
-    Cond_Broadcast(& initpcb->child_exit);
+    kernel_broadcast(& initpcb->child_exit);
   }
 
   /* Put me into my parent's exited list */
   if(curproc->parent != NULL) {   /* Maybe this is init */
     rlist_push_front(& curproc->parent->exited_list, &curproc->exited_node);
-    Cond_Broadcast(& curproc->parent->child_exit);
+    kernel_broadcast(& curproc->parent->child_exit);
   }
 
   /* Disconnect my main_thread */

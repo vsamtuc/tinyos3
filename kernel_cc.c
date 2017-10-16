@@ -11,15 +11,26 @@
 	@file kernel_cc.c
 
 	@brief The implementation for concurrency control .
+
+	Locks for scheduler and device drivers. Because we support 
+    multiple cores, we need to avoid race conditions
+    with an interrupt handler on the same core, and also to
+    avoid race conditions between cores.
   */
+
 
 /*
  	Pre-emption aware mutex.
  	-------------------------
 
  	This mutex will act as a spinlock if preemption is off, and a
- 	yielding mutex if it is on.
+ 	yielding mutex if preemption is on.
 
+ 	Therefore, we can call the same function from both the preemptive and
+ 	the non-preemptive domain of the kernel.
+
+ 	The implementation is based on GCC atomics, as the standard C11 primitives
+ 	are not supported by all recent compilers. Eventually, this will change.
  */
 void Mutex_Lock(Mutex* lock)
 {
@@ -48,7 +59,9 @@ void Mutex_Unlock(Mutex* lock)
 }
 
 
-
+/*
+	Condition variables.	
+*/
 
 
 /** \cond HELPER Helper structure for condition variables. */
@@ -61,10 +74,10 @@ typedef struct __cv_waiter {
 } __cv_waiter;
 /** \endcond */
 
-/*
-	Condition variables.	
-*/
-
+/**
+   @internal
+   A helper routine to remove a condition waiter from the CondVar ring.
+ */
 static inline void remove_from_ring(CondVar* cv, __cv_waiter* w)
 {
 	if(cv->waitset == w) {
@@ -76,7 +89,34 @@ static inline void remove_from_ring(CondVar* cv, __cv_waiter* w)
 }
 
 
-int cv_wait(Mutex* mutex, CondVar* cv, 
+/** 
+   @internal
+   @brief Wait on a condition variable, specifying the cause. 
+
+	This function is the basic implementation for the 'wait' operation on
+	condition variables. It is used to implement the @c Cond_Wait and @c Cond_TimedWait
+	system calls, as well as internal kernel 'wait' functionality.
+
+  The function must be called only while we have locked the mutex that 
+  is associated with this call. It will put the calling thread to sleep, 
+  unlocking the mutex. These operations happen atomically.  
+
+  When the thread is woken up later (by another thread that calls @c 
+  Cond_Signal or @c Cond_Broadcast, or because the timeout has expired, or
+  because the thread was awoken by another kernel routine), 
+  it first re-locks the mutex and then returns.  
+
+  @param mx The mutex to be unlocked as the thread sleeps.
+  @param cv The condition variable to sleep on.
+  @param cause A cause provided to the kernel scheduler.
+  @param timeout The time to sleep, or @c NO_TIMEOUT to sleep for ever.
+
+  @returns 1 if this thread was woken up by signal/broadcast, 0 otherwise
+
+  @see Cond_Signal
+  @see Cond_Broadcast
+  */
+static int cv_wait(Mutex* mutex, CondVar* cv, 
 		enum SCHED_CAUSE cause, TimerDuration timeout)
 {
 	__cv_waiter waiter = { .thread=CURTHREAD, .signalled = 0, .removed=0 };
@@ -90,12 +130,12 @@ int cv_wait(Mutex* mutex, CondVar* cv,
 	} else {
 		cv->waitset = &waiter;
 	}
+
 	/* Now atomically release mutex and sleep */
 	Mutex_Unlock(mutex);
-
 	sleep_releasing(STOPPED, &(cv->waitset_lock), cause, timeout);
 
-	/* We must check wether we were signaled, and tidy up */
+	/* Woke up, we must check wether we were signaled, and tidy up */
 	Mutex_Lock(&(cv->waitset_lock));
 	if(! waiter.removed) {
 		assert(! waiter.signalled);
@@ -108,14 +148,6 @@ int cv_wait(Mutex* mutex, CondVar* cv,
 	Mutex_Lock(mutex);
 	return waiter.signalled;
 }
-
-
-int Cond_Wait(Mutex* mutex, CondVar* cv)
-{
-	return cv_wait(mutex, cv, SCHED_USER, NO_TIMEOUT);
-}
-
-
 
 
 /**
@@ -138,6 +170,18 @@ static inline void cv_signal(CondVar* cv)
 	}
 }
 
+
+
+int Cond_Wait(Mutex* mutex, CondVar* cv)
+{
+	return cv_wait(mutex, cv, SCHED_USER, NO_TIMEOUT);
+}
+
+int Cond_TimedWait(Mutex* mutex, CondVar* cv, timeout_t timeout)
+{
+	/* We have to translate timeout from msec to usec */
+	return cv_wait(mutex, cv, SCHED_USER, timeout*1000ul);
+}
 
 
 void Cond_Signal(CondVar* cv)
@@ -185,12 +229,6 @@ int get_core_preemption()
 
 
 
-/*  Locks for scheduler and device drivers. Because we support 
- *  multiple cores, we need to avoid race conditions
- *  with an interrupt handler on the same core, and also to
- *  avoid race conditions between cores.
- */
-
 /*
  *
  * The kernel locks
@@ -200,29 +238,18 @@ int get_core_preemption()
 /**
  * @brief The kernel lock.
  *
- * This mutex is used to protect most of the resources in kernel-space (the preemptive domain
- * of the kernel). 
- */
-Mutex kernel_mutex = MUTEX_INIT;          /* lock for resource tables */
-
-/*
-	We provide two implementations of kernel locking, one based on a mutex
-	and one based on semaphore. 
-
-	In timing tests, they are, more or less similar.
+ * Kernel locking is provided by a semaphore, implemented as a monitor.
+ * A semaphre for kernel locking has the advantage that 
  */
 
-
-/* 
-	Semaphore-based implementation
- */
-
+/* This mutex is used to implement the kernel semaphore as a monitor. */
+static Mutex kernel_mutex = MUTEX_INIT;
 
 /* Semaphore counter */
-int kernel_sem = 1;
+static int kernel_sem = 1;
 
 /* Semaphore condition */
-CondVar kernel_sem_cv = COND_INIT;
+static CondVar kernel_sem_cv = COND_INIT;
 
 void kernel_lock()
 {

@@ -229,17 +229,16 @@ static void sched_register_timeout(TCB* tcb, TimerDuration timeout)
   if(timeout!=NO_TIMEOUT){
 
   	/* set the wakeup time */
-  	tcb->wakeup_time = (timeout==NO_TIMEOUT) ? NO_TIMEOUT : bios_clock()+timeout;
+  	TimerDuration curtime = bios_clock();
+  	tcb->wakeup_time = (timeout==NO_TIMEOUT) ? NO_TIMEOUT : curtime+timeout;
 
   	/* add to the TIMEOUT_LIST in sorted order */
-  	for(rlnode* n = TIMEOUT_LIST.next; n!=&TIMEOUT_LIST; n=n->next) {
-  		if(tcb->wakeup_time <= n->tcb->wakeup_time) {
-  			/* insert before node n */
-	  		rl_splice(n->prev, & tcb->sched_node);
-	  		break;
-  		}
-  	}
-
+  	rlnode* n = TIMEOUT_LIST.next;
+  	for( ; n!=&TIMEOUT_LIST; n=n->next) 
+  		/* skip earlier entries */
+  		if(tcb->wakeup_time < n->tcb->wakeup_time) break;
+  	/* insert before n */
+	rl_splice(n->prev, & tcb->sched_node);
   }
 }
 

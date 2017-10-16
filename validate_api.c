@@ -83,8 +83,6 @@ BARE_TEST(test_boot,
 
 
 
-
-
 /*
 	Test that the child process created, gets the same pid as the
 	parent got returned from exec.
@@ -337,6 +335,64 @@ BOOT_TEST(test_orphans_adopted_by_init,
 
 	ASSERT(sum == 315);
 
+	return 0;
+}
+
+
+
+/*********************************************
+ *
+ *
+ *
+ *  Synchronization tests
+ *
+ *
+ *
+ *********************************************/
+
+/*
+	Test that a timed wait on a condition variable terminates
+ */
+
+BOOT_TEST(test_cond_timedwait, 
+	"Test that timed waits on a condition variable terminate without blocking."
+	)
+{
+
+	unsigned long tspec2msec(struct timespec t)
+	{
+		return 1000ul*t.tv_sec + t.tv_nsec/1000000ul;
+	}
+
+
+	int do_timeout(int argl, void* args) {
+		timeout_t t = *((timeout_t *) args);
+
+		Mutex mx = MUTEX_INIT;
+		CondVar cv = COND_INIT;
+
+		struct timespec t1, t2;
+		clock_gettime(CLOCK_REALTIME, &t1);
+
+		Mutex_Lock(&mx);
+		Cond_TimedWait(&mx, &cv, t);
+
+		clock_gettime(CLOCK_REALTIME, &t2);
+
+		unsigned long Dt = tspec2msec(t2)-tspec2msec(t1);
+
+		/* Allow a large, 20% error */
+		ASSERT(abs(Dt-t)*5 <= Dt);
+
+		return 0;
+	}
+
+	for(timeout_t t=500; t < 1000; t+=100) {
+		Exec(do_timeout, sizeof(t), &t);
+	}
+	for(timeout_t t=550; t < 1000; t+=100) {
+		Exec(do_timeout, sizeof(t), &t);
+	}
 	return 0;
 }
 
@@ -746,6 +802,7 @@ TEST_SUITE(basic_tests,
 	&test_main_return_returns_status,
 	&test_wait_for_any_child,
 	&test_orphans_adopted_by_init,
+	&test_cond_timedwait,
 	&test_null_device,
 	&test_get_terminals,
 	&test_open_terminals,

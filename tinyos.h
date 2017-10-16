@@ -28,6 +28,14 @@
   */
 typedef int Pid_t;		/* The PID type  */
 
+/**
+  @brief An integer type for time intervals.
+
+  The unit is milliseconds.
+*/
+typedef unsigned long timeout_t;
+
+
 /** @brief The invalid PID */
 #define NOPROC (-1)
 
@@ -138,12 +146,7 @@ typedef struct {
   first re-locks the mutex and then returns.  
   A thread may wake up if,
   - another thread called @c Cond_Signal or @c Cond_Broadcast
-  - the thread becomes interrupted
   - other reasons, not specified
-
-  Note that, it may be possible for both a signal and an interrupt
-  to have happened. The caller is responsible for maintaining 
-  correct monitor semantics in this case.
 
   @param mx The mutex to be unlocked as the thread sleeps.
   @param cv The condition variable to sleep on.
@@ -152,6 +155,31 @@ typedef struct {
   @see Cond_Broadcast
   */
 int Cond_Wait(Mutex* mx, CondVar* cv);
+
+
+/** @brief Wait on a condition variable. 
+
+  This must be called only while we have locked the mutex that is 
+  associated with this call. It will put the calling thread to sleep, 
+  unlocking the mutex. These operations happen atomically.  
+
+  When the thread is woken up later, it
+  first re-locks the mutex and then returns.  
+  A thread may wake up if,
+  - another thread called @c Cond_Signal or @c Cond_Broadcast
+  - the timeout expired
+  - other reasons, not specified
+
+  @param mx The mutex to be unlocked as the thread sleeps.
+  @param cv The condition variable to sleep on.
+  @param timeout The time in milliseconds to wait blocked on the condition.
+  @returns 1 if this thread was woken up by signal/broadcast, 0 otherwise
+  @see Cond_Signal
+  @see Cond_Broadcast
+  */
+int Cond_TimedWait(Mutex* mx, CondVar* cv, timeout_t timeout);
+
+
 
 /** @brief Signal a condition variable. 
    
@@ -591,13 +619,6 @@ int Listen(Fid_t sock);
  */
 Fid_t Accept(Fid_t lsock);
 
-
-/**
-	@brief An integer type for time intervals.
-
-	The unit is milliseconds.
-*/
-typedef long int timeout_t;
 
 
 /**

@@ -251,7 +251,7 @@ void initialize_scheduler(void);
 
   This is the default quantum for each thread, in microseconds.
   */
-#define QUANTUM (50000L)
+#define QUANTUM (10000L)
 
 /** @} */
 

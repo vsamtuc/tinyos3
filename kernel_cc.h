@@ -30,29 +30,6 @@
 #include "kernel_sched.h"
 
 
-/** @brief Wait on a condition variable, specifying the cause. 
-
-  This function must be called only while we have locked the mutex that 
-  is associated with this call. It will put the calling thread to sleep, 
-  unlocking the mutex. These operations happen atomically.  
-
-  When the thread is woken up later (by another thread that calls @c 
-  Cond_Signal or @c Cond_Broadcast, or because the timeout has expired, or
-  because the thread was awoken by another kernel routine), 
-  it first re-locks the mutex and then returns.  
-
-  @param mx The mutex to be unlocked as the thread sleeps.
-  @param cv The condition variable to sleep on.
-  @param cause A cause provided to the kernel scheduler.
-  @param timeout The time to sleep, or @c NO_TIMEOUT to sleep for ever.
-
-  @returns 1 if this thread was woken up by signal/broadcast, 0 otherwise
-
-  @see Cond_Signal
-  @see Cond_Broadcast
-  */
-int cv_wait(Mutex* mx, CondVar* cv, 
-	enum SCHED_CAUSE cause, TimerDuration timeout);
 
 
 /*
@@ -84,6 +61,8 @@ int kernel_wait_wchan(CondVar* cv, enum SCHED_CAUSE cause,
 
 /**
 	@brief Signal a kernel condition to one waiter.
+
+	This call must be made 
   */
 void kernel_signal(CondVar* cv);
 
@@ -95,6 +74,9 @@ void kernel_broadcast(CondVar* cv);
 
 /**
 	@brief Put thread to sleep, unlocking the kernel.
+
+	System calls should call this function instead of @c sleep_releasing,
+	as the kernel lock is not a mutex.
   */
 void kernel_sleep(Thread_state state, enum SCHED_CAUSE cause);
 

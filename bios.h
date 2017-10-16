@@ -330,7 +330,13 @@ TimerDuration bios_cancel_timer();
 /**
 	@brief Get the current time from the hardware clock.
 
-	@see bios_set_timer
+	This function returns a real-time clock value, in usec.
+	The value of the clock is 10 times the number of seconds since
+	the epoch. 
+
+	The resolution of the clock is very low, currently 
+	around 100 msec. Therefore, it is inappropriate for any type of
+	precise timing.
  */
 TimerDuration bios_clock();
 

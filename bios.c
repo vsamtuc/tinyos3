@@ -105,10 +105,10 @@ typedef unsigned long coarse_clock_t;
 static volatile coarse_clock_t  system_clock;
 
 /* This is how fast the coarse clock is updated (in usec) */
-#define SLOW_HZ 100000
+#define SLOW_HZ 10000
 
 /* This gives a rough serial port timeout of 300 msec */
-#define SERIAL_TIMEOUT 3
+#define SERIAL_TIMEOUT 300
 
 static void sigusr1_handler(int signo, siginfo_t* si, void* ctx);
 
@@ -292,7 +292,7 @@ static coarse_clock_t get_coarse_time()
 {
 	struct timespec curtime;
 	CHECK(clock_gettime(CLOCK_REALTIME, &curtime));
-	return curtime.tv_nsec / 100000000 + curtime.tv_sec*10;
+	return curtime.tv_nsec / 1000000 + curtime.tv_sec*1000;
 }
 
 
@@ -551,12 +551,12 @@ static void PIC_daemon(uint serialno)
 		struct timeval sleeptime = { .tv_sec=0, .tv_usec = SLOW_HZ };
 		int selcode = select(maxfd, &readfds, &writefds, NULL, &sleeptime);
 
+		/* update system clock */
+		system_clock = get_coarse_time();
+
 		/* process */
 		if(selcode<0) continue;
 		__atomic_fetch_add(&PIC_loops,1,__ATOMIC_RELAXED);
-
-		/* update system clock */
-		system_clock = get_coarse_time();
 
 		/* First raise ALRM as needed (timers have priority :-) */
 		if( FD_ISSET(sigalrmfd, &readfds) ) {
@@ -874,7 +874,7 @@ TimerDuration bios_cancel_timer()
 
 TimerDuration bios_clock()
 {
-	return system_clock * 100000;
+	return system_clock * 1000ul;
 }	
 
 
