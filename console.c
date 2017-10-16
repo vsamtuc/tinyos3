@@ -11,17 +11,20 @@
 
 extern FILE *saved_in, *saved_out;
 
-static int stdio_read(void* this, char *buf, unsigned int size)
+static int stdio_read(void* __this, char *buf, unsigned int size)
 {
-	//assert(this == saved_in);
 	size_t ret;
 
 	while(1) {
-		ret = fread_unlocked(buf, 1, size, (FILE*)this);
+		ret = fread_unlocked(buf, 1, size, saved_in);
 
-		if(ferror(this)) {
-			assert(errno==EINTR);
-			clearerr(this);
+		if(ferror_unlocked(saved_in)) {			
+			//assert(errno==EINTR);
+			if(errno!=EINTR) {
+				char buf[101];
+				fprintf(stderr, "error: %s\n",strerror_r(errno, buf, 100));				
+			}
+			clearerr_unlocked(saved_in);
 		} else {
 			break;
 		}
@@ -30,10 +33,9 @@ static int stdio_read(void* this, char *buf, unsigned int size)
 }
 
 
-static int stdio_write(void* this, const char* buf, unsigned int size)
+static int stdio_write(void* __this, const char* buf, unsigned int size)
 {
-	assert(this == saved_out);
-	return fwrite_unlocked(buf, 1, size, (FILE*)this);
+	return fwrite_unlocked(buf, 1, size, saved_out);
 }
 
 static int stdio_close(void* this) { return 0; }
@@ -57,8 +59,8 @@ void tinyos_pseudo_console()
 		abort();
 	}
 
-	fcb[0]->streamobj = fdopen(0, "w+");
-	fcb[1]->streamobj = saved_out;
+	fcb[0]->streamobj = NULL;
+	fcb[1]->streamobj = NULL;
 
 	fcb[0]->streamfunc = &__stdio_ops;
 	fcb[1]->streamfunc = &__stdio_ops;

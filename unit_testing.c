@@ -243,9 +243,9 @@ void term_proxy_daemon_add(proxy_daemon* this, const char* pattern)
 	CHECKRC(pthread_mutex_unlock(& this->mx));	
 }
 
-const char* term_proxy_daemon_get(proxy_daemon* this)
+char* term_proxy_daemon_get(proxy_daemon* this)
 {
-	const char* pattern = NULL;
+	char* pattern = NULL;
 	CHECKRC(pthread_mutex_lock(& this->mx));
 	/* Wait for pattern(s) or completion */
 	while( (! this->complete) && is_rlist_empty(& this->pattern) )
@@ -254,7 +254,7 @@ const char* term_proxy_daemon_get(proxy_daemon* this)
 	/* If there is a pattern, return it */
 	if(! is_rlist_empty(& this->pattern)) {
 		rlnode* node = rlist_pop_front(& this->pattern);
-		pattern = (const char*) (node->obj);
+		pattern = (char*) (node->obj);
 		free(node);
 	}
 	CHECKRC(pthread_mutex_unlock(& this->mx));
@@ -275,9 +275,10 @@ void* term_proxy_daemon(void* arg)
 {
 	proxy_daemon* this = (proxy_daemon*)arg;
 	while(1) {
-		const char* pattern = term_proxy_daemon_get(this); 
+		char* pattern = term_proxy_daemon_get(this); 
 		if(pattern==NULL) break;
 		this->proc(this, pattern);
+		free(pattern);
 	}
 	CHECK(close(this->fd));
 	return NULL;

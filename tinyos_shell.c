@@ -323,7 +323,7 @@ int More(size_t argc, const char** argv)
 			if(count % page == 0) {
 				/* Here, we have to use getline, unless we change terminal */
 				fprintf(fout, "press enter to continue:");
-				getline(&_line, &_lno, fkbd);
+				(void)getline(&_line, &_lno, fkbd);
 			}
 		}
 
@@ -333,6 +333,7 @@ int More(size_t argc, const char** argv)
 	fclose(fin);
 	fclose(fout);
 	fclose(fkbd);
+	free(_line);
 	return 0;
 }
 
@@ -492,6 +493,8 @@ int RemoteServer(size_t argc, const char** argv)
 			break;
 		}
 
+		assert(linebuff!=NULL);
+
 		if(strcmp(linebuff, "q\n")==0) {
 			/* Quit */
 			GS(quit) = 1;
@@ -528,7 +531,7 @@ int RemoteServer(size_t argc, const char** argv)
 	}
 
 	fclose(fin);
-
+	free(linebuff);
 	return 0;
 }
 
@@ -763,12 +766,6 @@ int RemoteClient(size_t argc, const char** argv)
 
 int process_builtin(int argc, const char** argv)
 {
-	if(strcmp(argv[0], "exit")==0) {
-		int e=0;
-		if(argc>=2) 
-			e = atoi(argv[1]);
-		Exit(e);
-	}
 	if(strcmp(argv[0], "?")==0) {
 		printf("Type 'help' for help, 'exit' to quit.\n");
 		return 1;
@@ -871,6 +868,7 @@ int process_line(int argc, const char** argv)
 
 int Shell(size_t argc, const char** argv)
 {
+	int exitval = 0;
 	char* cmdline = NULL;
 	size_t cmdlinelen = 0;
 
@@ -910,6 +908,13 @@ int Shell(size_t argc, const char** argv)
 
 		if(argc==0) continue;
 
+		/* Check exit */
+		if(strcmp(argv[0], "exit")==0) {
+			if(argc>=2) 
+				exitval = atoi(argv[1]);
+			goto finished;
+		}
+
 		/* First check if command is builtin */
 		if(process_builtin(argc,argv)) continue;
 
@@ -917,12 +922,12 @@ int Shell(size_t argc, const char** argv)
 		process_line(argc, argv);
 
 	}
-	fprintf(fin,"Exiting\n");
+	fprintf(fout,"Exiting\n");
+finished:
 	free(cmdline);
-
 	fclose(fin);
 	fclose(fout);
-	return 0;
+	return exitval;
 }
 
 
