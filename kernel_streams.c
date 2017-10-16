@@ -126,13 +126,12 @@ FCB* get_fcb(Fid_t fid)
 }
 
 
-int Read(Fid_t fd, char *buf, unsigned int size)
+int sys_Read(Fid_t fd, char *buf, unsigned int size)
 {
   int retcode = -1;
   int (*devread)(void*,char*,uint);
   void* sobj;
 
-  Mutex_Lock(&kernel_mutex);
   
   /* Get the fields from the stream */
   FCB* fcb = get_fcb(fd);
@@ -146,19 +145,14 @@ int Read(Fid_t fd, char *buf, unsigned int size)
     FCB_incref(fcb);
   
     /* We must not go into non-preemptive domain with kernel_mutex locked */
-    Mutex_Unlock(&kernel_mutex);  
 
     if(devread)
       retcode = devread(sobj, buf, size);
 
     /* Need to decrease the reference to FCB */
-    Mutex_Lock(& kernel_mutex);
     FCB_decref(fcb);
-
   }
   
-  Mutex_Unlock(&kernel_mutex);  
-
   /* We must not go into non-preemptive domain with kernel_mutex locked */
 
 
@@ -166,13 +160,12 @@ int Read(Fid_t fd, char *buf, unsigned int size)
 }
 
 
-int Write(Fid_t fd, const char *buf, unsigned int size)
+int sys_Write(Fid_t fd, const char *buf, unsigned int size)
 {
   int retcode = -1;
   int (*devwrite)(void*, const char*, uint) = NULL;
   void* sobj = NULL;
 
-  Mutex_Lock(&kernel_mutex);
   
   /* Get the fields from the stream */
   FCB* fcb = get_fcb(fd);
@@ -186,28 +179,23 @@ int Write(Fid_t fd, const char *buf, unsigned int size)
        while we are using it! */
     FCB_incref(fcb);
   
-    /* We must not go into non-preemptive domain with kernel_mutex locked */
-    Mutex_Unlock(&kernel_mutex);  
 
     if(devwrite)
       retcode = devwrite(sobj, buf, size);
 
     /* Need to decrease the reference to FCB */
-    Mutex_Lock(& kernel_mutex);
     FCB_decref(fcb);
 
   }
 
-  Mutex_Unlock(& kernel_mutex);
 
   return retcode;
 }
 
 
-int Close(int fd)
+int sys_Close(int fd)
 {
   int retcode = (fd>=0 && fd<MAX_FILEID) ? 0 : -1;  /* Closing a closed fd is legal! */
-  Mutex_Lock(&kernel_mutex);
 
   FCB* fcb = get_fcb(fd);
 
@@ -216,7 +204,6 @@ int Close(int fd)
     retcode = FCB_decref(fcb);    
   }
 
-  Mutex_Unlock(&kernel_mutex);  
   return retcode;
 }
 
@@ -228,12 +215,11 @@ int Close(int fd)
   Possible reasons for failure:
   - Either oldfd or newfd is invalid.
  */
-int Dup2(int oldfd, int newfd)
+int sys_Dup2(int oldfd, int newfd)
 {
   int retcode=0;
   if(oldfd<0 || newfd<0 || oldfd>=MAX_FILEID || newfd>=MAX_FILEID)
     return -1;
-  Mutex_Lock(&kernel_mutex);
 
   FCB* old = get_fcb(oldfd);
   FCB* new = get_fcb(newfd);
@@ -248,13 +234,12 @@ int Dup2(int oldfd, int newfd)
     CURPROC->FIDT[newfd] = old;
   }
 
-  Mutex_Unlock(&kernel_mutex);  
   return retcode;
 }
 
 
 
-unsigned int GetTerminalDevices()
+unsigned int sys_GetTerminalDevices()
 {
   return device_no(DEV_SERIAL);
 }
@@ -267,7 +252,6 @@ Fid_t open_stream(Device_type major, unsigned int minor)
 {
   Fid_t fid;
   FCB* fcb;
-  Mutex_Lock(&kernel_mutex);
 
 
   if(! FCB_reserve(1, &fid, &fcb))
@@ -282,18 +266,17 @@ Fid_t open_stream(Device_type major, unsigned int minor)
 finerr:
   fid = NOFILE;
 finok:
-  Mutex_Unlock(&kernel_mutex);
   return fid;
 }
 
 
-int OpenNull()
+int sys_OpenNull()
 {
   return open_stream(DEV_NULL, 0);
 }
 
 
-Fid_t OpenTerminal(unsigned int termno)
+Fid_t sys_OpenTerminal(unsigned int termno)
 {
   return open_stream(DEV_SERIAL, termno);
 }

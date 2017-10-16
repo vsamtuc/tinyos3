@@ -288,7 +288,7 @@ static void sigusr1_handler(int signo, siginfo_t* si, void* ctx)
 
 
 /* Coarse clock */
-coarse_clock_t get_coarse_time()
+static coarse_clock_t get_coarse_time()
 {
 	struct timespec curtime;
 	CHECK(clock_gettime(CLOCK_REALTIME, &curtime));
@@ -819,6 +819,29 @@ void cpu_enable_interrupts()
 }
 
 
+void cpu_initialize_context(cpu_context_t* ctx, void* ss_sp, size_t ss_size, void (*ctx_func)())
+{
+  /* Init the context from this context! */
+  getcontext(ctx);
+  ctx->uc_link = NULL;
+
+  /* initialize the context stack */
+  ctx->uc_stack.ss_sp = ss_sp;
+  ctx->uc_stack.ss_size = ss_size;
+  ctx->uc_stack.ss_flags = 0;
+
+  pthread_sigmask(0, NULL, & ctx->uc_sigmask);  /* We don't want any signals changed */
+  makecontext(ctx, (void*) ctx_func, 0);
+}
+
+
+void cpu_swap_context(cpu_context_t* oldctx, cpu_context_t* newctx)
+{
+	swapcontext(oldctx, newctx);
+}
+
+
+
 /*
 	BIOS functions
  */
@@ -847,6 +870,14 @@ TimerDuration bios_cancel_timer()
 {
 	return bios_set_timer(0);
 }
+
+
+TimerDuration bios_clock()
+{
+	return system_clock * 100000;
+}	
+
+
 
 uint bios_serial_ports()
 {

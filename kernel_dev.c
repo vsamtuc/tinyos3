@@ -156,7 +156,7 @@ int serial_write(void* dev, const char* buf, unsigned int size)
     } 
     else if(count==0)
     {
-      yield();
+      yield(SCHED_IO);
     }
     else
       break;

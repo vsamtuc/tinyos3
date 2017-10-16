@@ -346,27 +346,6 @@ int ThreadDetach(Tid_t tid);
   */
 void ThreadExit(int exitval);
 
-/**
-  @brief Awaken the thread, if it is sleeping.
-
-  This call will set the interrupt flag of the
-  thread.
-
-  */
-int ThreadInterrupt(Tid_t tid);
-
-/**
-  @brief Return the interrupt flag of the 
-  current thread.
-  */
-int ThreadIsInterrupted();
-
-/**
-  @brief Clear the interrupt flag of the
-  current thread.
-  */
-void ThreadClearInterrupt();
-
 
 
 /*******************************************

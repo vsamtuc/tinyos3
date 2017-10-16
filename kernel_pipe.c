@@ -2,7 +2,7 @@
 #include "tinyos.h"
 
 
-int Pipe(pipe_t* pipe)
+int sys_Pipe(pipe_t* pipe)
 {
 	return -1;
 }

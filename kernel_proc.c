@@ -128,12 +128,10 @@ void start_main_thread()
 /*
 	System call to create a new process.
  */
-Pid_t Exec(Task call, int argl, void* args)
+Pid_t sys_Exec(Task call, int argl, void* args)
 {
   PCB *curproc, *newproc;
   
-  Mutex_Lock(&kernel_mutex);
-
   /* The new process PCB */
   newproc = acquire_PCB();
 
@@ -186,19 +184,18 @@ Pid_t Exec(Task call, int argl, void* args)
 
 
 finish:
-  Mutex_Unlock(&kernel_mutex);
   return get_pid(newproc);
 }
 
 
 /* System call */
-Pid_t GetPid()
+Pid_t sys_GetPid()
 {
   return get_pid(CURPROC);
 }
 
 
-Pid_t GetPPid()
+Pid_t sys_GetPPid()
 {
   return get_pid(CURPROC->parent);
 }
@@ -218,7 +215,6 @@ static void cleanup_zombie(PCB* pcb, int* status)
 
 static Pid_t wait_for_specific_child(Pid_t cpid, int* status)
 {
-  Mutex_Lock(& kernel_mutex);
 
   /* Legality checks */
   if((cpid<0) || (cpid>=MAX_PROC)) {
@@ -236,12 +232,11 @@ static Pid_t wait_for_specific_child(Pid_t cpid, int* status)
 
   /* Ok, child is a legal child of mine. Wait for it to exit. */
   while(child->pstate == ALIVE)
-    Cond_Wait(& kernel_mutex, & parent->child_exit);
+    kernel_wait(& parent->child_exit, SCHED_USER);
   
   cleanup_zombie(child, status);
   
 finish:
-  Mutex_Unlock(& kernel_mutex);
   return cpid;
 }
 
@@ -249,7 +244,6 @@ finish:
 static Pid_t wait_for_any_child(int* status)
 {
   Pid_t cpid;
-  Mutex_Lock(&kernel_mutex);
 
   PCB* parent = CURPROC;
 
@@ -260,7 +254,7 @@ static Pid_t wait_for_any_child(int* status)
   }
 
   while(is_rlist_empty(& parent->exited_list)) {
-    Cond_Wait(& kernel_mutex, & parent->child_exit);
+    kernel_wait(& parent->child_exit, SCHED_USER);
   }
 
   PCB* child = parent->exited_list.next->pcb;
@@ -269,12 +263,11 @@ static Pid_t wait_for_any_child(int* status)
   cleanup_zombie(child, status);
 
 finish:
-  Mutex_Unlock(& kernel_mutex);
   return cpid;
 }
 
 
-Pid_t WaitChild(Pid_t cpid, int* status)
+Pid_t sys_WaitChild(Pid_t cpid, int* status)
 {
   /* Wait for specific child. */
   if(cpid != NOPROC) {
@@ -288,16 +281,13 @@ Pid_t WaitChild(Pid_t cpid, int* status)
 }
 
 
-void Exit(int exitval)
+void sys_Exit(int exitval)
 {
   /* Right here, we must check that we are not the boot task. If we are, 
      we must wait until all processes exit. */
-  if(GetPid()==1) {
-    while(WaitChild(NOPROC,NULL)!=NOPROC);
+  if(sys_GetPid()==1) {
+    while(sys_WaitChild(NOPROC,NULL)!=NOPROC);
   }
-
-  /* Now, we exit */
-  Mutex_Lock(& kernel_mutex);
 
   PCB *curproc = CURPROC;  /* cache for efficiency */
 
@@ -345,12 +335,12 @@ void Exit(int exitval)
   curproc->exitval = exitval;
 
   /* Bye-bye cruel world */
-  sleep_releasing(EXITED, & kernel_mutex);
+  kernel_sleep(EXITED, SCHED_USER);
 }
 
 
 
-Fid_t OpenInfo()
+Fid_t sys_OpenInfo()
 {
 	return NOFILE;
 }

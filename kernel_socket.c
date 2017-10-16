@@ -2,30 +2,30 @@
 #include "tinyos.h"
 
 
-Fid_t Socket(port_t port)
+Fid_t sys_Socket(port_t port)
 {
 	return NOFILE;
 }
 
-int Listen(Fid_t sock)
+int sys_Listen(Fid_t sock)
 {
 	return -1;
 }
 
 
-Fid_t Accept(Fid_t lsock)
+Fid_t sys_Accept(Fid_t lsock)
 {
 	return NOFILE;
 }
 
 
-int Connect(Fid_t sock, port_t port, timeout_t timeout)
+int sys_Connect(Fid_t sock, port_t port, timeout_t timeout)
 {
 	return -1;
 }
 
 
-int ShutDown(Fid_t sock, shutdown_mode how)
+int sys_ShutDown(Fid_t sock, shutdown_mode how)
 {
 	return -1;
 }

@@ -2,6 +2,7 @@
 #define BIOS_H
 
 #include <stdint.h>
+#include <ucontext.h>
 
 /**
 	@file bios.h
@@ -261,6 +262,37 @@ void cpu_core_restart_one();
 void cpu_core_restart_all();
 
 
+/**
+	@brief A type for saving CPU context into.
+*/
+typedef ucontext_t cpu_context_t;
+
+
+/**
+	@brief Initialize a CPU context for a new thread.
+
+	To initialize the context, a stack segment of adequate size must be provided.
+
+	@param ctx the context object to initialize
+	@param ss_sp the pointer to the beginning of the stack segment
+	@param ss_size the size of the stack segment
+	@param func the function to execute in the new context
+*/
+void cpu_initialize_context(cpu_context_t* ctx, void* ss_sp, size_t ss_size, void (*func)());
+
+
+/**
+	@brief Switch the CPU context.
+
+	Save the current context into @c oldctx and load the contents of @c newctx
+	into the CPU.
+
+	@param oldctx pointer to the storage for the old context
+	@param newctx pointer to the new context to be loaded
+*/
+void cpu_swap_context(cpu_context_t* oldctx, cpu_context_t* newctx);
+
+
 /********************************************************************************
  ********************************************************************************/
 
@@ -293,6 +325,15 @@ TimerDuration bios_set_timer(TimerDuration usec);
 	@see bios_set_timer
  */
 TimerDuration bios_cancel_timer();
+
+
+/**
+	@brief Get the current time from the hardware clock.
+
+	@see bios_set_timer
+ */
+TimerDuration bios_clock();
+
 
 
 

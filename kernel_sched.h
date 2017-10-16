@@ -21,7 +21,6 @@
   @{
 */
 
-#include <ucontext.h>
 #include "util.h"
 #include "bios.h"
 #include "tinyos.h"
@@ -63,6 +62,24 @@ typedef enum {
 } Thread_type;
 
 /**
+  @brief Designate different origins of scheduler invocation.
+
+  This is used in the scheduler heuristics to determine how to
+  adjust the dynamic priority of the current thread.
+ */
+enum SCHED_CAUSE {
+  SCHED_QUANTUM,  /**< The quantum has expired */
+  SCHED_IO,       /**< The thread is waiting for I/O */
+  SCHED_MUTEX,    /**< Mutex_Lock yielded on contention */
+  SCHED_PIPE,     /**< Sleep at a pipe or socket */
+  SCHED_POLL,     /**< The thread is polling a device */
+  SCHED_IDLE,     /**< The idle thread called yield */
+  SCHED_USER      /**< User-space code called yield */
+};
+
+
+
+/**
   @brief The thread control block
 
   An object of this type is associated to every thread. In this object
@@ -72,7 +89,7 @@ typedef struct thread_control_block
 {
   PCB* owner_pcb;       /**< This is null for a free TCB */
 
-  ucontext_t context;     /**< The thread context */
+  cpu_context_t context;     /**< The thread context */
 
 #ifndef NVALGRIND
   unsigned valgrind_stack_id; /**< This is useful in order to register the thread stack to valgrind */
@@ -84,11 +101,8 @@ typedef struct thread_control_block
 
   void (*thread_func)();   /**< The function executed by this thread */
 
-  Mutex state_spinlock;       /**< A spinlock for setting state and phase */
-
-
-  /* scheduler data */  
-  rlnode sched_node;      /**< node to use when queueing in the scheduler list */
+  TimerDuration wakeup_time; /**< The time this thread will be woken up by the scheduler */
+  rlnode sched_node;      /**< node to use when queueing in the scheduler lists */
 
   struct thread_control_block * prev;  /**< previous context */
   struct thread_control_block * next;  /**< next context */
@@ -146,6 +160,12 @@ extern CCB cctx[MAX_CORES];
 
 
 /**
+  @brief A timeout constant, denoting no timeout for sleep.
+*/
+#define NO_TIMEOUT ((TimerDuration)-1)
+
+
+/**
   @brief Create a new thread.
 
 	This call creates a new thread, initializing and returning its TCB.
@@ -162,8 +182,10 @@ TCB* spawn_thread(PCB* pcb, void (*func)());
   thread is blocked) to @c READY. 
 
   @param tcb the thread to be made @c READY.
+  @returns 1 if the thread state was @c STOPPED or @c INIT, 0 otherwise
+
 */
-void wakeup(TCB* tcb);
+int wakeup(TCB* tcb);
 
 
 /** 
@@ -183,10 +205,20 @@ void wakeup(TCB* tcb);
     cleaned-up by the scheduler. Its TCB should not be accessed in any way after this
     call.
 
+    A cause for the sleep must be provided; this parameter indicates to the scheduler the
+    source of the sleeping operation, and can be used in scheduler heuristics to adjust 
+    scheduling decisions.
+
+    A timeout can also be provided. If the timeout is not @c NO_TIMEOUT, then the thread will
+    be made ready by the scheduler after the timeout duration has passed, even without a call to
+    @c wakeup() by another thread.
+
     @param newstate the new state for the thread
     @param mx the mutex to unlock.
+    @param cause the cause of the sleep
+    @param timeout a timeout for the sleep, or 
    */
-void sleep_releasing(Thread_state newstate, Mutex* mx);
+void sleep_releasing(Thread_state newstate, Mutex* mx, enum SCHED_CAUSE cause, TimerDuration timeout);
 
 /**
   @brief Give up the CPU.
@@ -195,7 +227,7 @@ void sleep_releasing(Thread_state newstate, Mutex* mx);
   and possibly switch to a different thread. The scheduler may decide that 
   it will renew the quantum for the current thread.
  */
-void yield(void);
+void yield(enum SCHED_CAUSE cause);
 
 /**
   @brief Enter the scheduler.

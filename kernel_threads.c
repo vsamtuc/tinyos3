@@ -6,7 +6,7 @@
 /** 
   @brief Create a new thread in the current process.
   */
-Tid_t CreateThread(Task task, int argl, void* args)
+Tid_t sys_CreateThread(Task task, int argl, void* args)
 {
 	return NOTHREAD;
 }
@@ -14,7 +14,7 @@ Tid_t CreateThread(Task task, int argl, void* args)
 /**
   @brief Return the Tid of the current thread.
  */
-Tid_t ThreadSelf()
+Tid_t sys_ThreadSelf()
 {
 	return (Tid_t) CURTHREAD;
 }
@@ -22,7 +22,7 @@ Tid_t ThreadSelf()
 /**
   @brief Join the given thread.
   */
-int ThreadJoin(Tid_t tid, int* exitval)
+int sys_ThreadJoin(Tid_t tid, int* exitval)
 {
 	return -1;
 }
@@ -30,7 +30,7 @@ int ThreadJoin(Tid_t tid, int* exitval)
 /**
   @brief Detach the given thread.
   */
-int ThreadDetach(Tid_t tid)
+int sys_ThreadDetach(Tid_t tid)
 {
 	return -1;
 }
@@ -38,39 +38,7 @@ int ThreadDetach(Tid_t tid)
 /**
   @brief Terminate the current thread.
   */
-void ThreadExit(int exitval)
-{
-
-}
-
-
-/**
-  @brief Awaken the thread, if it is sleeping.
-
-  This call will set the interrupt flag of the
-  thread.
-
-  */
-int ThreadInterrupt(Tid_t tid)
-{
-	return -1;
-}
-
-
-/**
-  @brief Return the interrupt flag of the 
-  current thread.
-  */
-int ThreadIsInterrupted()
-{
-	return 0;
-}
-
-/**
-  @brief Clear the interrupt flag of the
-  current thread.
-  */
-void ThreadClearInterrupt()
+void sys_ThreadExit(int exitval)
 {
 
 }
