@@ -155,7 +155,8 @@ struct test_pid_rec {
 BOOT_TEST(test_exec_getpid_wait, 
 	"Test that Exec returns the same pid as the child sees\n"
 	"by calling GetPid(). Also, that WaitChild with a given pid\n"
-	"returns the correct status."
+	"returns the correct status.",
+	.timeout=20
 	)
 {
 	struct test_pid_rec  myrec;  /* only used by init task */
@@ -164,7 +165,7 @@ BOOT_TEST(test_exec_getpid_wait,
 	if(argl==0) {
 		ASSERT(GetPid()==1);
 		prec = &myrec;
-		prec->level = 9;      /* 4^9 = 2^18 ~= 260000 children will be run */
+		prec->level = 7;      /* 4^7 = 2^14 = 16384 children will be run */
 	} else {
 		ASSERT(argl==sizeof(struct test_pid_rec*));
 		prec = *(struct test_pid_rec**)args;
@@ -350,6 +351,7 @@ BOOT_TEST(test_orphans_adopted_by_init,
  *
  *********************************************/
 
+
 /*
 	Test that a timed wait on a condition variable terminates
  */
@@ -393,6 +395,12 @@ BOOT_TEST(test_cond_timedwait,
 	for(timeout_t t=550; t < 1000; t+=100) {
 		Exec(do_timeout, sizeof(t), &t);
 	}
+
+	/* 
+		Wait all child processes, before leaving the current stack frame!
+		Else, the local functions may cause a crash!
+	*/
+	while(WaitChild(NOPROC,NULL)!=NOPROC);
 	return 0;
 }
 

@@ -30,6 +30,7 @@ int Symposium_proc(size_t,const char**);
 int Symposium_thr(size_t,const char**);
 int RemoteServer(size_t,const char**);
 int RemoteClient(size_t,const char**);
+int Echo(size_t,const char**);
 
 
 struct { const char * cmdname; Program prog; uint nargs; const char* help; } 
@@ -52,6 +53,8 @@ COMMANDS[]  =
 	{"hanoi", Hanoi, 1, "The towers of Hanoi."},
 	{"rserver", RemoteServer, 0, "A server for remote execution."},
 	{"rcli", RemoteClient, 1, "Remote client: rcli <cmd> [<args...>]."},
+	{"echo", Echo, 0, "echo [<args...>], send the <args...> to stdout"},
+
 	{NULL, NULL, 0, NULL}
 };
 
@@ -257,6 +260,19 @@ int Capitalize(size_t argc, const char** argv)
 		fputc(toupper(c), fout);
 	}
 	fclose(fin);
+	fclose(fout);
+	return 0;
+}
+
+
+int Echo(size_t argc, const char** argv)
+{
+	FILE* fout = fidopen(1, "w");
+	for(size_t i=1; i<argc; i++) {
+		if(i>1) fputs(" ", fout);
+		fprintf(fout,"%s", argv[1]);
+	}
+	fprintf(fout,"\n");
 	fclose(fout);
 	return 0;
 }
