@@ -146,8 +146,6 @@ int sys_Read(Fid_t fd, char *buf, unsigned int size)
        while we are using it! */
     FCB_incref(fcb);
   
-    /* We must not go into non-preemptive domain with kernel_mutex locked */
-
     if(devread)
       retcode = devread(sobj, buf, size);
 

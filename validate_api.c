@@ -353,11 +353,11 @@ BOOT_TEST(test_orphans_adopted_by_init,
 
 
 /*
-	Test that a timed wait on a condition variable terminates
+	Test that a timed wait on a condition variable terminates after the timeout.
  */
 
-BOOT_TEST(test_cond_timedwait, 
-	"Test that timed waits on a condition variable terminate without blocking."
+BOOT_TEST(test_cond_timedwait_timeout, 
+	"Test that timed waits on a condition variable terminate without blocking after the timeout."
 	)
 {
 
@@ -365,7 +365,6 @@ BOOT_TEST(test_cond_timedwait,
 	{
 		return 1000ul*t.tv_sec + t.tv_nsec/1000000ul;
 	}
-
 
 	int do_timeout(int argl, void* args) {
 		timeout_t t = *((timeout_t *) args);
@@ -404,6 +403,77 @@ BOOT_TEST(test_cond_timedwait,
 	return 0;
 }
 
+
+/*
+	Test that a timed wait on a condition variable terminates at a signal.
+ */
+
+BOOT_TEST(test_cond_timedwait_signal,
+	"Test that timed waits on a condition variable terminates immediately on signal."
+	)
+{
+	Mutex m = MUTEX_INIT;
+	CondVar cv = COND_INIT;
+	int flag=0;
+
+	int long_blocking(int argl, void* args)
+	{
+		Mutex_Lock(&m);
+		flag = 1;
+		Cond_Signal(&cv);
+		Cond_TimedWait(&m, &cv, 10000000); // 3 hour wait
+		Mutex_Unlock(&m);
+		return 0;
+	}
+
+	Pid_t child = Exec(long_blocking, 0, NULL);
+	Mutex_Lock(&m);
+	while(! flag)
+		Cond_Wait(&m, &cv);
+	Cond_Signal(&cv);
+	Mutex_Unlock(&m);
+
+	WaitChild(child, NULL);
+	return 0;
+}
+
+
+
+BOOT_TEST(test_cond_timedwait_broadcast,
+	"Test that timed waits on a condition variable terminate immediately on broadcast."
+	)
+{
+	Mutex m = MUTEX_INIT;
+	CondVar cv = COND_INIT;
+	CondVar pcv = COND_INIT;
+	int flag=0;
+
+	int long_blocking(int argl, void* args)
+	{
+		Mutex_Lock(&m);
+		flag ++;
+		Cond_Signal(&pcv);
+		Cond_TimedWait(&m, &cv, 10000000); // 3 hour wait
+		Mutex_Unlock(&m);
+		return 0;
+	}
+
+	const int N=100;  // spawn 100 children
+
+	// create N children
+	for(int i=0; i<N; i++) Exec(long_blocking, 0, NULL);
+
+	Mutex_Lock(&m);
+	// wait for all children to sleep
+	while(flag!=N) Cond_Wait(&m, &pcv);
+	// wake all children up!
+	Cond_Broadcast(&cv);
+	Mutex_Unlock(&m);
+
+	// wait all children
+	while(WaitChild(NOPROC, NULL)!=NOPROC);
+	return 0;
+}
 
 
 
@@ -810,7 +880,9 @@ TEST_SUITE(basic_tests,
 	&test_main_return_returns_status,
 	&test_wait_for_any_child,
 	&test_orphans_adopted_by_init,
-	&test_cond_timedwait,
+	&test_cond_timedwait_timeout,
+	&test_cond_timedwait_signal,
+	&test_cond_timedwait_broadcast,
 	&test_null_device,
 	&test_get_terminals,
 	&test_open_terminals,
