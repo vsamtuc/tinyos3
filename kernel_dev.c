@@ -90,9 +90,7 @@ void serial_rx_handler()
    */
   for(int i=0;i<bios_serial_ports();i++) {
     serial_dcb_t* dcb = &serial_dcb[i];
-    Mutex_Lock(& dcb->spinlock);
     Cond_Broadcast(&dcb->rx_ready);
-    Mutex_Unlock(& dcb->spinlock);
   }
   if(pre) preempt_on;
 }
@@ -105,7 +103,6 @@ int serial_read(void* dev, char *buf, unsigned int size)
   serial_dcb_t* dcb = (serial_dcb_t*)dev;
 
   preempt_off;            /* Stop preemption */
-  Mutex_Lock(& dcb->spinlock);
 
   uint count =  0;
 
@@ -116,13 +113,12 @@ int serial_read(void* dev, char *buf, unsigned int size)
       count++;
     }
     else if(count==0) {
-      Cond_Wait(&dcb->spinlock, &dcb->rx_ready);
+      kernel_wait(&dcb->rx_ready, SCHED_IO);
     }
     else
       break;
   }
 
-  Mutex_Unlock(& dcb->spinlock);
   preempt_on;           /* Restart preemption */
 
   return count;
