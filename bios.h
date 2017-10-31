@@ -106,6 +106,8 @@
  */
 typedef void interrupt_handler();
 
+typedef int sig_atomic_t;
+
 /** @brief Helper declaration */
 typedef unsigned int uint;
 
