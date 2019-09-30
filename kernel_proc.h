@@ -25,9 +25,9 @@
   using it), or ZOMBIE (a zombie process is using it).
   */
 typedef enum pid_state_e {
-  FREE,   /**< The PID is free and available */
-  ALIVE,  /**< The PID is given to a process */
-  ZOMBIE  /**< The PID is held by a zombie */
+  FREE,   /**< @brief The PID is free and available */
+  ALIVE,  /**< @brief The PID is given to a process */
+  ZOMBIE  /**< @brief The PID is held by a zombie */
 } pid_state;
 
 /**
@@ -36,24 +36,29 @@ typedef enum pid_state_e {
   This structure holds all information pertaining to a process.
  */
 typedef struct process_control_block {
-  pid_state  pstate;      /**< The pid state for this PCB */
+  pid_state  pstate;      /**< @brief The pid state for this PCB */
 
-  PCB* parent;            /**< Parent's pcb. */
-  int exitval;            /**< The exit value */
+  PCB* parent;            /**< @brief Parent's pcb. */
+  int exitval;            /**< @brief The exit value of the process */
 
-  TCB* main_thread;       /**< The main thread */
-  Task main_task;         /**< The main thread's function */
-  int argl;               /**< The main thread's argument length */
-  void* args;             /**< The main thread's argument string */
+  TCB* main_thread;       /**< @brief The main thread */
+  Task main_task;         /**< @brief The main thread's function */
+  int argl;               /**< @brief The main thread's argument length */
+  void* args;             /**< @brief The main thread's argument string */
 
-  rlnode children_list;   /**< List of children */
-  rlnode exited_list;     /**< List of exited children */
+  rlnode children_list;   /**< @brief List of children */
+  rlnode exited_list;     /**< @brief List of exited children */
 
-  rlnode children_node;   /**< Intrusive node for @c children_list */
-  rlnode exited_node;     /**< Intrusive node for @c exited_list */
-  CondVar child_exit;     /**< Condition variable for @c WaitChild */
+  rlnode children_node;   /**< @brief Intrusive node for @c children_list */
+  rlnode exited_node;     /**< @brief Intrusive node for @c exited_list */
 
-  FCB* FIDT[MAX_FILEID];  /**< The fileid table of the process */
+  CondVar child_exit;     /**< @brief Condition variable for @c WaitChild. 
+
+                             This condition variable is  broadcast each time a child
+                             process terminates. It is used in the implementation of
+                             @c WaitChild() */
+
+  FCB* FIDT[MAX_FILEID];  /**< @brief The fileid table of the process */
 
 } PCB;
 

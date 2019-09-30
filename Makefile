@@ -6,8 +6,15 @@ endif
 
 #PROFILE=1
 
+valgrind_include_file=/usr/include/valgrind/valgrind.h
+ifeq ($(wildcard $(valgrind_include_file)), )
 # disable valgrind support
+$(info Disabling valgrind support because $(valgrind_include_file) is not found. To enable \
+	valgrind, install it by  running 'sudo apt install valgrind')
 VALGRIND_FLAG=-DNVALGRIND
+else
+VALGRIND_FLAG=
+endif
 
 CC = gcc
 
@@ -56,14 +63,13 @@ C_OBJECTS=$(C_SOURCES:.c=.o)
 
 FIFOS= con0 con1 con2 con3 kbd0 kbd1 kbd2 kbd3
 
-.PHONY: all tests release clean distclean doc
+.PHONY: all tests clean distclean doc shorthelp help depend
 
-all: mtask tinyos_shell terminal tests fifos examples
+all: shorthelp mtask tinyos_shell terminal tests fifos examples
 
 tests: test_util validate_api test_example 
 
 examples: $(EXAMPLE_PROG:.c=) 
-
 
 #
 # Normal apps
@@ -121,20 +127,19 @@ depend: $(C_SOURCES)
 
 clean: realclean depend
 
+ifeq ($(wildcard .depend),)
+$(warning No .depend file found. Running recursive make to create it')
+$(info $(shell touch .depend && make depend))
 include .depend
+else
+include .depend
+endif
 
-# Create release (courses handout) archive
+shorthelp:
+	@echo Type \'make help\' to get information on running make
 
-release: clean-release-files tinyos3.tgz
+help: manhelp.man
+	man -l manhelp.man
 
-clean-release-files:
-	-rm tinyos3.tgz
-
-tinyos3.tgz:
-	$(MAKE) -C tinyos3 distclean
-	tar czvhf tinyos3.tgz tinyos3
-
-tinyos3-impl.tgz: distclean
-	-rm tinyos3-impl.tgz
-	tar czvhf tinyos3-impl.tgz *.c *.h Makefile
-
+manhelp.man: manhelp.md
+	pandoc manhelp.md -s -t man > manhelp.man

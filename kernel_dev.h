@@ -102,9 +102,9 @@ typedef struct file_operations {
   The device type of a device determines the driver used.
 */
 typedef enum { 
-	DEV_NULL,    /**< Null device */
-	DEV_SERIAL,  /**< Serial device */
-	DEV_MAX      /**< placeholder for maximum device number */
+	DEV_NULL,    /**< @brief Null device */
+	DEV_SERIAL,  /**< @brief Serial device */
+	DEV_MAX      /**< @brief placeholder for maximum device number */
 }  Device_type;
 
 
@@ -117,11 +117,14 @@ typedef enum {
 typedef struct device_control_block
 {
   Device_type type;     /**< @brief Device type. 
+
                             Much like 'major number' in Unix, determines the driver. */
+  
   uint devnum;           /**< @brief Number of devices for this major number.
                           */
 
   file_ops dev_fops;	/**< @brief Device operations
+
   							This structure is provided by the device driver. */
 } DCB;
 

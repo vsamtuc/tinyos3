@@ -34,31 +34,47 @@
 /** @brief Thread state. 
 
   A value of this type, together with a @c Thread_phase value, completely
-  determines the state of the current API. 
+  determines the state of a thread. 
 
   @see Thread_phase
 */
 typedef enum { 
-    INIT,       /**< TCB initialising */
-    READY,      /**< A thread ready to be scheduled.   */
-    RUNNING,    /**< A thread running on some core   */
-    STOPPED,    /**< A blocked thread   */
-    EXITED      /**< A terminated thread   */
+    INIT,       /**< @brief TCB initialising */
+    READY,      /**< @brief A thread ready to be scheduled.   */
+    RUNNING,    /**< @brief A thread running on some core   */
+    STOPPED,    /**< @brief A blocked thread   */
+    EXITED      /**< @brief A terminated thread   */
   } Thread_state;
 
 /** @brief Thread phase. 
 
+  The phase of a thread denotes the state of its context stored in the @c TCB of the
+  thread. 
+  A @c CTX_CLEAN thread means that, the context stored in the TCB is up-to-date. 
+  In this case, it is legal to swap context to this thread.
+  A @c CTX_DIRTY thread marks the case when the thread was, or still is, being executed 
+  at some core, therefore its stored context should not be used.
+
+  The following **invariant** of the scheduler guarantees 
+  correctness:  
+
+  > A TCB is in the scheduler
+  > queue, if and only if, its @c Thread_state is @c READY and the @c Thread_phase 
+  > is @c CTX_CLEAN.
+
   @see Thread_state
 */
 typedef enum { 
-    CTX_CLEAN,   /**< Means that, the context stored in the TCB is up-to-date. */
-    CTX_DIRTY    /**< Means that, the context stored in the TCN is garbage. */
+    CTX_CLEAN,   /**< @brief Context is clean. */
+
+    CTX_DIRTY    /**< @brief Context is dirty. */
   } Thread_phase;
+
 
 /** @brief Thread type. */
 typedef enum { 
-  IDLE_THREAD,    /**< Marks an idle thread. */
-  NORMAL_THREAD   /**< Marks a normal thread */
+  IDLE_THREAD,    /**< @brief Marks an idle thread. */
+  NORMAL_THREAD   /**< @brief Marks a normal thread */
 } Thread_type;
 
 /**
@@ -68,13 +84,13 @@ typedef enum {
   adjust the dynamic priority of the current thread.
  */
 enum SCHED_CAUSE {
-  SCHED_QUANTUM,  /**< The quantum has expired */
-  SCHED_IO,       /**< The thread is waiting for I/O */
-  SCHED_MUTEX,    /**< Mutex_Lock yielded on contention */
-  SCHED_PIPE,     /**< Sleep at a pipe or socket */
-  SCHED_POLL,     /**< The thread is polling a device */
-  SCHED_IDLE,     /**< The idle thread called yield */
-  SCHED_USER      /**< User-space code called yield */
+  SCHED_QUANTUM,  /**< @brief The quantum has expired */
+  SCHED_IO,       /**< @brief The thread is waiting for I/O */
+  SCHED_MUTEX,    /**< @brief @c Mutex_Lock yielded on contention */
+  SCHED_PIPE,     /**< @brief Sleep at a pipe or socket */
+  SCHED_POLL,     /**< @brief The thread is polling a device */
+  SCHED_IDLE,     /**< @brief The idle thread called yield */
+  SCHED_USER      /**< @brief User-space code called yield */
 };
 
 
@@ -87,31 +103,41 @@ enum SCHED_CAUSE {
 */
 typedef struct thread_control_block
 {
-  PCB* owner_pcb;       /**< This is null for a free TCB */
+  PCB* owner_pcb;       /**< @brief This is null for a free TCB */
 
-  cpu_context_t context;     /**< The thread context */
+  cpu_context_t context;     /**< @brief The thread context */
 
 #ifndef NVALGRIND
-  unsigned valgrind_stack_id; /**< This is useful in order to register the thread stack to valgrind */
+  unsigned valgrind_stack_id; /**< @brief Valgrind helper for stacks. 
+
+      This is useful in order to register the thread stack to the valgrind memory profiler. 
+      Valgrind needs to know which parts of memory are used as stacks, in order to return
+      meaningful error information. 
+
+      This field is not relevant to anything in the TinyOS logic and can be ignored.
+      */
 #endif
 
-  Thread_type type;       /**< The type of thread */
-  Thread_state state;    /**< The state of the thread */
-  Thread_phase phase;    /**< The phase of the thread */
+  Thread_type type;       /**< @brief The type of thread */
+  Thread_state state;    /**< @brief The state of the thread */
+  Thread_phase phase;    /**< @brief The phase of the thread */
 
-  void (*thread_func)();   /**< The function executed by this thread */
+  void (*thread_func)();   /**< @brief The initial function executed by this thread */
 
-  TimerDuration wakeup_time; /**< The time this thread will be woken up by the scheduler */
-  rlnode sched_node;      /**< node to use when queueing in the scheduler lists */
+  TimerDuration wakeup_time; /**< @brief The time this thread will be woken up by the scheduler */
+  rlnode sched_node;         /**< @brief Node to use when queueing in the scheduler lists */
 
-  struct thread_control_block * prev;  /**< previous context */
-  struct thread_control_block * next;  /**< next context */
+  struct thread_control_block * prev;  /**< @brief Previous context */
+  struct thread_control_block * next;  /**< @brief Next context */
   
 } TCB;
 
 
 
-/** Thread stack size */
+/** @brief Thread stack size.
+
+  The default thread stack size in TinyOS is 128 kbytes.
+ */
 #define THREAD_STACK_SIZE  (128*1024)
 
 
@@ -124,14 +150,14 @@ typedef struct thread_control_block
 
 /** @brief Core control block.
 
-  Per-core info in memory (basically scheduler-related)
+  Per-core info in memory (basically scheduler-related). 
  */
 typedef struct core_control_block {
-  uint id;                    /**< The core id */
+  uint id;                    /**< @brief The core id */
 
-  TCB* current_thread;        /**< Points to the thread currently owning the core */
-  TCB idle_thread;            /**< Used by the scheduler to handle the core's idle thread */
-  sig_atomic_t preemption;    /**< Marks preemption, used by the locking code */
+  TCB* current_thread;        /**< @brief Points to the thread currently owning the core */
+  TCB idle_thread;            /**< @brief Used by the scheduler to handle the core's idle thread */
+  sig_atomic_t preemption;    /**< @brief Marks preemption, used by the locking code */
 
 } CCB;
  

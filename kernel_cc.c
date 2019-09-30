@@ -239,7 +239,11 @@ int get_core_preemption()
  * @brief The kernel lock.
  *
  * Kernel locking is provided by a semaphore, implemented as a monitor.
- * A semaphre for kernel locking has the advantage that 
+ * A semaphre for kernel locking has advantages over a simple mutex. 
+ * The main advantage is that @c kernel_mutex is held for a very short time
+ * regardless of contention. Thus, in multicore machines, it allows for cores
+ * to be passed to other threads. 
+ * 
  */
 
 /* This mutex is used to implement the kernel semaphore as a monitor. */
