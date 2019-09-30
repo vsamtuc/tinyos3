@@ -285,6 +285,28 @@ static void sched_make_ready(TCB* tcb)
 
 
 /*
+  Scan the \c TIMEOUT_LIST for threads whose timeout has expired, and
+  wake them up.
+
+  *** MUST BE CALLED WITH sched_spinlock HELD ***
+*/
+static void sched_wakeup_expired_timeouts()
+{
+
+	/* Empty the timeout list up to the current time and wake up each thread */
+	TimerDuration curtime = bios_clock();
+
+	while(! is_rlist_empty(&TIMEOUT_LIST)) {
+		TCB* tcb = TIMEOUT_LIST.next->tcb;
+		if(tcb->wakeup_time > curtime)
+			break;
+		sched_make_ready(tcb);
+	}
+
+}
+
+
+/*
   Remove the head of the scheduler list, if any, and
   return it. Return NULL if the list is empty.
 
@@ -292,15 +314,6 @@ static void sched_make_ready(TCB* tcb)
 */
 static TCB* sched_queue_select()
 {
-
-  /* Empty the timeout list up to the current time and wake up each thread */
-  TimerDuration curtime = bios_clock();
-  while(! is_rlist_empty(&TIMEOUT_LIST)) {
-  		TCB* tcb = TIMEOUT_LIST.next->tcb;
-  		if(tcb->wakeup_time > curtime)
-  			break;
-  		sched_make_ready(tcb);
-  }
 
   /* Get the head of the SCHED list */
   rlnode * sel = rlist_pop_front(& SCHED);
@@ -390,6 +403,8 @@ void yield(enum SCHED_CAUSE cause)
   int current_ready = 0;
 
   Mutex_Lock(& sched_spinlock);
+
+  /* Fix the current->state */
   switch(current->state)
   {
     case RUNNING:
@@ -407,6 +422,9 @@ void yield(enum SCHED_CAUSE cause)
       assert(0);  /* It should not be READY or EXITED ! */
   }
 
+  /* Wake up threads whose sleep timeout has expired */
+  sched_wakeup_expired_timeouts();
+
   /* Get next */
   TCB* next = sched_queue_select();
 
@@ -418,7 +436,7 @@ void yield(enum SCHED_CAUSE cause)
       next = & CURCORE.idle_thread;
   }
 
-  /* ok, link the current and next TCB, for the gain phase */
+  /* link the current and next TCB, for the gain phase */
   current->next = next;
   next->prev = current;
 
