@@ -379,6 +379,19 @@ int register_test(const Test* test);
 */
 int run_program(int argc, char**argv, const Test* default_test);
 
+
+/** @brief Detect if the test process is found to run under the debugger.
+
+	The detection is done simply by checking that there is a ptrace-attached process
+	to this process.
+
+	The current implementation of this function requires certain features specific
+	to Linux (procfs in particular) and is not in general portable.
+
+	@return 0 if the process is not attached to another process else non-zero.
+  */
+int isDebuggerAttached();
+
 /** @} */
 
 #endif

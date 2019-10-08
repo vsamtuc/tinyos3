@@ -15,10 +15,10 @@
 #include <pthread.h>
 #include <poll.h>
 #include <argp.h>
+#include <ctype.h>
 
 #include <assert.h>
 #include <stdarg.h>
-#include <unistd.h>
 
 #include "unit_testing.h"
 #include "util.h"
@@ -814,6 +814,7 @@ static char args_doc[] = " TEST  ... ";
 static struct argp_option options [] = {
 	{"cores", 'c', "<cores>", 0, "List of number of cores" },
 	{"nofork", 'f', 0, 0, "Don't fork tests to a different process" },
+	{"fork", 'F', 0, 0, "Force fork for tests to a different process"},
 	{"term", 't', "<terminals>", 0, "List of number of terminals" },
 	{"list", 'l', 0, 0, "Show a list of available tests" },
 	{"verbose", 'v', 0, 0, "Be verbose: show test descriptions"},
@@ -908,6 +909,10 @@ parse_options(int key, char *arg, struct argp_state *state)
 
 		case 'n':
 			ARGS.use_color = 0;
+			break;
+
+		case 'F':
+			ARGS.fork = 1;
 			break;
 
 		case 'f':
@@ -1009,6 +1014,7 @@ void show_suite(const Test* suite)
 int run_program(int argc, char**argv, const Test* default_test)
 {
 	__default_test = default_test;
+	ARGS.fork = ! isDebuggerAttached();
 	argp_parse(&argp, argc, argv, 0, 0, &ARGS);
 
 	if(ARGS.show_tests)
@@ -1021,5 +1027,38 @@ int run_program(int argc, char**argv, const Test* default_test)
 }
 
 
+/*
+	Taken from 
+	https://stackoverflow.com/questions/3596781/how-to-detect-if-the-current-process-is-being-run-by-gdb
 
+	Comments: Linux-specific
+*/
+int isDebuggerAttached()
+{
+    char buf[4096];
 
+    const int status_fd = open("/proc/self/status", O_RDONLY);
+    if (status_fd == -1)
+        return 0;
+
+    const ssize_t num_read = read(status_fd, buf, sizeof(buf) - 1);
+    if (num_read <= 0)
+        return 0;
+
+    buf[num_read] = '\0';
+    const char tracerPidString[] = "TracerPid:";
+    char* tracer_pid_ptr = strstr(buf, tracerPidString);
+    if (!tracer_pid_ptr)
+        return 0;
+
+    for (const char* characterPtr = tracer_pid_ptr + sizeof(tracerPidString) - 1; 
+    	characterPtr <= buf + num_read; ++characterPtr)
+    {
+        if (isspace(*characterPtr))
+            continue;
+        else
+            return isdigit(*characterPtr) != 0 && *characterPtr != '0';
+    }
+
+    return 0;
+}
