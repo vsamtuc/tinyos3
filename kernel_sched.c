@@ -235,7 +235,7 @@ static void sched_queue_add(TCB* tcb)
 }
 
 /*
-		Adjust the state of a thread to make it READY.
+	Adjust the state of a thread to make it READY.
 
 	*** MUST BE CALLED WITH sched_spinlock HELD ***
  */
