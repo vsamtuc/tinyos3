@@ -6,7 +6,6 @@
 #ifndef __KERNEL_SCHED_H
 #define __KERNEL_SCHED_H
 
-
 /**
   @file kernel_sched.h
   @brief TinyOS kernel: The Scheduler API
@@ -21,15 +20,15 @@
   @{
 */
 
-#include "util.h"
 #include "bios.h"
 #include "tinyos.h"
+#include "util.h"
 
 /*****************************
  *
  *  The Thread Control Block
  *
- *****************************/ 
+ *****************************/
 
 /** @brief Thread state. 
 
@@ -38,13 +37,13 @@
 
   @see Thread_phase
 */
-typedef enum { 
-    INIT,       /**< @brief TCB initialising */
-    READY,      /**< @brief A thread ready to be scheduled.   */
-    RUNNING,    /**< @brief A thread running on some core   */
-    STOPPED,    /**< @brief A blocked thread   */
-    EXITED      /**< @brief A terminated thread   */
-  } Thread_state;
+typedef enum {
+    INIT, /**< @brief TCB initialising */
+    READY, /**< @brief A thread ready to be scheduled.   */
+    RUNNING, /**< @brief A thread running on some core   */
+    STOPPED, /**< @brief A blocked thread   */
+    EXITED /**< @brief A terminated thread   */
+} Thread_state;
 
 /** @brief Thread phase. 
 
@@ -64,17 +63,16 @@ typedef enum {
 
   @see Thread_state
 */
-typedef enum { 
-    CTX_CLEAN,   /**< @brief Context is clean. */
+typedef enum {
+    CTX_CLEAN, /**< @brief Context is clean. */
 
-    CTX_DIRTY    /**< @brief Context is dirty. */
-  } Thread_phase;
-
+    CTX_DIRTY /**< @brief Context is dirty. */
+} Thread_phase;
 
 /** @brief Thread type. */
-typedef enum { 
-  IDLE_THREAD,    /**< @brief Marks an idle thread. */
-  NORMAL_THREAD   /**< @brief Marks a normal thread */
+typedef enum {
+    IDLE_THREAD, /**< @brief Marks an idle thread. */
+    NORMAL_THREAD /**< @brief Marks a normal thread */
 } Thread_type;
 
 /**
@@ -84,16 +82,14 @@ typedef enum {
   adjust the dynamic priority of the current thread.
  */
 enum SCHED_CAUSE {
-  SCHED_QUANTUM,  /**< @brief The quantum has expired */
-  SCHED_IO,       /**< @brief The thread is waiting for I/O */
-  SCHED_MUTEX,    /**< @brief @c Mutex_Lock yielded on contention */
-  SCHED_PIPE,     /**< @brief Sleep at a pipe or socket */
-  SCHED_POLL,     /**< @brief The thread is polling a device */
-  SCHED_IDLE,     /**< @brief The idle thread called yield */
-  SCHED_USER      /**< @brief User-space code called yield */
+    SCHED_QUANTUM, /**< @brief The quantum has expired */
+    SCHED_IO, /**< @brief The thread is waiting for I/O */
+    SCHED_MUTEX, /**< @brief @c Mutex_Lock yielded on contention */
+    SCHED_PIPE, /**< @brief Sleep at a pipe or socket */
+    SCHED_POLL, /**< @brief The thread is polling a device */
+    SCHED_IDLE, /**< @brief The idle thread called yield */
+    SCHED_USER /**< @brief User-space code called yield */
 };
-
-
 
 /**
   @brief The thread control block
@@ -101,14 +97,13 @@ enum SCHED_CAUSE {
   An object of this type is associated to every thread. In this object
   are stored all the metadata that relate to the thread.
 */
-typedef struct thread_control_block
-{
-  PCB* owner_pcb;       /**< @brief This is null for a free TCB */
+typedef struct thread_control_block {
+    PCB* owner_pcb; /**< @brief This is null for a free TCB */
 
-  cpu_context_t context;     /**< @brief The thread context */
+    cpu_context_t context; /**< @brief The thread context */
 
 #ifndef NVALGRIND
-  unsigned valgrind_stack_id; /**< @brief Valgrind helper for stacks. 
+    unsigned valgrind_stack_id; /**< @brief Valgrind helper for stacks. 
 
       This is useful in order to register the thread stack to the valgrind memory profiler. 
       Valgrind needs to know which parts of memory are used as stacks, in order to return
@@ -118,28 +113,28 @@ typedef struct thread_control_block
       */
 #endif
 
-  Thread_type type;       /**< @brief The type of thread */
-  Thread_state state;    /**< @brief The state of the thread */
-  Thread_phase phase;    /**< @brief The phase of the thread */
+    Thread_type type; /**< @brief The type of thread */
+    Thread_state state; /**< @brief The state of the thread */
+    Thread_phase phase; /**< @brief The phase of the thread */
 
-  void (*thread_func)();   /**< @brief The initial function executed by this thread */
+    void (*thread_func)(); /**< @brief The initial function executed by this thread */
 
-  TimerDuration wakeup_time; /**< @brief The time this thread will be woken up by the scheduler */
-  rlnode sched_node;         /**< @brief Node to use when queueing in the scheduler lists */
+    TimerDuration wakeup_time; /**< @brief The time this thread will be woken up by the scheduler */
 
-  struct thread_control_block * prev;  /**< @brief Previous context */
-  struct thread_control_block * next;  /**< @brief Next context */
-  
+    rlnode sched_node; /**< @brief Node to use when queueing in the scheduler lists */
+    TimerDuration its; /**< @brief Initial time-slice for this thread */
+    TimerDuration rts; /**< @brief Remaining time-slice for this thread */
+
+    enum SCHED_CAUSE curr_cause; /**< @brief The endcause for the current time-slice */
+    enum SCHED_CAUSE last_cause; /**< @brief The endcause for the last time-slice */
+
 } TCB;
-
-
 
 /** @brief Thread stack size.
 
   The default thread stack size in TinyOS is 128 kbytes.
  */
-#define THREAD_STACK_SIZE  (128*1024)
-
+#define THREAD_STACK_SIZE (128 * 1024)
 
 /************************
  *
@@ -147,34 +142,32 @@ typedef struct thread_control_block
  *
  ************************/
 
-
 /** @brief Core control block.
 
   Per-core info in memory (basically scheduler-related). 
  */
 typedef struct core_control_block {
-  uint id;                    /**< @brief The core id */
+    uint id; /**< @brief The core id */
 
-  TCB* current_thread;        /**< @brief Points to the thread currently owning the core */
-  TCB idle_thread;            /**< @brief Used by the scheduler to handle the core's idle thread */
-  sig_atomic_t preemption;    /**< @brief Marks preemption, used by the locking code */
+    TCB* current_thread; /**< @brief Points to the thread currently owning the core */
+    TCB* previous_thread; /**< @brief Points to the thread that previously owned the core */
+    TCB idle_thread; /**< @brief Used by the scheduler to handle the core's idle thread */
+    sig_atomic_t preemption; /**< @brief Marks preemption, used by the locking code */
 
 } CCB;
- 
 
 /** @brief the array of Core Control Blocks (CCB) for the kernel */
 extern CCB cctx[MAX_CORES];
 
-
 /** @brief The current core's CCB */
-#define CURCORE  (cctx[cpu_core_id])
+#define CURCORE (cctx[cpu_core_id])
 
 /** 
   @brief The current thread.
 
   This is a pointer to the TCB of the thread currently executing on this core.
 */
-#define CURTHREAD  (CURCORE.current_thread)
+#define CURTHREAD (CURCORE.current_thread)
 
 /** 
   @brief The current thread.
@@ -182,14 +175,12 @@ extern CCB cctx[MAX_CORES];
   This is a pointer to the PCB of the owner process of the current thread, 
   i.e., the thread currently executing on this core.
 */
-#define CURPROC  (CURTHREAD->owner_pcb)
-
+#define CURPROC (CURTHREAD->owner_pcb)
 
 /**
   @brief A timeout constant, denoting no timeout for sleep.
 */
 #define NO_TIMEOUT ((TimerDuration)-1)
-
 
 /**
   @brief Create a new thread.
@@ -212,7 +203,6 @@ TCB* spawn_thread(PCB* pcb, void (*func)());
 
 */
 int wakeup(TCB* tcb);
-
 
 /** 
   @brief Block the current thread.
@@ -262,15 +252,14 @@ void yield(enum SCHED_CAUSE cause);
   to enter the scheduler. When this function returns, the scheduler
   has stopped (there are no more active threads) and the 
 */
-void run_scheduler(void); 
+void run_scheduler(void);
 
 /**
   @brief Initialize the scheduler.
 
    This function is called during kernel initialization.
  */
-void initialize_scheduler(void); 
-
+void initialize_scheduler(void);
 
 /**
   @brief Quantum (in microseconds) 
@@ -282,4 +271,3 @@ void initialize_scheduler(void);
 /** @} */
 
 #endif
-
