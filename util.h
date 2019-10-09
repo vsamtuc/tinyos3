@@ -437,6 +437,9 @@ static inline void rlist_push_back(rlnode* list, rlnode* node) { rl_splice(list-
 
 	This function, applied on a non-empty list, will remove the head of 
 	the list and return in.
+
+	When it is applied to an empty list, the function will return the
+	list itself.
 */
 static inline rlnode* rlist_pop_front(rlnode* list) { return rl_splice(list, list->next); }
 
