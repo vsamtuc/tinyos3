@@ -270,7 +270,7 @@ int Echo(size_t argc, const char** argv)
 	FILE* fout = fidopen(1, "w");
 	for(size_t i=1; i<argc; i++) {
 		if(i>1) fputs(" ", fout);
-		fprintf(fout,"%s", argv[1]);
+		fprintf(fout,"%s", argv[i]);
 	}
 	fprintf(fout,"\n");
 	fclose(fout);
