@@ -411,22 +411,22 @@ static inline rlnode* rlist_remove(rlnode* a) { rl_splice(a, a->prev); return a;
 static inline int is_rlist_empty(rlnode* a) { return a==a->next; }
 
 /**
-	@brief insert at the head of a list.
+	@brief Insert at the head of a list.
 
 	Assuming that @c node is not in the ring of @c list, 
 	this function inserts the ring  of @c node (often a singleton) 
-	to the head of @c list.
+	at the head of @c list.
 
 	This function is equivalent to @c splice(list,node). 
   */
 static inline void rlist_push_front(rlnode* list, rlnode* node) { rl_splice(list, node); }
 
 /**
-	@brief insert at the tail of a list.
+	@brief Insert at the tail of a list.
 
 	Assuming that @c node is not in the ring of @c list, 
 	this function inserts the ring  of @c node (often a singleton) 
-	to the head of @c list.
+	at the tail of @c list.
 
 	This function is equivalent to @c splice(list->prev,node). 
   */
@@ -437,6 +437,9 @@ static inline void rlist_push_back(rlnode* list, rlnode* node) { rl_splice(list-
 
 	This function, applied on a non-empty list, will remove the head of 
 	the list and return in.
+
+	When it is applied to an empty list, the function will return the
+	list itself.
 */
 static inline rlnode* rlist_pop_front(rlnode* list) { return rl_splice(list, list->next); }
 
