@@ -157,7 +157,7 @@ TCB* spawn_thread(PCB* pcb, void (*func)())
 
 
 /*
-  This is called with tcb->state_spinlock locked !
+  This is called with sched_spinlock locked !
  */
 void release_TCB(TCB* tcb)
 {
