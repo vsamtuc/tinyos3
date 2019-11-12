@@ -166,3 +166,27 @@ int Execute(Program prog, size_t argc, const char** argv)
 	return Exec(exec_wrapper, argl, args);
 }
 
+
+
+void BarrierSync(barrier* bar, unsigned int n)
+{
+	assert(n>0);
+	Mutex_Lock(& bar->mx);
+
+	int epoch = bar->epoch;
+	assert(bar->count < n);
+
+	bar->count ++;
+	if(bar->count == n) {
+		bar->epoch ++;
+		bar->count = 0;
+		Cond_Broadcast(&bar->cv);
+	}
+
+	while(epoch == bar->epoch)
+		Cond_Wait(&bar->mx, &bar->cv);
+
+	Mutex_Unlock(& bar->mx);
+}
+
+

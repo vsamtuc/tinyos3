@@ -917,6 +917,50 @@ TEST_SUITE(basic_tests,
  *********************************************/
 
 
+void sleep_thread(int sec) {
+	Mutex mx = MUTEX_INIT;
+	CondVar cond = COND_INIT;
+
+	Mutex_Lock(&mx);
+	ASSERT(Cond_TimedWait(&mx,&cond,1000*sec)==0);
+}
+
+
+BOOT_TEST(test_join_illegal_tid_gives_error,
+	"Test that ThreadJoin rejects an illegal Tid")
+{
+	int* illegal_ptr = (int*) -1;
+
+	ASSERT(ThreadJoin(NOTHREAD, illegal_ptr)==-1);
+
+	/* Test with random numbers. Since we only have one thread, any call is an illegal call. */
+	for(int i=0; i<100; i++) {
+		Tid_t random_tid = lrand48();
+		ASSERT(ThreadJoin(random_tid, illegal_ptr)==-1);
+	}
+
+	/* In addition, we cannot join ourselves ! */
+	ASSERT(ThreadJoin(ThreadSelf(), illegal_ptr)==-1);
+
+	return 0;
+}
+
+
+BOOT_TEST(test_detach_illegal_tid_gives_error,
+	"Test that ThreadDetach rejects an illegal Tid")
+{
+	ASSERT(ThreadDetach(NOTHREAD)==-1);
+
+	/* Test with random numbers. Since we only have one thread, any call is an illegal call. */
+	for(int i=0; i<100; i++) {
+		Tid_t random_tid = lrand48();
+		if(random_tid==ThreadSelf()) /* Very unlikely, but still... */
+			continue;
+		ASSERT(ThreadDetach(random_tid)==-1);
+	}
+
+	return 0;
+}
 
 
 BOOT_TEST(test_create_join_thread,
@@ -939,6 +983,73 @@ BOOT_TEST(test_create_join_thread,
 	ASSERT(flag==1);
 	return 0;
 }
+
+BOOT_TEST(test_detach_self,
+	"Test that a thread can detach itself")
+{
+	ASSERT(ThreadDetach(ThreadSelf())==0);
+	return 0;
+}
+
+
+BOOT_TEST(test_join_many_threads,
+	"Test that many threads joining the same thread work ok")
+{
+	/* A thread to be joined */
+	int joined_thread(int argl, void* args) {
+		sleep_thread(1);
+		return 5213;
+	}
+
+	Tid_t joined_tid = CreateThread(joined_thread, 0, NULL);
+
+	int some_thread_joined = 0;
+
+	int joiner_thread(int argl, void* args) {
+		int retval;
+		int rc = ThreadJoin(joined_tid,&retval);
+		if(rc==0) some_thread_joined = 1;
+		ASSERT(rc!=0 || retval==5213);
+		ASSERT(ThreadDetach(ThreadSelf()));
+		return 0;
+	}
+
+	for(int i=0;i<5;i++) {
+		CreateThread(joiner_thread,0,NULL);
+	}
+
+	ASSERT(some_thread_joined);
+	return 0;
+}
+
+
+
+BOOT_TEST(test_detach_after_join,
+	"Test that a thread can be detached after joining")
+{
+	/* A thread to be joined */
+	int joined_thread(int argl, void* args) {
+		sleep_thread(1);
+		ThreadDetach(ThreadSelf());
+		return 5213;
+	}
+
+	Tid_t joined_tid = CreateThread(joined_thread, 0, NULL);
+
+	int joiner_thread(int argl, void* args) {
+		int retval;
+		int rc = ThreadJoin(joined_tid,&retval);
+		ASSERT(rc==-1);
+		ASSERT(ThreadDetach(ThreadSelf()));
+		return 0;
+	}
+
+	for(int i=0;i<5;i++) {
+		CreateThread(joiner_thread,0,NULL);
+	}
+	return 0;
+}
+
 
 
 BOOT_TEST(test_exit_many_threads,
@@ -965,17 +1076,70 @@ BOOT_TEST(test_exit_many_threads,
 	return 0;
 }
 
+BOOT_TEST(test_nonexit_cleanup,
+	"Test that a process where the main thread calls Exit, will still clean up correctly."
+	)
+{
+
+	int mthread(int argl, void* args){
+		ThreadExit(44);
+		FAIL("ThreadExit returned");  /* We should fail if ThreadExit returns */
+		return 0;
+	}
+
+	Exec(mthread, 0, NULL);
+	ASSERT(WaitChild(NOPROC, NULL)!=NOPROC);
+
+	return 0;
+}
 
 
+BOOT_TEST(test_cyclic_joins,
+	"Test that a set of cyclically joined threads will not deadlock once the cycle breaks")
+{
+	const unsigned int N=5;
+	barrier B;
+	Tid_t tids[N];
 
+	int join_thread(int argl, void* args) {
+		BarrierSync(&B, N+1);
+		ThreadJoin(tids[argl], NULL);
+		return argl;
+	}
+
+	/* spawn all N threads */
+	for(unsigned int i=0;i<N;i++) {
+		tids[i] = CreateThread(join_thread, (i+1)%N, NULL);
+		assert(tids[i]!=NOTHREAD); /* small assert! do not proceed unless threads are created! */
+	}
+	/* allow threads to join */
+	BarrierSync(&B, N+1);
+	/* Wait for threads to proceed */
+	sleep_thread(1);
+	/* Now, threads are in deadlock! To break the deadlock,
+	   detach thread 0. */
+	ThreadDetach(tids[0]);
+	/* To make sure that other threads escape deadlock, join them! */
+	for(unsigned int i=1; i<N; i++)
+		ASSERT(ThreadJoin(tids[i], NULL)==0);	
+
+	return 0;
+}
 
 
 TEST_SUITE(thread_tests, 
 	"A suite of tests for threads."
 	)
 {
+	&test_join_illegal_tid_gives_error,
+	&test_detach_illegal_tid_gives_error,
+	&test_detach_self,
+	&test_detach_after_join,
 	&test_create_join_thread,
+	&test_join_many_threads,
 	&test_exit_many_threads,
+	&test_nonexit_cleanup,
+	&test_cyclic_joins,
 	NULL
 };
 

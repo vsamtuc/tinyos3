@@ -73,4 +73,17 @@ int Execute(Program prog, size_t argc, const char** argv);
 int ParseProcInfo(procinfo* pinfo, Program* prog, int argc, const char** argv );
 
 
+
+typedef struct barrier {
+	Mutex mx;
+	CondVar cv;
+	unsigned int count, epoch;
+} barrier;
+
+#define BARRIER_INIT  ((barrier){ MUTEX_INIT, COND_INIT, 0, 0})
+
+
+void BarrierSync(barrier* bar, unsigned int n);
+
+
 #endif
