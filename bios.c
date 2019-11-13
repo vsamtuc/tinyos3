@@ -105,7 +105,7 @@ typedef unsigned long coarse_clock_t;
 static volatile coarse_clock_t  system_clock;
 
 /* This is how fast the coarse clock is updated (in usec) */
-#define SLOW_HZ 10000
+#define SLOW_HZ 100
 
 /* This gives a rough serial port timeout of 300 msec */
 #define SERIAL_TIMEOUT 300
@@ -922,5 +922,45 @@ int bios_write_serial(uint serial, char value)
 {
 	return io_device_write(& TERM[serial].con, value);
 }
+
+
+/******************************************************
+
+	BIOS Tests
+
+ ******************************************************/
+
+
+#include "unit_testing.h"
+
+
+BOOT_TEST(bios_timings, "Measure and print timings about the bios")
+{
+	struct timespec t1,t2;
+	clock_gettime(CLOCK_REALTIME, &t1);
+	fibo(44);
+	clock_gettime(CLOCK_REALTIME, &t2);
+
+	double dT = timespec_diff(&t1,&t2);
+	MSG("Number of PIC daemon loops=%ld\n", PIC_loops);
+	MSG("Time per loop= %.0f nsec\n", dT/PIC_loops);
+	
+	for(uint c=0;c<ncores;c++) {
+		MSG("Core %u:  irq_count=%d  delta T=%f \n", c, CORE[c].irq_count, dT/CORE[c].irq_count);
+		for(int i=0; i<maximum_interrupt_no; i++) {
+			MSG("    int=%d    raised=%d   delivered=%d\n", i, CORE[c].irq_raised[i], CORE[c].irq_delivered[i]);
+		}
+	}	
+
+	return 0;
+}
+
+
+TEST_SUITE(bios_all_tests,
+        "All tests")
+{
+	&bios_timings,
+   	NULL
+};
 
 

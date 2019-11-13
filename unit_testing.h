@@ -341,7 +341,7 @@ typedef struct Test
 /** @brief Declare a standard test function. */
 #define BARE_TEST(tname, descr, ...) \
 static void __test_ ## tname ();   \
-const Test tname = { BARE_FUNC, #tname, .bare = __test_##tname , (descr), DEFAULT_TIMEOUT, 0, 1, __VA_ARGS__ }; \
+static const Test tname = { BARE_FUNC, #tname, .bare = __test_##tname , (descr), DEFAULT_TIMEOUT, 0, 1, __VA_ARGS__ }; \
 static void __test_ ## tname ()
 
 /** @brief Declare a test function run as the boot function of the tinyos kernel. 
@@ -351,7 +351,7 @@ static void __test_ ## tname ()
 */
 #define BOOT_TEST(tname, descr, ...) \
 static int __test_ ## tname (int, void*); \
-const Test tname = { BOOT_FUNC, #tname, .boot = __test_##tname, (descr), DEFAULT_TIMEOUT, 0, 1 , __VA_ARGS__ }; \
+static const Test tname = { BOOT_FUNC, #tname, .boot = __test_##tname, (descr), DEFAULT_TIMEOUT, 0, 1 , __VA_ARGS__ }; \
 static int __test_ ## tname (int argl, void* args)
 
 /** @brief Declare a collectio of test functions.

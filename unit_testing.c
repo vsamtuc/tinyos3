@@ -1015,6 +1015,7 @@ int run_program(int argc, char**argv, const Test* default_test)
 {
 	__default_test = default_test;
 	ARGS.fork = ! isDebuggerAttached();
+	argp_program_version = argv[0];
 	argp_parse(&argp, argc, argv, 0, 0, &ARGS);
 
 	if(ARGS.show_tests)

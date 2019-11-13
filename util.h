@@ -9,6 +9,7 @@
 #include <errno.h>
 #include <setjmp.h>
 #include <assert.h>
+#include <time.h>
 
 /**
 	@file util.h
@@ -667,6 +668,21 @@ static inline void* argvunpack(size_t argc, const char** argv, int argl, void* a
 		while(*a++); /* skip non-0 */
 	}
 	return a;
+}
+
+
+/**
+	@brief Return the difference in time between two timespecs
+
+	The value of @c struct timespec can be set by using @c clock_gettime().
+
+	@return The number of nanoseconds between the two timespecs.
+  */
+static inline double timespec_diff(struct timespec* t1, struct timespec* t2)
+{
+    double T1 = t1->tv_nsec + t1->tv_sec*1E9;
+    double T2 = t2->tv_nsec + t2->tv_sec*1E9;
+    return T2-T1;
 }
 
 
