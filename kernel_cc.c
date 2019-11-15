@@ -89,6 +89,11 @@ static inline void remove_from_ring(CondVar* cv, __cv_waiter* w)
 }
 
 
+#define RLIST(node) ((rlnode){ {.obj=NULL}, &(node), &(node) })
+static wait_channel cvwc = { SCHED_USER, "cv_wait" };
+static wait_queue cvwq = { .thread_list = RLIST(cvwq.thread_list), .wchan=&cvwc };
+
+
 /** 
    @internal
    @brief Wait on a condition variable, specifying the cause. 
@@ -133,7 +138,9 @@ static int cv_wait(Mutex* mutex, CondVar* cv,
 
 	/* Now atomically release mutex and sleep */
 	Mutex_Unlock(mutex);
-	sleep_releasing(STOPPED, &(cv->waitset_lock), cause, timeout);
+
+	//sleep_releasing(STOPPED, &(cv->waitset_lock), cause, timeout);
+	wqueue_wait(&cvwq, &(cv->waitset_lock), timeout);
 
 	/* Woke up, we must check wether we were signaled, and tidy up */
 	Mutex_Lock(&(cv->waitset_lock));
@@ -208,6 +215,10 @@ void Cond_Broadcast(CondVar* cv)
  */ 
 int set_core_preemption(int preempt)
 {
+	/* 
+	   Just ensure that CURCORE.preemption is changed only with preemption off! 
+	   That is, after cpu_disable_interrupts() and before cpu_enable_interrupts().
+	 */
 	sig_atomic_t old_preempt;
 	if(preempt) {
 		old_preempt = __atomic_exchange_n(& CURCORE.preemption, preempt, __ATOMIC_RELAXED);
@@ -253,13 +264,16 @@ static Mutex kernel_mutex = MUTEX_INIT;
 static int kernel_sem = 1;
 
 /* Semaphore condition */
-static CondVar kernel_sem_cv = COND_INIT;
+//static CondVar kernel_sem_cv = COND_INIT;
+static wait_channel ksem_wchan = { SCHED_USER, "klock" };
+static wait_queue ksem_queue = { RLIST(ksem_queue.thread_list), &ksem_wchan };
 
 void kernel_lock()
 {
 	Mutex_Lock(& kernel_mutex);
 	while(kernel_sem<=0) {
-		Cond_Wait(& kernel_mutex, &kernel_sem_cv);
+		//Cond_Wait(& kernel_mutex, &kernel_sem_cv);
+		wqueue_wait(&ksem_queue, &kernel_mutex, NO_TIMEOUT);
 	}
 	kernel_sem--;
 	Mutex_Unlock(& kernel_mutex);
@@ -269,7 +283,8 @@ void kernel_unlock()
 {
 	Mutex_Lock(& kernel_mutex);
 	kernel_sem++;
-	Cond_Signal(&kernel_sem_cv);
+	//Cond_Signal(&kernel_sem_cv);
+	wqueue_signal(&ksem_queue);
 	Mutex_Unlock(& kernel_mutex);
 }
 
@@ -279,13 +294,16 @@ int kernel_wait_wchan(CondVar* cv, enum SCHED_CAUSE cause,
 	/* Atomically release kernel semaphore */
 	Mutex_Lock(& kernel_mutex);
 	kernel_sem++;
-	Cond_Signal(&kernel_sem_cv);	
+	//Cond_Signal(&kernel_sem_cv);	
+	wqueue_signal(&ksem_queue);
 
 	int ret = cv_wait(&kernel_mutex, cv, cause, timeout);
 
 	/* Reacquire kernel semaphore */
 	while(kernel_sem<=0)
-		Cond_Wait(& kernel_mutex, &kernel_sem_cv);
+		//Cond_Wait(& kernel_mutex, &kernel_sem_cv);
+		{ wqueue_wait(&ksem_queue, &kernel_mutex, NO_TIMEOUT); Mutex_Lock(& kernel_mutex); }
+
 	kernel_sem--;
 	Mutex_Unlock(& kernel_mutex);		
 
@@ -306,7 +324,8 @@ void kernel_sleep(Thread_state newstate, enum SCHED_CAUSE cause)
 {
 	Mutex_Lock(& kernel_mutex);
 	kernel_sem++;
-	Cond_Signal(&kernel_sem_cv);
+	wqueue_signal(&ksem_queue);
+	//Cond_Signal(&kernel_sem_cv);
 	sleep_releasing(newstate, &kernel_mutex, cause, NO_TIMEOUT);
 }
 

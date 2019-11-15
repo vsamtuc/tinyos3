@@ -128,6 +128,10 @@ TCB* spawn_thread(PCB* pcb, void (*func)())
 	tcb->last_cause = SCHED_IDLE;
 	tcb->curr_cause = SCHED_IDLE;
 
+	rlnode_init(& tcb->wqueue_node, tcb);
+	tcb->wqueue = NULL;
+	tcb->wait_signalled = 0;
+
 	/* Compute the stack segment address and size */
 	void* sp = ((void*)tcb) + THREAD_TCB_SIZE;
 
@@ -161,6 +165,9 @@ void release_TCB(TCB* tcb)
 	active_threads--;
 	Mutex_Unlock(&active_threads_spinlock);
 }
+
+
+
 
 /*
  *
@@ -196,6 +203,9 @@ void yield_handler() { yield(SCHED_QUANTUM); }
 void ici_handler()
 { /* noop for now... */
 }
+
+
+
 
 /*
   Possibly add TCB to the scheduler timeout list.
@@ -251,6 +261,12 @@ static void sched_make_ready(TCB* tcb)
 		tcb->wakeup_time = NO_TIMEOUT;
 	}
 
+	/* Possibly remove from wqueue */
+	if(tcb->wqueue != NULL) {
+		rlist_remove(& tcb->wqueue_node);
+		tcb->wqueue = NULL;
+	}
+
 	/* Mark as ready */
 	tcb->state = READY;
 
@@ -298,6 +314,108 @@ static TCB* sched_queue_select(TCB* current)
 
 	return next_thread;
 }
+
+
+/*
+ *
+ *  Wait queues
+ *
+ */
+
+
+void wqueue_init(wait_queue* wqueue, wait_channel* wchan) 
+{
+	rlnode_init(& wqueue->thread_list, NULL);
+	wqueue->wchan = wchan;
+}
+
+
+int wqueue_wait(wait_queue* wqueue, Mutex* wmx, TimerDuration timeout)
+{
+	TCB* current = CURTHREAD;
+	assert(current->type != IDLE_THREAD);
+
+	int signalled;
+	int preempt = preempt_off;
+
+    Mutex_Lock(&sched_spinlock);  /* Lock the scheduler */
+
+	/* Update the wait data in the TCB */
+	assert(current->wqueue==NULL);
+	current->wqueue = wqueue;
+	current->wait_signalled = 0;
+
+	/* Add thread to the queue */
+	rlist_push_back(& wqueue->thread_list, &current->wqueue_node);
+
+    /* mark the thread as stopped */
+    current->state = STOPPED;
+
+	/* register the timeout (if any) for the sleeping thread */
+	sched_register_timeout(current, timeout);
+
+	/* Release wmx */
+	if (wmx != NULL)  Mutex_Unlock(wmx);
+
+	Mutex_Unlock(&sched_spinlock);  /* Release schεd_spinlock before yield() !!! */
+
+	/* call this to schedule someone else */
+	yield(wqueue->wchan->cause);
+
+    Mutex_Lock(&sched_spinlock);  
+
+	/* Return the wait_signalled flag */
+	signalled = current->wait_signalled;
+
+	/* If we were not removed from the queue, we must remove ourselves! */
+	if(current->wqueue != NULL) {
+		assert(! signalled);
+		assert(wqueue == current->wqueue);
+		rlist_remove(& current->wqueue_node);
+		current->wqueue = NULL;
+	}
+
+	Mutex_Unlock(&sched_spinlock);
+
+	if(preempt) preempt_on;
+	return signalled;
+}
+
+
+void wqueue_signal(wait_queue* wqueue)
+{
+	int preempt = preempt_off;
+	Mutex_Lock(& sched_spinlock);
+
+	if(! is_rlist_empty(& wqueue->thread_list )) {
+		TCB* head = wqueue->thread_list.next->tcb;
+		assert(head->wqueue == wqueue);
+		head->wait_signalled = 1;
+		sched_make_ready(head);
+	}
+
+	Mutex_Unlock(& sched_spinlock);
+	if(preempt) preempt_on;
+}
+
+
+void wqueue_broadcast(wait_queue* wqueue)
+{
+	int preempt = preempt_off;
+	Mutex_Lock(& sched_spinlock);
+
+	while(! is_rlist_empty(& wqueue->thread_list )) {
+		TCB* head = wqueue->thread_list.next->tcb;
+		assert(head->wqueue == wqueue);
+		head->wait_signalled = 1;
+		sched_make_ready(head);
+	}
+
+	Mutex_Unlock(& sched_spinlock);
+	if(preempt) preempt_on;
+}
+
+
 
 /*
   Make the process ready.

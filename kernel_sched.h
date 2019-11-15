@@ -82,14 +82,18 @@ typedef enum {
   adjust the dynamic priority of the current thread.
  */
 enum SCHED_CAUSE {
+	SCHED_USER,    /**< @brief User-space code called yield */
 	SCHED_QUANTUM, /**< @brief The quantum has expired */
-	SCHED_IO, /**< @brief The thread is waiting for I/O */
-	SCHED_MUTEX, /**< @brief @c Mutex_Lock yielded on contention */
-	SCHED_PIPE, /**< @brief Sleep at a pipe or socket */
-	SCHED_POLL, /**< @brief The thread is polling a device */
-	SCHED_IDLE, /**< @brief The idle thread called yield */
-	SCHED_USER /**< @brief User-space code called yield */
+	SCHED_IO,      /**< @brief The thread is waiting for I/O */
+	SCHED_MUTEX,   /**< @brief @c Mutex_Lock yielded on contention */
+	SCHED_PIPE,    /**< @brief Sleep at a pipe or socket */
+	SCHED_POLL,    /**< @brief The thread is polling a device */
+	SCHED_IDLE,    /**< @brief The idle thread called yield */
+	SCHED_EXIT     /**< @brief An exiting thread called yield */
 };
+
+
+struct wait_queue;
 
 /**
   @brief The thread control block
@@ -128,7 +132,35 @@ typedef struct thread_control_block {
 	enum SCHED_CAUSE curr_cause; /**< @brief The endcause for the current time-slice */
 	enum SCHED_CAUSE last_cause; /**< @brief The endcause for the last time-slice */
 
+	rlnode wqueue_node;
+	struct wait_queue* wqueue;
+	int wait_signalled;
+	  
 } TCB;
+
+
+typedef struct wait_channel
+{
+	enum SCHED_CAUSE cause;
+	const char* name;  
+} wait_channel;
+
+
+typedef struct wait_queue
+{
+	rlnode thread_list;
+	wait_channel* wchan;
+} wait_queue;
+
+
+void wqueue_init(wait_queue* wqueue, wait_channel* wchan);
+
+int wqueue_wait(wait_queue* wqueue, Mutex* wmx, TimerDuration timeout);
+
+void wqueue_signal(wait_queue* wqueue);
+
+void wqueue_broadcast(wait_queue* wqueue);
+
 
 /** @brief Thread stack size.
 
@@ -210,6 +242,7 @@ TCB* spawn_thread(PCB* pcb, void (*func)());
 
 */
 int wakeup(TCB* tcb);
+
 
 /** 
   @brief Block the current thread.
