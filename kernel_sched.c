@@ -323,7 +323,7 @@ static TCB* sched_queue_select(TCB* current)
  */
 
 
-void wqueue_init(wait_queue* wqueue, wait_channel* wchan) 
+void wqueue_init(wait_queue* wqueue, const wait_channel* wchan) 
 {
 	rlnode_init(& wqueue->thread_list, NULL);
 	wqueue->wchan = wchan;
@@ -378,6 +378,10 @@ int wqueue_wait(wait_queue* wqueue, Mutex* wmx, TimerDuration timeout)
 	Mutex_Unlock(&sched_spinlock);
 
 	if(preempt) preempt_on;
+
+	/* Reacquire mutex */
+	if(wmx) Mutex_Lock(wmx);
+
 	return signalled;
 }
 
@@ -444,40 +448,25 @@ int wakeup(TCB* tcb)
 	return ret;
 }
 
-/*
-  Atomically put the current process to sleep, after unlocking mx.
- */
-void sleep_releasing(Thread_state state, Mutex* mx, enum SCHED_CAUSE cause,
-	TimerDuration timeout)
+
+_Noreturn void exit_thread()
 {
-	assert(state == STOPPED || state == EXITED);
-
-	TCB* tcb = CURTHREAD;
-
-	int preempt = preempt_off;
+	preempt_off;
 	Mutex_Lock(&sched_spinlock);
 
 	/* mark the thread as stopped or exited */
-	tcb->state = state;
-
-	/* register the timeout (if any) for the sleeping thread */
-	if (state != EXITED)
-		sched_register_timeout(tcb, timeout);
-
-	/* Release mx */
-	if (mx != NULL)
-		Mutex_Unlock(mx);
+	CURTHREAD->state = EXITED;
 
 	/* Release the schduler spinlock before calling yield() !!! */
 	Mutex_Unlock(&sched_spinlock);
 
 	/* call this to schedule someone else */
-	yield(cause);
+	yield(SCHED_EXIT);
 
-	/* Restore preemption state */
-	if (preempt)
-		preempt_on;
+	/* We should not get here! */
+	assert(0);	
 }
+
 
 /* This function is the entry point to the scheduler's context switching */
 

@@ -2316,6 +2316,8 @@ int main(int argc, char** argv)
 {
 	register_test(&all_tests);
 	register_test(&user_tests);
+	register_test(&io_tests);
+	register_test(&concurrency_tests);	
 	return run_program(argc, argv, &all_tests);
 }
 

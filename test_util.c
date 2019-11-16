@@ -51,6 +51,7 @@ BARE_TEST(test_list_init,
 	rlnode_init(&n1, &L);
 	rlnode_new(&n2)->num = 5;
 	ASSERT(n2.num==5);
+	ASSERT(n2.key.num == 5);
 
 	rlnode R = { .obj= NULL, .prev=&R, .next=&R };
 	ASSERT(is_rlist_empty(&R));
@@ -263,6 +264,149 @@ TEST_SUITE(rlist_tests,
 	&test_list_append,
 	NULL
 };
+
+
+/*
+ *  rheap testing
+ */
+
+static inline int num_less(rlnode* a, rlnode* b) 
+{
+	return a->num < b->num; 
+}
+
+
+void check_legal_heap(rlnode* heap, rlnode_less_func lessf)
+{
+	if(heap==NULL) return;
+	for(rlnode* p=heap->prev; !pointer_is_marked(p); p=p->next) {
+		check_legal_heap(p, lessf);
+		ASSERT( ! lessf(p,heap));
+	}
+}
+
+
+rlnode* build_int_ring(rlnode* from, size_t n, int* key) 
+{
+	rlnode L; rlnode_init(&L,NULL);
+	for(size_t i=0; i<n; i++) {
+		rlnode_new(from)->num = *(key++);
+		rlist_push_back(&L,from++);
+	}
+	return rl_splice(&L, L.prev);
+}
+
+
+void print_int_heap(rlnode* heap)
+{
+	if(heap==NULL) return;
+	printf("%lu:[ ",heap->num);
+	for(rlnode* p = heap->prev; !pointer_is_marked(p); p=p->next) {
+		if(p!=heap->prev)
+			printf(" | ");
+		print_int_heap(p);
+	}
+	printf(" ]");
+}
+
+void rheap_unlink(rlnode* node);
+
+
+BARE_TEST(test_rheap_init, "Heap initialization")
+{
+	int a[] = { 4,2,5,7,8,3,2,9,3 };
+	rlnode nodes[9];
+	rlnode* ring = build_int_ring(nodes, 9, a);
+
+	rlnode* heap = rheap_from_ring(ring, num_less);
+	ASSERT(rheap_size(heap)==9);
+	check_legal_heap(heap, num_less);
+	rheap_unlink(nodes+3);
+	check_legal_heap(nodes+3, num_less);
+	ASSERT(rheap_size(heap)+rheap_size(nodes+3) == 9);
+
+	ASSERT(heap != NULL);
+	int hsize = rheap_size(heap);
+	while(heap != NULL) {
+		hsize--;
+		heap = rheap_delmin(heap, num_less);
+		check_legal_heap(heap, num_less);
+	}
+	ASSERT(hsize==0);
+
+	check_legal_heap(NULL, num_less);
+}
+
+
+BARE_TEST(test_rheap_delmin, "Test delmin via heapsort with pairing heaps")
+{
+	int a[] = { 4,2,5,7,8,3,2,9,3 };
+	rlnode nodes[9];
+	rlnode* ring = build_int_ring(nodes, 9, a);
+
+	rlnode* heap = rheap_from_ring(ring, num_less);
+	ASSERT(rheap_size(heap)==9);	
+
+	int p = heap->num;  
+	while( (heap = rheap_delmin(heap, num_less)) != NULL ) {
+		int q = heap->num;
+		ASSERT( p <= q );
+		p = q;
+	}
+}
+
+
+BARE_TEST(test_rheap_delete, "Heap deletion")
+{
+	int a[] = { 4,2,5,7,8,3,2,9,3 };
+	rlnode nodes[9];
+	rlnode* ring = build_int_ring(nodes, 9, a);
+
+	rlnode* heap = rheap_from_ring(ring, num_less);
+	check_legal_heap(heap, num_less);
+	ASSERT(rheap_size(heap)==9);	
+
+	int i=8;
+	while( (heap = rheap_delete(heap, &nodes[i], num_less)) != NULL ) {
+		check_legal_heap(heap, num_less);
+
+		ASSERT( rheap_size(heap) == i );
+		ASSERT( rheap_size(&nodes[i]) == 1 );		
+		i--;
+	}
+
+}
+
+BARE_TEST(test_rheap_meld, "Heap melding")
+{
+	ASSERT(rheap_meld(NULL, NULL, num_less)==NULL);
+	rlnode node;
+	rheap_init(&node)->num=22;
+
+	rlnode* heap = &node;
+	check_legal_heap(heap, num_less);
+	ASSERT(rheap_meld(NULL, NULL, num_less)==NULL);
+
+	ASSERT(rheap_meld(heap, NULL, num_less)==heap);
+	ASSERT(rheap_meld(NULL, heap, num_less)==heap);
+
+}
+
+
+TEST_SUITE(rheap_tests,
+	"Test for the resource priority queue")
+{
+	&test_rheap_init,
+	&test_rheap_delmin,
+	&test_rheap_delete,
+	&test_rheap_meld,
+	NULL
+};
+
+
+
+
+
 
 
 
@@ -548,6 +692,7 @@ TEST_SUITE(all_tests,
 	"All tests")
 {
 	&rlist_tests,
+	&rheap_tests,
 	&test_pack_unpack,
 	&exception_tests,	
 	NULL

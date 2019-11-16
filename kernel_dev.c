@@ -66,10 +66,15 @@ static file_ops nulldev_fops = {
 void serial_rx_handler();
 void serial_tx_handler();
 
+/* Two wait channels */
+static wait_channel wchan_serial_read = { SCHED_IO, "serial_read" };
+static wait_channel wchan_serial_write = { SCHED_POLL, "serial_write" };
+
 typedef struct serial_device_control_block {
   uint devno;
   Mutex spinlock;
-  CondVar rx_ready;
+  wait_queue rx_ready;
+  wait_queue tx_ready;
 } serial_dcb_t;
 
 serial_dcb_t serial_dcb[MAX_TERMINALS];
@@ -82,17 +87,17 @@ serial_dcb_t serial_dcb[MAX_TERMINALS];
 
 void serial_rx_handler()
 {
-  int pre = preempt_off;
+	int pre = preempt_off;
 
-  /* 
-    We do not know which terminal is
-    ready, so we must signal them all !
-   */
-  for(int i=0;i<bios_serial_ports();i++) {
-    serial_dcb_t* dcb = &serial_dcb[i];
-    Cond_Broadcast(&dcb->rx_ready);
-  }
-  if(pre) preempt_on;
+	/* 
+		We do not know which terminal is
+		ready, so we must signal them all !
+	*/
+	for(int i=0;i<bios_serial_ports();i++) {
+		serial_dcb_t* dcb = &serial_dcb[i];
+		wqueue_broadcast(&dcb->rx_ready);
+	}
+	if(pre) preempt_on;
 }
 
 /*
@@ -113,7 +118,7 @@ int serial_read(void* dev, char *buf, unsigned int size)
       count++;
     }
     else if(count==0) {
-      kernel_wait(&dcb->rx_ready, SCHED_IO);
+      kernel_wait(&dcb->rx_ready);
     }
     else
       break;
@@ -132,33 +137,42 @@ int serial_read(void* dev, char *buf, unsigned int size)
 /* Interrupt driver */
 void serial_tx_handler()
 {
-  /* There is nothing to do */
+	int pre = preempt_off;
+
+	/* 
+		We do not know which terminal is
+		ready, so we must signal them all !
+	*/
+	for(int i=0;i<bios_serial_ports();i++) {
+		serial_dcb_t* dcb = &serial_dcb[i];
+		wqueue_broadcast(&dcb->tx_ready);
+	}
+	if(pre) preempt_on;
 }
 
 /* 
-  Write call 
-  This is currently a polling driver.
+  Write to a serial device
 */
 int serial_write(void* dev, const char* buf, unsigned int size)
 {
-  serial_dcb_t* dcb = (serial_dcb_t*)dev;
+	serial_dcb_t* dcb = (serial_dcb_t*)dev;
 
-  unsigned int count = 0;
-  while(count < size) {
-    int success = bios_write_serial(dcb->devno, buf[count] );
+	unsigned int count = 0;
+	while(count < size) {
+		int success = bios_write_serial(dcb->devno, buf[count] );
 
-    if(success) {
-      count++;
-    } 
-    else if(count==0)
-    {
-      yield(SCHED_IO);
-    }
-    else
-      break;
-  }
+		if(success) {
+			count++;
+		} 
+		else if(count==0)
+		{
+			kernel_wait(& dcb->tx_ready);
+		}
+		else
+			break;
+	}
 
-  return count;  
+	return count;  
 }
 
 
@@ -209,7 +223,8 @@ void initialize_devices()
   /* Initialize the serial devices */
   for(int i=0; i<bios_serial_ports(); i++) {
     serial_dcb[i].devno = i;
-    serial_dcb[i].rx_ready = COND_INIT;
+    wqueue_init(& serial_dcb[i].rx_ready, &wchan_serial_read);
+    wqueue_init(& serial_dcb[i].tx_ready, &wchan_serial_write);
     serial_dcb[i].spinlock = MUTEX_INIT;
   }
 

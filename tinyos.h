@@ -121,8 +121,9 @@ void Mutex_Unlock(Mutex*);
   @see COND_INIT
  */
 typedef struct {
-  void *waitset;        /**< The set of waiting threads */
-  Mutex waitset_lock;   /**< A mutex to protect `waitset` */
+	void* filler[4];
+  //void *waitset;        /**< The set of waiting threads */
+  //Mutex waitset_lock;   /**< A mutex to protect `waitset` */
 } CondVar;
 
 
@@ -133,7 +134,7 @@ typedef struct {
   CondVar my_cv = COND_INIT;
   @endcode
  */
-#define COND_INIT ((CondVar){ NULL, MUTEX_INIT })
+#define COND_INIT ((CondVar){ { NULL, NULL, NULL, NULL}  })
 
 
 /** @brief Wait on a condition variable. 

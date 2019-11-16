@@ -51,35 +51,22 @@ void kernel_unlock();
 	@brief Wait on a condition variable using the kernel lock.
 	@returns 1 if signalled, 0 if not
   */
-int kernel_wait_wchan(CondVar* cv, enum SCHED_CAUSE cause, 
-	const char* wchan, TimerDuration timeout);
+int kernel_timedwait(wait_queue* wq, TimerDuration timeout);
 
-#define kernel_wait(cv, cause) \
-	kernel_wait_wchan((cv),(cause),__FUNCTION__, NO_TIMEOUT)
-#define kernel_timedwait(cv, cause, timeout) \
-	kernel_wait_wchan((cv),(cause),__FUNCTION__, (timeout))
+#define kernel_wait(wq) \
+	kernel_timedwait((wq), NO_TIMEOUT)
 
 /**
 	@brief Signal a kernel condition to one waiter.
 
 	This call must be made 
   */
-void kernel_signal(CondVar* cv);
+void kernel_signal(wait_queue* wq);
 
 /**
 	@brief Signal a kernel condition to all waiters.
   */
-void kernel_broadcast(CondVar* cv);
-
-
-/**
-	@brief Put thread to sleep, unlocking the kernel.
-
-	System calls should call this function instead of @c sleep_releasing,
-	as the kernel lock is not a mutex.
-  */
-void kernel_sleep(Thread_state state, enum SCHED_CAUSE cause);
-
+void kernel_broadcast(wait_queue* wq);
 
 
 /** @brief Set the preemption status for the current thread.

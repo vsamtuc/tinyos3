@@ -123,6 +123,74 @@ static inline void * xmalloc (size_t size)
 /** @}   check_macros  */
 
 
+/**
+	@defgroup pointer_marking Routines for marking pointers.
+	@brief Some routines for marking pointers.
+
+	In some situations, it is useful to store single-bit flags inside objects.
+	This is often the case with data structures. In order to avoid wasting a
+	whole byte (or more) of space in each object, one can often use the
+	least-significant bits of pointers. 
+
+	This works well, since with the exception of pointers to char, other types
+	of pointers are already aligned at some power of 2 higher than 1, therefore
+	the least significant bit of any pointer is actually always 0.
+
+	Pointer marking is a strong optimization, and as such it is not recommended
+	for simple problems.
+
+	The routines in this group are used in the implementation of the pairing heap
+	data structure.
+
+	@{
+
+ */
+
+
+#define __mark_mask  ((uintptr_t)1)
+#define __unmark_mask  (~ (uintptr_t)1)
+
+/**
+	@brief Return a marked pointer.
+
+	This routine will set a mark bit into a (possibly already marked) pointer and return the new
+	pointer. The returned pointer should not be dereferenced, as results will be undefined
+	(and probably catastrophic).
+
+	@see pointer_unmarked
+	
+	@param ptr the pointer to mark
+	@return a marked pointer
+ */
+static inline void* pointer_marked(void* ptr) { return (void*) ((uintptr_t)ptr | __mark_mask); }
+
+/**
+	@brief Return an unmarked pointer.
+
+	This routine will unset a mark bit into a (possibly already unmarked) pointer and return the new
+	pointer. This pointer can be dereferenced without a problem.
+
+
+	@param ptr the pointer to unmark
+	@return the unmarked pointer
+ */
+static inline void* pointer_unmarked(void* ptr) { return (void*) ((uintptr_t)ptr & __unmark_mask); }
+
+/**
+	@brief Check for the existence of a mark in a pointer.
+
+	@param ptr the pointer to check
+	@return 1  if the pointer is marked and 0 if it is unmarked
+ */
+static inline int pointer_is_marked(void* ptr) { return (uintptr_t)ptr & __mark_mask;  }
+
+#undef __mark_mask
+#undef __unmark_mask
+
+/** @}   check_macros  */
+
+
+
 /*******************************************************
  *
  *
@@ -294,6 +362,24 @@ typedef struct file_control_block FCB;		/**< @brief Forward declaration */
 /** @brief A convenience typedef */
 typedef struct resource_list_node * rlnode_ptr;
 
+#define RLNODE_KEY \
+    PCB* pcb; \
+    TCB* tcb; \
+    CCB* ccb; \
+    DCB* dcb; \
+    FCB* fcb; \
+    void* obj; \
+    rlnode_ptr node_ptr; \
+    intptr_t num; \
+    uintptr_t unum; \
+
+/** @brief A convenience type for the key of an @c rlnode.
+	
+	An rlnode key is a union of pointer types and numeric types.
+	There are two numeric types, one signed and one unsigned.
+*/
+typedef union { RLNODE_KEY } rlnode_key;
+
 /**
 	@brief List node
 */
@@ -309,21 +395,14 @@ typedef struct resource_list_node {
      TCB* tcb = mynode->tcb;
      \endcode
      */
-  union {
-    PCB* pcb; 
-    TCB* tcb;
-    CCB* ccb;
-    DCB* dcb;
-    FCB* fcb;
-    void* obj;
-    rlnode_ptr node;
-    intptr_t num;
-    uintptr_t unum;
-  };
+	union {
+		RLNODE_KEY
+		rlnode_key key;
+	};
 
-  /* list pointers */
-  rlnode_ptr prev;  /**< @brief Pointer to previous node */
-  rlnode_ptr next;	/**< @brief Pointer to next node */
+	/* list pointers */
+	rlnode_ptr prev;  /**< @brief Pointer to previous node */
+	rlnode_ptr next;	/**< @brief Pointer to next node */
 } rlnode;
 
 
@@ -366,6 +445,18 @@ static inline rlnode* rlnode_init(rlnode* p, void* ptr)
 	rlnode_new(p)->obj = ptr; 
 	return p;
 }
+
+
+/**
+	@brief Initializer for resource lists.
+
+	This macro can be used as follows:
+	\code
+	rlnode foo = RLIST(foo);
+	\endcode
+	This is especially handy for global variables.
+  */
+#define RLIST(L) ((rlnode){ .obj=NULL, .prev=&(L), .next=&(L) })
 
 
 /** 
@@ -575,8 +666,189 @@ static inline void rlist_select(rlnode* Lsrc, rlnode* Ldest, int (*pred)(rlnode*
 	}
 }
 
-
 /* @} rlists */
+
+/**
+	@brief  Resource heaps 
+
+	In an operating system, it is sometimes useful to maintain a collection of resources ordered
+	on some property. To this effect, a heap (aka. priority queue) is a very useful data structure.
+
+	We can implement pairing heaps [Fredman, Sedgewick, Sleator and Tarjan, Algorithmica (1986)]
+	using rlnode, to obtain resource priority queues. Also, see the wikipedia page for this data
+	structure.
+
+	A pairing heap is represented as a (non-binary) tree, where the key stored at a node is less 
+	than or equal to the keys stored in its descendants. 
+
+	The implementation follows the logic resource lists. We are using @c rlnode as the basic node
+	construct, by using the two pointers as follows:
+	- @c prev points to the singly-connected child list, and 
+	- @c next points to the singly-connected sibling list.
+	
+	Note that we use pointer marking (on the least-significant bit of the sibling pointer) 
+	to denote "pointer-to-parent".
+
+	The order of nodes inside our heap is determined by a "less-than" comparator function, 
+	which is provided as a parameter to most of the API functions of our heap implementation.
+
+	A heap is represented as a pointer to rlnode (the root of the tree). An empty heap is denoted 
+	by the @c NULL pointer. For a nonempty heap, the root of the tree contains the least element
+	in the heap (therefore, the so-called 'find-min' operation is quite trivial).
+
+	@{
+*/
+
+
+/**
+	@brief Less-than comparator function type for @c rlnode.
+
+	A requirement for such a function @c F is that, if a and b are two
+	rlnode objects, then it should not be that both @c F(a,b) and @c F(b,a)
+	return 1. 
+
+	@returns 1 if @c a is strictly less than @c b, and 0 otherwise.
+ */
+typedef int (*rlnode_less_func)(rlnode* a, rlnode* b);
+
+
+
+/**
+	@brief Initialize a heap node.
+
+	A heap node is initialized a follows:
+	\code
+	node->prev = pointer_marked(node);  // To denote empty child list 
+	node->next = NULL;  // To denote no siblings
+	\endcode
+
+	The returned node is a legal singleton heap.
+
+	@param node the node to initialize
+	@returns the passed node initialized as a singleton heap
+  */
+rlnode* rheap_init(rlnode* node);
+
+/**
+	@brief Return the size of a heap.
+
+	@param heap a heap
+	@returns the number of nodes in the heap 
+*/
+size_t rheap_size(rlnode* heap);
+
+/**
+	@brief Return the parent of a node.
+
+	Note that the root node of a heap returns NULL as the parent.
+
+	@param node the node whose parent is returned
+	@return the parent of @c node
+ */
+static inline rlnode* rheap_parent(rlnode* node)
+{
+	assert(node != NULL);
+	rlnode* p = node->next;
+	if(p==NULL) return NULL; /* we are the root of the heap */
+	while( ! pointer_is_marked(p)) p = p->next;
+	return pointer_unmarked(p);
+}
+
+
+/**
+	@brief Delete the minimum node from the heap.
+
+	The min-node is reset to a singleton heap, ready to be melded into another heap.
+	The new heap is returned. The amortized cost of this operation is logarithmic.
+
+	@param heap a heap from which the minimum node will be removed
+	@pre heap must not be NULL
+	@returns the new heap
+ */
+rlnode* rheap_delmin(rlnode* heap, rlnode_less_func lessf);
+
+/**
+	@brief Extract a subtree from the heap
+
+	This call will remove @c node from the heap and return the new heap.
+	@param heap a heap that must contain @c node
+	@param node the node to be removed from the heap
+	@param lessf the comparator function
+	@return the new heap after removal of node
+ */
+rlnode* rheap_delete(rlnode* heap, rlnode* node, rlnode_less_func lessf);
+
+/**
+	@brief Restore heap after a decrease of the key in some node/
+
+	This call restores the heap invariant after the order of @c node is changed.
+
+	@param heap a heap that must contain @c node
+	@param node the node whose key decreased
+	@param lessf the comparator function
+	@return the new heap after adjustment
+ */
+rlnode* rheap_decrease(rlnode* heap, rlnode* node, rlnode_less_func lessf);
+
+
+/**
+	@brief Take the union of two heaps.
+
+	This function returns a new heap containing all elements from the
+	two operands.
+
+	@param heap1 the first heap
+	@param heap2 the second heap
+	@param lessf the comparator function
+	@returns a new heap constructed as the union of the two operands
+ */
+rlnode* rheap_meld(rlnode* heap1, rlnode* heap2, rlnode_less_func lessf);
+
+
+/**
+	@brief Insert node into the heap.
+
+	This convenience function adds a new node into a heap. Note that
+	the node's prev and next pointers are not assumed to be initialized and are destroyed.
+
+	@param heap the heap into which a new node is added
+	@param node the new node to be added
+	@param lessf the comparator function
+	@returns the new heap after the insertion
+*/
+static inline rlnode* rheap_insert(rlnode* heap, rlnode* node, rlnode_less_func lessf)
+{
+	return rheap_meld(heap, rheap_init(node), lessf);
+}
+
+
+/**
+	@brief Make a heap out of a ring of nodes.
+
+	Given a resource list of nodes, return a heap made out of
+	these nodes according to a comparator.
+
+	@param ring the ring of nodes that will turn into a heap
+	@param lessf the comparator function
+	@returns a new heap
+ */
+rlnode* rheap_from_ring(rlnode* ring, rlnode_less_func lessf);
+
+
+/**
+	@brief Make a ring of nodes out of heap nodes.
+
+	Given a heap of nodes, return a ring (cyclic list) made out of
+	these nodes. Note that the order of the nodes is not sorted.
+
+	@param ring the heap of nodes that will turn into a ring
+	@returns a new heap
+ */
+rlnode* rheap_to_ring(rlnode* heap);
+
+
+
+/* @} pairing heap */
 
 
 

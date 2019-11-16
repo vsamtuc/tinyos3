@@ -19,6 +19,9 @@
 PCB PT[MAX_PROC];
 unsigned int process_count;
 
+static wait_channel wchan_wait_child = { SCHED_USER, "wait_child" };
+
+
 PCB* get_pcb(Pid_t pid)
 {
   return PT[pid].pstate==FREE ? NULL : &PT[pid];
@@ -43,7 +46,7 @@ static inline void initialize_PCB(PCB* pcb)
   rlnode_init(& pcb->exited_list, NULL);
   rlnode_init(& pcb->children_node, pcb);
   rlnode_init(& pcb->exited_node, pcb);
-  pcb->child_exit = COND_INIT;
+  wqueue_init(& pcb->child_exit, &wchan_wait_child);
 }
 
 
@@ -213,6 +216,7 @@ static void cleanup_zombie(PCB* pcb, int* status)
 }
 
 
+
 static Pid_t wait_for_specific_child(Pid_t cpid, int* status)
 {
 
@@ -232,7 +236,7 @@ static Pid_t wait_for_specific_child(Pid_t cpid, int* status)
 
   /* Ok, child is a legal child of mine. Wait for it to exit. */
   while(child->pstate == ALIVE)
-    kernel_wait(& parent->child_exit, SCHED_USER);
+    kernel_wait(& parent->child_exit);
   
   cleanup_zombie(child, status);
   
@@ -254,7 +258,7 @@ static Pid_t wait_for_any_child(int* status)
   }
 
   while(is_rlist_empty(& parent->exited_list)) {
-    kernel_wait(& parent->child_exit, SCHED_USER);
+    kernel_wait(& parent->child_exit);
   }
 
   PCB* child = parent->exited_list.next->pcb;
@@ -335,7 +339,8 @@ void sys_Exit(int exitval)
   curproc->exitval = exitval;
 
   /* Bye-bye cruel world */
-  kernel_sleep(EXITED, SCHED_USER);
+  kernel_unlock();
+  exit_thread();
 }
 
 

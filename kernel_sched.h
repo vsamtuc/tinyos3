@@ -84,8 +84,8 @@ typedef enum {
 enum SCHED_CAUSE {
 	SCHED_USER,    /**< @brief User-space code called yield */
 	SCHED_QUANTUM, /**< @brief The quantum has expired */
-	SCHED_IO,      /**< @brief The thread is waiting for I/O */
 	SCHED_MUTEX,   /**< @brief @c Mutex_Lock yielded on contention */
+	SCHED_IO,      /**< @brief The thread is waiting for I/O */
 	SCHED_PIPE,    /**< @brief Sleep at a pipe or socket */
 	SCHED_POLL,    /**< @brief The thread is polling a device */
 	SCHED_IDLE,    /**< @brief The idle thread called yield */
@@ -106,17 +106,6 @@ typedef struct thread_control_block {
 
 	cpu_context_t context; /**< @brief The thread context */
 
-#ifndef NVALGRIND
-	unsigned valgrind_stack_id; /**< @brief Valgrind helper for stacks. 
-
-	  This is useful in order to register the thread stack to the valgrind memory profiler. 
-	  Valgrind needs to know which parts of memory are used as stacks, in order to return
-	  meaningful error information. 
-
-	  This field is not relevant to anything in the TinyOS logic and can be ignored.
-	  */
-#endif
-
 	Thread_type type; /**< @brief The type of thread */
 	Thread_state state; /**< @brief The state of the thread */
 	Thread_phase phase; /**< @brief The phase of the thread */
@@ -132,34 +121,22 @@ typedef struct thread_control_block {
 	enum SCHED_CAUSE curr_cause; /**< @brief The endcause for the current time-slice */
 	enum SCHED_CAUSE last_cause; /**< @brief The endcause for the last time-slice */
 
-	rlnode wqueue_node;
-	struct wait_queue* wqueue;
-	int wait_signalled;
+	rlnode wqueue_node;			/**< @brief Node to use when waiting on a wait_queue */
+	struct wait_queue* wqueue;  /**< @brief A pointer to a wait_queue we are waiting on, or NULL */
+	int wait_signalled;			/**< @brief Set when signalled in a wait_queue */
+
+#ifndef NVALGRIND
+	unsigned valgrind_stack_id; /**< @brief Valgrind helper for stacks. 
+
+	  This is useful in order to register the thread stack to the valgrind memory profiler. 
+	  Valgrind needs to know which parts of memory are used as stacks, in order to return
+	  meaningful error information. 
+
+	  This field is not relevant to anything in the TinyOS logic and can be ignored.
+	  */
+#endif
 	  
 } TCB;
-
-
-typedef struct wait_channel
-{
-	enum SCHED_CAUSE cause;
-	const char* name;  
-} wait_channel;
-
-
-typedef struct wait_queue
-{
-	rlnode thread_list;
-	wait_channel* wchan;
-} wait_queue;
-
-
-void wqueue_init(wait_queue* wqueue, wait_channel* wchan);
-
-int wqueue_wait(wait_queue* wqueue, Mutex* wmx, TimerDuration timeout);
-
-void wqueue_signal(wait_queue* wqueue);
-
-void wqueue_broadcast(wait_queue* wqueue);
 
 
 /** @brief Thread stack size.
@@ -167,6 +144,104 @@ void wqueue_broadcast(wait_queue* wqueue);
   The default thread stack size in TinyOS is 128 kbytes.
  */
 #define THREAD_STACK_SIZE (128 * 1024)
+
+
+/*********************************
+ *
+ *      Wait channels and queues
+ *
+ *********************************/
+
+
+/** @brief A wait channel contains common traits for a set of wait queues.
+
+	Each wait queue contains a pointer to a particular wait channel. Typically,
+	wait_channel objects are constant and global.
+  */
+typedef struct wait_channel
+{
+	enum SCHED_CAUSE cause;	/**< @brief the scheduling cause when waiting on this channel */
+	const char* name;  		/**< @brief a name for this wchan */
+} wait_channel;
+
+
+
+/** @brief A wait queue is a collection of STOPPED threads.
+
+	A wait queue is very similar to a condition variable. It supports three
+	operations "wait", "signal" and "broadcast". 
+
+	Each wait queue is associated with a particular wait channel, which contains
+	traits for the queue.
+  */
+typedef struct wait_queue
+{
+	rlnode thread_list;			/**< @ List of threads */
+	const wait_channel* wchan;  /**< @ The wait channel */
+} wait_queue;
+
+
+/** @brief Initialize a wait_queue 
+
+	This call must be used to initialize every wait queue.
+
+	@param wqueue the wait queue to initialize
+	@param wchan  the wait channel for this wait queue
+*/
+void wqueue_init(wait_queue* wqueue, const wait_channel* wchan);
+
+
+/** @brief Block the calling thread by adding it to a wait queue
+
+	The semantics of this call are very similar to a "wait" operation for a condition
+	variable.
+
+	This call will block the calling thread, changing its state to @c STOPPED.
+	Also, the mutex @c wmx, if not `NULL`, will be unlocked, atomically
+	with the blocking of the thread. When the waiting thread awakes, it re-locks
+	@c wmx before returning.
+
+	In particular, what is meant by 'atomically' is that the thread state will change
+	to @c newstate atomically with the mutex unlocking. Note that, the state of
+	the current thread is @c RUNNING. 
+	Therefore, no other state change (such as a wakeup, a yield, another sleep etc) 
+	can happen "between" the thread's state change and the unlocking.
+
+	The calling thread will remain blocked until either it is signalled by another thread,
+	or until a timeout (if provided) expires.
+
+	If @c timeout is other than @c NO_TIMEOUT, then the scheduler will awaken the thread 
+	after a time roughly equal to the timeout (in microseconds) has passed. 
+	The term "roughly equal" means "depending on the resolution of the system clock", which
+	is currently on the order of ten milliseconds. Note that the actual time of returning from 
+	@c wqueue_wait may be several quantums later, depending on the scheduler.
+
+	@param wqueue the queue on which the caling thread will wait
+	@param wmx the mutex to unlock atomically, or NULL.
+	@param timeout a timeout value to wait blocked, or @c NO_TIMEOUT if we want to wait forever.
+
+	@return 1 if the thread returned as a result of being signalled, 0 if it returned 
+			because the timeout expired
+*/
+int wqueue_wait(wait_queue* wqueue, Mutex* wmx, TimerDuration timeout);
+
+/** @brief Signal a waiting thread on a wait queue
+
+	This call will signal a single waiting thread in the wait queue (if any).
+	The threads are signalled in the FIFO order of entering the queue.
+
+	@param wqueue the queue to signal
+ */
+void wqueue_signal(wait_queue* wqueue);
+
+/** @brief Signal a waiting thread on a wait queue
+
+	This call will signal all waiting threads in the wait queue (if any).
+
+	@param wqueue the queue to signal
+ */
+void wqueue_broadcast(wait_queue* wqueue);
+
 
 /************************
  *
@@ -244,6 +319,7 @@ TCB* spawn_thread(PCB* pcb, void (*func)());
 int wakeup(TCB* tcb);
 
 
+#if 0
 /** 
   @brief Block the current thread.
 
@@ -275,6 +351,10 @@ int wakeup(TCB* tcb);
 	@param timeout a timeout for the sleep, or 
    */
 void sleep_releasing(Thread_state newstate, Mutex* mx, enum SCHED_CAUSE cause, TimerDuration timeout);
+#endif
+
+void exit_thread();
+
 
 /**
   @brief Give up the CPU.
@@ -306,7 +386,7 @@ void initialize_scheduler(void);
 
   This is the default quantum for each thread, in microseconds.
   */
-#define QUANTUM (10000L)
+#define QUANTUM (1000L)
 
 /** @} */
 
