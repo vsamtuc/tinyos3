@@ -1,6 +1,23 @@
 #ifndef __KERNEL_SYS_H
 #define __KERNEL_SYS_H
 
+/**
+	@file kernel_sys.h
+	@brief System call invocation
+
+	This file contains macros which implement the invocation of TinyOS system calls from
+	proceses. The main implementation issue is to enforce monitor semantics:
+	the kernel is locked by a call to @c kernel_lock() just as a system call begins,
+	and is unlocked by a call to @c kernel_unlock() as the system call returns.
+
+	For each system call function, there is an implementation function whose name is prefixed by "sys_",
+	where the call is forwarded. For example, system call @c Exec() is forwarded to function @c sys_Exec().
+
+	@defgroup kernel  The TinyOS kernel
+
+  */
+
+
 #include "bios.h"
 #include "tinyos.h"
 

@@ -14,12 +14,11 @@
 
 	@defgroup cc Concurrency control.
 	@ingroup kernel
-	@brief Concurrency and preemption control API.
 
 	This file provides routines for concurrency control and preemption management. 
+
+	@{
 */
-
-
 
 
 /* 
@@ -112,6 +111,8 @@ int get_core_preemption();
  */
 #define preempt_on  (set_core_preemption(1))
 
+
+/* @}  cc */
 
 #endif
 

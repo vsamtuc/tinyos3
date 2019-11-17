@@ -514,7 +514,7 @@ BOOT_TEST(test_dup2_error_on_invalid_fid,
 	ASSERT(Dup2(NOFILE, 3)==-1);
 	ASSERT(Dup2(MAX_FILEID, 3)==-1);
 	Fid_t fid = OpenNull(0);
-	assert(fid!=NOFILE);
+	FATAL_ASSERT(fid!=NOFILE);
 	ASSERT(Dup2(fid, NOFILE)==-1);
 	ASSERT(Dup2(fid, MAX_FILEID)==-1);		
 	return 0;
@@ -1083,7 +1083,7 @@ BOOT_TEST(test_nonexit_cleanup,
 
 	int mthread(int argl, void* args){
 		ThreadExit(44);
-		FAIL("ThreadExit returned");  /* We should fail if ThreadExit returns */
+		ASSERT_MSG(0, "ThreadExit returned");  /* We should fail if ThreadExit returns */
 		return 0;
 	}
 
@@ -1110,7 +1110,7 @@ BOOT_TEST(test_cyclic_joins,
 	/* spawn all N threads */
 	for(unsigned int i=0;i<N;i++) {
 		tids[i] = CreateThread(join_thread, (i+1)%N, NULL);
-		assert(tids[i]!=NOTHREAD); /* small assert! do not proceed unless threads are created! */
+		FATAL_ASSERT(tids[i]!=NOTHREAD); /* do not proceed unless threads are created! */
 	}
 	/* allow threads to join */
 	BarrierSync(&B, N+1);
@@ -1242,7 +1242,7 @@ BOOT_TEST(test_pipe_close_writer,
  */
 int data_producer(int argl, void* args)
 {
-	assert(argl == sizeof(int));
+	FATAL_ASSERT(argl == sizeof(int));
 	int nbytes = *(int*)args;
 
 	Close(0);
@@ -1252,7 +1252,7 @@ int data_producer(int argl, void* args)
 	while(nbytes>0) {
 		unsigned int n = (nbytes<32768) ? nbytes : 32768;
 		int rc = Write(1, buffer, n);
-		assert(rc>0);
+		FATAL_ASSERT(rc>0);
 		nbytes -= rc;
 	}
 	Close(1);
@@ -1263,7 +1263,7 @@ int data_producer(int argl, void* args)
    asserts it read that many bytes. */
 int data_consumer(int argl, void* args) 
 {
-	assert(argl == sizeof(int));
+	FATAL_ASSERT(argl == sizeof(int));
 	int nbytes = *(int*)args;
 	Close(1);
 
@@ -1273,7 +1273,7 @@ int data_consumer(int argl, void* args)
 	int rc = 1;
 	while(rc) {
 		rc = Read(0, buffer, 16384);
-		assert(rc>=0);
+		FATAL_ASSERT(rc>=0);
 		count += rc;
 	}
 	ASSERT(count == nbytes);
@@ -1293,7 +1293,7 @@ BOOT_TEST(test_pipe_single_producer,
 		if(pipe.write==0) {
 			/* Get a null stream! */
 			Fid_t fid = OpenNull();
-			assert(fid!=NOFILE);
+			FATAL_ASSERT(fid!=NOFILE);
 			Dup2(0, fid);
 			pipe.write = fid;
 		}
@@ -1329,7 +1329,7 @@ BOOT_TEST(test_pipe_multi_producer,
 		if(pipe.write==0) {
 			/* Get a null stream! */
 			Fid_t fid = OpenNull();
-			assert(fid!=NOFILE);
+			FATAL_ASSERT(fid!=NOFILE);
 			Dup2(0, fid);
 			pipe.write = fid;
 		}
@@ -1986,7 +1986,7 @@ BOOT_TEST(test_preemption,
 	int child(int argl, void* args)
 	{
 		unsigned int* ts[2];
-		assert(sizeof(ts)==argl);
+		FATAL_ASSERT(sizeof(ts)==argl);
 		memcpy(ts, args, sizeof(ts));
 
 		*(ts[0]) = get_timestamp();

@@ -19,10 +19,11 @@
 	This file defines the following:
 	- macros for error checking and message reporting
 	- a _resource list_ data structure
+	- a _resource heap_ data structure
 
-	Resource list
-	--------------
 
+	@defgroup utilities Utility code
+	@{
 */
 
 
@@ -187,7 +188,7 @@ static inline int pointer_is_marked(void* ptr) { return (uintptr_t)ptr & __mark_
 #undef __mark_mask
 #undef __unmark_mask
 
-/** @}   check_macros  */
+/** @}   pointer_marking  */
 
 
 
@@ -261,7 +262,7 @@ static inline int pointer_is_marked(void* ptr) { return (uintptr_t)ptr & __mark_
 	pop_front(L)          ::  return splice(L, L->next)
 	pop_back(L)           ::  return splice(L, L->prev) 
 	remove(N)             ::  return splice(N->prev, N)
-	insert_after(P, N)    ::  splice(P, N)
+	insert_after(P, N)    ::  splice(P, N->prev)
 	insert_before(P, N)   ::  splice(P->prev, N)
 	@endverbatim
 
@@ -669,32 +670,119 @@ static inline void rlist_select(rlnode* Lsrc, rlnode* Ldest, int (*pred)(rlnode*
 /* @} rlists */
 
 /**
-	@brief  Resource heaps 
+	@defgroup rheap Resource priority queues.
+	
+	@brief  Resource heaps/priority queues.
+
+	## Overview ##
 
 	In an operating system, it is sometimes useful to maintain a collection of resources ordered
-	on some property. To this effect, a heap (aka. priority queue) is a very useful data structure.
+	on some property. For example, we may wish to have a set of threads ordered by priority, or a set
+	of timeouts ordered by the time they will be triggered. In such a case, we want to be able to
+	find the element whose key is minimum, for example the highest-priority thread or the 
+	timeout to expire the soonest. As we know from our data-structures course, a good data structure
+	to use in such a scenario is a priority queue, also known as a heap.
 
-	We can implement pairing heaps [Fredman, Sedgewick, Sleator and Tarjan, Algorithmica (1986)]
-	using rlnode, to obtain resource priority queues. Also, see the wikipedia page for this data
-	structure.
+	There are several heap algorithms proposed in the literature. In TinyOS we have implemented 
+	pairing heaps [Fredman, Sedgewick, Sleator and Tarjan, Algorithmica (1986)] 
+	(also, see the wikipedia page for this data structure).
 
 	A pairing heap is represented as a (non-binary) tree, where the key stored at a node is less 
-	than or equal to the keys stored in its descendants. 
+	than or equal to the keys stored in its descendants. The root of the tree is a node whose key is 
+	minimum among all nodes in the tree.
 
-	The implementation follows the logic resource lists. We are using @c rlnode as the basic node
-	construct, by using the two pointers as follows:
-	- @c prev points to the singly-connected child list, and 
-	- @c next points to the singly-connected sibling list.
-	
-	Note that we use pointer marking (on the least-significant bit of the sibling pointer) 
-	to denote "pointer-to-parent".
+	In order to define "minimum", we ask the user to provide a "less-than" comparator function, 
+	which is passed as a parameter to most of the API functions of our heap implementation. Of course,
+	the actual function my be a "greater-than" function, and in this case the heap will maintain
+	a maximum-key element at the root.
 
-	The order of nodes inside our heap is determined by a "less-than" comparator function, 
-	which is provided as a parameter to most of the API functions of our heap implementation.
+	The performance of a pairing heap is very good in practice. The *insert* operation takes time
+	\f$O(1)\f$, where as the *delete_minimum* or *delete* operation takes amortized time \f$O(\log n)\f$.
 
-	A heap is represented as a pointer to rlnode (the root of the tree). An empty heap is denoted 
-	by the @c NULL pointer. For a nonempty heap, the root of the tree contains the least element
-	in the heap (therefore, the so-called 'find-min' operation is quite trivial).
+	## Implementation ##
+
+	The implementation follows the logic resource lists. We are using @c rlnode as the basic tree node
+	construct, by using the two pointers it contains. The children of a node N are part of a singly-linked
+	list, the so-called child list. Node N has a pointer to its child list, and a pointer to its next sibling,
+	if any. More precisely,
+	- @c prev points to the singly-connected child list of node N, and
+	- @c next points to the next sibling, if N has a right sibling, or to the parent, if N is the rightmost
+	  sibling of its parent.  We use pointer marking (as returned by @ref pointer_marked()) 
+	  on the least-significant bit of the sibling pointer to denote "pointer-to-parent".
+
+	The whole heap is represented as a pointer to the root rlnode (the root of the tree). An empty heap is denoted 
+	by the @c NULL pointer. The root node's @c next pointer is equal to @c NULL, and is unmarked. This is the only
+	node in a heap whose @c next pointer is @c NULL.
+
+	## Usage ##
+
+	In order to use the heaps, we need to have a comparator function on @c rlnode objects, such as
+	\code
+	int lessf(rlnode *a, rlnode* b) { return a->num < b->num; }
+	\endcode
+
+	An empty heap is simply a NULL @ref rlnode pointer.
+	\code
+	rlnode* heap = NULL;
+	\endcode
+
+	In order to add nodes to a heap we have two options. First, we can initialize a node as a singleton
+	heap, and then __meld__ it to another heap
+	\code
+	rlnode a, b;
+	rheap_init(&a)->num = 4;
+	rheap_init(&b)->num = 7;
+	heap = rheap_meld(h, &a, lessf);
+	heap = rheap_meld(h, &b, lessf);
+	\endcode
+
+	Alternatively, we may skip the heap initialization step:
+	\code
+	rlnode a, b;
+	a.>num = 4;
+	b.num = 7;
+	heap = rheap_insert(h, &a, lessf);
+	heap = rheap_insert(h, &b, lessf);
+	\endcode
+
+	Another alternative is to first construct a _resource list_ in the usual way, and then take all the list nodes
+	and turn them into a heap:
+	\code
+	rlnode L = RLIST(L);
+	//.  populate L with any number of elements ,,, 
+	assert(! is_rlist_empty(&L));
+	rlnode* ring = rl_splice(&L, L.prev);  // Take all nodes out of L 
+	heap = rheap_from_ring(ring,  lessf);
+	\endcode
+
+	Finally, two heaps can be merged into a new heap:
+	\code
+	heap = pheap_meld(heap, other_heap, lessf);
+	\endcode
+
+	To remove items from a heap, there are two options. One is to remove the heap root, that is, the minimum element.
+	Note that sometimes, we may need to save the identity of the minimum element before we remove it.
+	\code
+	rlnode* minelem = heap;
+	if(heap!=NULL) heap = rheap_delmin(heap, lessf);
+	// After this line, minelem is either NULL or it contains a legal singleton heap
+	\endcode
+
+	Alternatively, we may want to remove a specific element from a heap
+	\code
+	heap = rheap_delete(heap, node, lessf);
+	\endcode
+
+	Finally, we can collect all the elements of a heap into a ring
+	\code
+	rlnode* ring = rheap_to_ring(heap);
+	heap = NULL;
+	\endcode
+
+	When the value of an object stored in a heap is changed so that if becomes "less" or "more" in the heap
+	ordering, we can adjust its position in the heap in two ways. First, we can **delete** and then
+	**insert** the node. This will incur an overhead of approximately \f$O(\log n)\f$. Alternatively, in the
+	case where we know that the item became "less" or stayed equal, we can simply call @ref rheap_decrease(). 
 
 	@{
 */
@@ -732,6 +820,9 @@ rlnode* rheap_init(rlnode* node);
 /**
 	@brief Return the size of a heap.
 
+	Returns the number of nodes in the heap tree. Note that the complexity of this
+	call is linear.
+
 	@param heap a heap
 	@returns the number of nodes in the heap 
 */
@@ -759,11 +850,12 @@ static inline rlnode* rheap_parent(rlnode* node)
 	@brief Delete the minimum node from the heap.
 
 	The min-node is reset to a singleton heap, ready to be melded into another heap.
-	The new heap is returned. The amortized cost of this operation is logarithmic.
+	Note that this node __is not returned__. Instead, the new heap remaining after the removal
+	of the min element is returned.
 
 	@param heap a heap from which the minimum node will be removed
 	@pre heap must not be NULL
-	@returns the new heap
+	@returns the new heap obtained after removal (which may be null)
  */
 rlnode* rheap_delmin(rlnode* heap, rlnode_less_func lessf);
 
@@ -848,7 +940,7 @@ rlnode* rheap_to_ring(rlnode* heap);
 
 
 
-/* @} pairing heap */
+/* @} rheap */
 
 
 
@@ -1244,5 +1336,9 @@ static inline struct exception_stack_frame* __exc_exit_try(exception_context con
 
 
 /** @}  exceptions */
+
+
+/** @} utilities */
+
 
 #endif

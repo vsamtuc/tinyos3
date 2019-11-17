@@ -316,7 +316,11 @@ Pid_t GetPPid(void);
   programmer to define their meaning.
 
   @param task a function to execute
-
+  @param argl integer to pass to task on thread execution
+  @param args pointer to pass to task on thread execution
+  @returns thread id of the new thread, or NO_THREAD on error
+     Possible errors are
+     - argument @c task is NULL
   */
 Tid_t CreateThread(Task task, int argl, void* args);
 
@@ -431,7 +435,7 @@ Fid_t OpenNull();
   @return the number of bytes copied, 0 if we have reached EOF, or -1, indicating some error.
         Possible errors are:
          - The file descriptor is invalid.
-         - There was a I/O runtime problem.
+         - There was an I/O runtime problem.
  */
 int Read(Fid_t fd, char *buf, unsigned int size);
 
@@ -576,9 +580,9 @@ Fid_t Socket(port_t port);
 	@brief Initialize a socket as a listening socket.
 
 	A listening socket is one which can be passed as an argument to
-	@c Accept. Once a socket becomes a listening socket, it is not
-	possible to call any other functions on it except @c Accept, @Close
-	and @c Dup2().
+	@c Accept(). Once a socket becomes a listening socket, it is not
+	possible to call any other functions on it except @c Accept(), 
+  @c Close() and @c Dup2().
 
 	The socket must be bound to a port, as a result of calling @c Socket.
 	On each port there must be a unique listening socket (although any number
@@ -607,7 +611,7 @@ int Listen(Fid_t sock);
 	loop, where each iteration creates new a connection, 
 	and then some thread takes over the connection for communication with the client.
 
-	@param sock the socket to initialize as a listening socket
+	@param lsock the socket to initialize as a listening socket
 	@returns a new socket file id on success, @c NOFILE on error. Possible reasons 
 	    for error:
 		- the file id is not legal
@@ -637,9 +641,9 @@ Fid_t Accept(Fid_t lsock);
 	in the order of 100's of msec. Therefore, a timeout of at least 500 msec is
 	reasonable. If a negative timeout is given, it means, "infinite timeout".
 
-	@params sock the socket to connect to the other end
-	@params port the port on which to seek a listening socket
-	@params timeout the approximate amount of time to wait for a
+	@param sock the socket to connect to the other end
+	@param port the port on which to seek a listening socket
+	@param timeout the approximate amount of time to wait for a
 	        connection.
 	@returns 0 on success and -1 on error. Possible reasons for error:
 	   - the file id @c sock is not legal (i.e., an unconnected, non-listening socket)

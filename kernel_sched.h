@@ -69,9 +69,18 @@ typedef enum {
 	CTX_DIRTY /**< @brief Context is dirty. */
 } Thread_phase;
 
-/** @brief Thread type. */
+/** @brief Thread type. 
+	
+	There are three types of threads.
+	- **idle threads** are threads which are not created by @c spawn_thread(). They
+	  are the initial threads of the scheduler, and they are always @c READY.
+	- **kernel threads** are threads that do not belong to a process. They are
+	  used by drivers to perform asynchronous tasks
+	- **normal threads** are threads that belong to processes
+ */
 typedef enum {
 	IDLE_THREAD, /**< @brief Marks an idle thread. */
+	KERNEL_THREAD, /**< @brief Marks a kernel thread */
 	NORMAL_THREAD /**< @brief Marks a normal thread */
 } Thread_type;
 
@@ -319,41 +328,12 @@ TCB* spawn_thread(PCB* pcb, void (*func)());
 int wakeup(TCB* tcb);
 
 
-#if 0
-/** 
-  @brief Block the current thread.
+/**
+	@brief Terminate the current thread.
 
-	This call will block the current thread, changing its state to @c STOPPED
-	or @c EXITED. Also, the mutex @c mx, if not `NULL`, will be unlocked, atomically
-	with the blocking of the thread. 
-
-	In particular, what is meant by 'atomically' is that the thread state will change
-	to @c newstate atomically with the mutex unlocking. Note that, the state of
-	the current thread is @c RUNNING. 
-	Therefore, no other state change (such as a wakeup, a yield, another sleep etc) 
-	can happen "between" the thread's state change and the unlocking.
-  
-	If the @c newstate is @c EXITED, the thread will block and also will eventually be
-	cleaned-up by the scheduler. Its TCB should not be accessed in any way after this
-	call.
-
-	A cause for the sleep must be provided; this parameter indicates to the scheduler the
-	source of the sleeping operation, and can be used in scheduler heuristics to adjust 
-	scheduling decisions.
-
-	A timeout can also be provided. If the timeout is not @c NO_TIMEOUT, then the thread will
-	be made ready by the scheduler after the timeout duration has passed, even without a call to
-	@c wakeup() by another thread.
-
-	@param newstate the new state for the current thread, which must be either stopped or exited
-	@param mx the mutex to unlock.
-	@param cause the cause of the sleep
-	@param timeout a timeout for the sleep, or 
-   */
-void sleep_releasing(Thread_state newstate, Mutex* mx, enum SCHED_CAUSE cause, TimerDuration timeout);
-#endif
-
-void exit_thread();
+	This call
+  */
+_Noreturn void exit_thread();
 
 
 /**
@@ -388,6 +368,34 @@ void initialize_scheduler(void);
   */
 #define QUANTUM (1000L)
 
-/** @} */
+/**
+	@brief An object containing some information copied from a TCB.
+
+	This object can be used to obtain some information about a thread
+	bet calling function @c get_thread_info().
+  */
+typedef struct thread_info
+{
+	TCB* tcb;		/**< @brief The TCB this info object is about. */
+	PCB* owner_pcb; /**< @brief This is null for a free TCB */
+	Thread_type type;   /**< @brief The type of thread */
+	Thread_state state; /**< @brief The state of the thread */
+	const wait_channel* wchan;  /**< @brief A pointer to a wait_queue we are waiting on, or NULL */
+} thread_info;
+
+
+/**
+	@brief Obtain some information about a thread.
+
+	This function copies information from a given @c TCB into a @c thread_info
+	object.
+
+	@param tcb the thread whose info will be returned
+	@param tinfo the @c thread_info object to be filled
+*/
+void get_thread_info(TCB* tcb, thread_info* tinfo);
+
+
+/** @}  scheduler */
 
 #endif

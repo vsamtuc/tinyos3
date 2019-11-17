@@ -248,11 +248,28 @@ void MSG(const char* format, ...) __attribute__ ((format (printf, 1, 2)));
 /** @brief Flag failure during a test */
 extern int FLAG_FAILURE; 
 
+/** @brief Abort a test. */
+void abort_test();
+
 /** @brief Like ASSERT but with a custom message. 
 	@see ASSERT
 */
 #define ASSERT_MSG(expr, format, ...) do{ if(!(expr)) \
- { FLAG_FAILURE=1; MSG(format , ##  __VA_ARGS__ ); } }while(0)
+ { FLAG_FAILURE++; if(FLAG_FAILURE < 250) \
+ 	MSG("%s(%d): " format , __FILE__, __LINE__, ##  __VA_ARGS__ ); \
+ 	else {\
+ 		MSG("... Too many errors, ABORTING\n"); \
+ 		abort_test(); \
+ 	}\
+   } }while(0) \
+
+/**
+	@brief Like @c FATAL_ASSERT but with a custom message.
+	@see FATAL_ASSERT
+	@see ASSERT
+ */
+ #define FATAL_ASSERT_MSG(expr, format, ...) do{ if(!(expr)) \
+ { MSG("%s(%d): " format , __FILE__, __LINE__, ##  __VA_ARGS__ ); abort_test(); } }while(0)
 
 /** 
 	@brief Fail the test if an expression is false.
@@ -266,7 +283,15 @@ extern int FLAG_FAILURE;
 	to the console.
 */
 #define ASSERT(expr)  \
- ASSERT_MSG(expr, "%s(%d): ASSERT failed: %s \n",__FILE__, __LINE__, #expr)
+ ASSERT_MSG(expr, "ASSERT failed: %s \n", #expr)
+
+/**
+	@brief Like @c FATAL_ASSERT but with a custom message.
+	@see FATAL_ASSERT
+	@see ASSERT
+ */
+ #define FATAL_ASSERT(expr) \
+  FATAL_ASSERT_MSG(expr, "FATAL_ASSERT failed: %s \n", #expr)
 
 
 /** 
@@ -278,7 +303,7 @@ extern int FLAG_FAILURE;
 	'...messsage...' we provided, is printed to the console.
 */
 #define FAIL(failure_message)  \
- ASSERT_MSG(0, "%s(%d): FAILURE: %s \n",__FILE__, __LINE__, (failure_message))
+ ASSERT_MSG(0, "FAILURE: %s \n", (failure_message))
 
 
 

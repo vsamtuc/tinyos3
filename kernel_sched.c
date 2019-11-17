@@ -94,13 +94,14 @@ void* allocate_thread(size_t size)
 
 void gain(int preempt); /* forward */
 
-static void thread_start()
+static _Noreturn void thread_start()
 {
 	gain(1);
 	CURTHREAD->thread_func();
 
-	/* We are not supposed to get here! */
-	assert(0);
+	/* If we belong to a process, we are not supposed to get here! */
+	assert(CURTHREAD->type != NORMAL_THREAD);
+	exit_thread();
 }
 
 /*
@@ -114,9 +115,12 @@ TCB* spawn_thread(PCB* pcb, void (*func)())
 
 	/* Set the owner */
 	tcb->owner_pcb = pcb;
+	if(pcb==NULL)
+		tcb->type = NORMAL_THREAD;
+	else
+		tcb->type = KERNEL_THREAD;
 
 	/* Initialize the other attributes */
-	tcb->type = NORMAL_THREAD;
 	tcb->state = INIT;
 	tcb->phase = CTX_CLEAN;
 	tcb->thread_func = func;
@@ -165,9 +169,6 @@ void release_TCB(TCB* tcb)
 	active_threads--;
 	Mutex_Unlock(&active_threads_spinlock);
 }
-
-
-
 
 /*
  *
@@ -453,6 +454,7 @@ _Noreturn void exit_thread()
 {
 	preempt_off;
 	Mutex_Lock(&sched_spinlock);
+	assert(CURTHREAD->type != IDLE_THREAD); /* Idle threads don't exit! */
 
 	/* mark the thread as stopped or exited */
 	CURTHREAD->state = EXITED;
@@ -627,3 +629,20 @@ void run_scheduler()
 	cpu_interrupt_handler(ALARM, NULL);
 	cpu_interrupt_handler(ICI, NULL);
 }
+
+
+void get_thread_info(TCB* tcb, thread_info* tinfo)
+{
+	assert(tcb != NULL);
+	assert(tinfo != NULL);
+	int preempt = preempt_off;
+	Mutex_Lock(& sched_spinlock);
+	tinfo->tcb = tcb;
+	tinfo->owner_pcb = tcb->owner_pcb;
+	tinfo->type = tcb->type;
+	tinfo->state = tcb->state;
+	tinfo->wchan = (tcb->wqueue) ? tcb->wqueue->wchan : NULL;
+	Mutex_Unlock(& sched_spinlock);
+	if(preempt) preempt_on;
+}
+

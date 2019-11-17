@@ -7,6 +7,12 @@
 /**
 	@file bios.h
 
+	@brief This file contains the BIOS API.
+
+	The BIOS API is the API via which the kernel can control the Virtual Machine
+	on which it runs.
+
+	@defgroup vm The Virtual Machine
 	@brief The Virtual Machine API
 
 	This file contains the API for a virtual machine (simulated computer) 
@@ -97,6 +103,8 @@
 
 	Also, each interrupt is sent if the serial device timeouts (is inactive for
 	about 300 msec).
+
+	@{
 
  */
 
@@ -402,5 +410,6 @@ int bios_read_serial(uint serial, char* ptr);
  */
 int bios_write_serial(uint serial, char value);
 
+/* @}  vm */
 
 #endif

@@ -579,6 +579,12 @@ int execute_boot(int ncores, int nterm, Task bootfunc, int argl, void* args, uns
 /* Fill in memory with a weird value:  10101010 or 0xAA */
 #define FUDGE(var)  memset(&(var), 170, sizeof(var))
 
+/* Routine to abort a test. Currently uses stdlib abort */
+void abort_test()
+{
+	abort();	
+}
+
 
 /*
 	Test organization
