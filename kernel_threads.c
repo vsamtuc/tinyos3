@@ -8,6 +8,7 @@
   */
 Tid_t sys_CreateThread(Task task, int argl, void* args)
 {
+	set_errcode(ENOSYS);
 	return NOTHREAD;
 }
 
@@ -24,6 +25,7 @@ Tid_t sys_ThreadSelf()
   */
 int sys_ThreadJoin(Tid_t tid, int* exitval)
 {
+	set_errcode(ENOSYS);
 	return -1;
 }
 
@@ -32,6 +34,7 @@ int sys_ThreadJoin(Tid_t tid, int* exitval)
   */
 int sys_ThreadDetach(Tid_t tid)
 {
+	set_errcode(ENOSYS);
 	return -1;
 }
 

@@ -106,6 +106,12 @@ typedef uintptr_t Tid_t;
 /**
 	@brief Return the error code of the last error.
 
+	When a system call performed by a thread returns an error condition, the error
+	code corresponding to the error is returned by this system call. The value returned
+	by this system call stays the same up until the next system call that fails.
+
+	Note that this system call never fails.
+
 	@return the last error code.
 */
 int GetError();
@@ -170,9 +176,7 @@ void Mutex_Unlock(Mutex*);
   @see COND_INIT
  */
 typedef struct {
-	void* filler[4];
-  //void *waitset;        /**< The set of waiting threads */
-  //Mutex waitset_lock;   /**< A mutex to protect `waitset` */
+	void* filler[4];	/**< @brief reserving space for 4 pointers */
 } CondVar;
 
 
@@ -370,7 +374,7 @@ Pid_t GetPPid(void);
   @param args pointer to pass to task on thread execution
   @returns thread id of the new thread, or NO_THREAD on error
      Possible errors are
-     - argument @c task is NULL
+     - **@c EINVAL** argument @c task is NULL
   */
 Tid_t CreateThread(Task task, int argl, void* args);
 
@@ -399,9 +403,9 @@ Tid_t ThreadSelf();
   @param exitval a location where to store the exit value of the joined 
               thread. If NULL, the exit status is not returned.
   @returns 0 on success and -1 on error. Possible errors are:
-    - there is no thread with the given tid in this process.
-    - the tid corresponds to the current thread.
-    - the tid corresponds to a detached thread.
+    - **@c ESRCH** there is no thread with the given tid in this process.
+    - **@c EDEADLK** the tid corresponds to the current thread.
+    - **@c EINVAL** the tid corresponds to a detached thread.
 
   */
 int ThreadJoin(Tid_t tid, int* exitval);
@@ -419,13 +423,15 @@ int ThreadJoin(Tid_t tid, int* exitval);
 
   @param tid the tid of the thread to detach
   @returns 0 on success, and -1 on error. Possibe errors are:
-    - there is no thread with the given tid in this process.
-    - the tid corresponds to an exited thread.
+    - **@c ESRCH** there is no thread with the given tid in this process.
+    - **@c EINVAL** the tid corresponds to an exited thread.
   */
 int ThreadDetach(Tid_t tid);
 
 /**
   @brief Terminate the current thread.
+
+  Note that this call never returns.
   */
 void ThreadExit(int exitval);
 
@@ -450,7 +456,9 @@ unsigned int GetTerminalDevices();
     On success, OpenTerminal returns the file id for a new file for this 
    terminal. On error, it returns @c NOFILE. Possible errors are:
    - **@c ENODEV** The terminal device does not exist.
-   - **@c ENFILE** The maximum number of file descriptors has been reached.
+   - **@c EMFILE** The maximum number of per-process file descriptors has been reached.
+   - **@c ENFILE** The maximum number of system-wide files has been reached.
+
  */
 Fid_t OpenTerminal(unsigned int termno);
 
@@ -464,7 +472,8 @@ Fid_t OpenTerminal(unsigned int termno);
 
   @return On success, OpenNull returns the file id for a new file for this 
   terminal. On error, it returns NOFILE. Possible errors are:
-   - The maximum number of file descriptors has been reached.
+   - **@c EMFILE** The maximum number of per-process file descriptors has been reached.
+   - **@c ENFILE** The maximum number of system-wide files has been reached.
 */
 Fid_t OpenNull();
 
@@ -587,7 +596,8 @@ typedef struct pipe_s {
 
 	@param pipe a pointer to a pipe_t structure for storing the file ids.
 	@returns 0 on success, or -1 on error. Possible reasons for error:
-		- the available file ids for the process are exhausted.
+        - **@c EMFILE** The maximum number of per-process file descriptors has been reached.
+        - **@c ENFILE** The maximum number of system-wide files has been reached.
 */
 int Pipe(pipe_t* pipe);
 
@@ -619,15 +629,16 @@ typedef int16_t port_t;
 	@brief Return a new socket bound on a port.
 
 	This function returns a file descriptor for a new
-	socket object.	If the @c port argument is NOPORT, then the 
+	socket object.	If the @c port argument is @c NOPORT, then the 
 	socket will not be bound to a port. Else, the socket
 	will be bound to the specified port. 
 
 	@param port the port the new socket will be bound to
 	@returns a file id for the new socket, or NOFILE on error. Possible
 		reasons for error:
-		- the port is iilegal
-		- the available file ids for the process are exhausted
+		- **@c EINVAL** the port is iilegal
+        - **@c EMFILE** The maximum number of per-process file descriptors has been reached.
+        - **@c ENFILE** The maximum number of system-wide files has been reached.
 */
 Fid_t Socket(port_t port);
 
@@ -637,7 +648,7 @@ Fid_t Socket(port_t port);
 	A listening socket is one which can be passed as an argument to
 	@c Accept(). Once a socket becomes a listening socket, it is not
 	possible to call any other functions on it except @c Accept(), 
-  @c Close() and @c Dup2().
+    @c Close() and @c Dup2().
 
 	The socket must be bound to a port, as a result of calling @c Socket.
 	On each port there must be a unique listening socket (although any number
@@ -645,10 +656,11 @@ Fid_t Socket(port_t port);
 
 	@param sock the socket to initialize as a listening socket
 	@returns 0 on success, -1 on error. Possible reasons for error:
-		- the file id is not legal
-		- the socket is not bound to a port
-		- the port bound to the socket is occupied by another listener
-		- the socket has already been initialized
+		- **@c EBADF** the file id is not legal
+		- **@c ENOTSOCK** the file id is not of a socket
+		- **@c EOPNOTSUPP** the socket is not bound to a port
+		- **@c EOPNOTSUPP** the socket has already been initialized
+		- **@c EADDRINUSE** the port bound to the socket is occupied by another listener
 	@see Socket
  */
 int Listen(Fid_t sock);
@@ -669,11 +681,13 @@ int Listen(Fid_t sock);
 	@param lsock the socket to initialize as a listening socket
 	@returns a new socket file id on success, @c NOFILE on error. Possible reasons 
 	    for error:
-		- the file id is not legal
-		- the file id is not initialized by @c Listen()
-		- the available file ids for the process are exhausted
-		- while waiting, the listening socket @c lsock was closed
-
+		- **@c EBADF** the file id is not legal
+		- **@c ENOTSOCK** the file id is not of a socket
+		- **@c EINVAL** the file id is not initialized by @c Listen()
+        - **@c EMFILE** The maximum number of per-process file descriptors has been reached.
+        - **@c ENFILE** The maximum number of system-wide files has been reached.
+		- **@c EAGAIN** while waiting, the listening socket @c lsock was closed
+        - **@c EINTR** The call was interrupted
 	@see Connect
 	@see Listen
  */
@@ -691,7 +705,7 @@ Fid_t Accept(Fid_t lsock);
 	The two connected sockets communicate by virtue of two pipes of opposite directions, 
 	but with one file descriptor servicing both pipes at each end.
 
-	The connect call will block for approximately the specified amount of time.
+	The Connect call will block for approximately the specified amount of time.
 	The resolution of this timeout is implementation specific, but should be
 	in the order of 100's of msec. Therefore, a timeout of at least 500 msec is
 	reasonable. If a negative timeout is given, it means, "infinite timeout".
@@ -701,10 +715,13 @@ Fid_t Accept(Fid_t lsock);
 	@param timeout the approximate amount of time to wait for a
 	        connection.
 	@returns 0 on success and -1 on error. Possible reasons for error:
-	   - the file id @c sock is not legal (i.e., an unconnected, non-listening socket)
-	   - the given port is illegal.
-	   - the port does not have a listening socket bound to it by @c Listen.
-	   - the timeout has expired without a successful connection.
+		- **@c EBADF** the file id is not legal
+		- **@c ENOTSOCK** the file id is not of a socket or is a listening socket		
+		- **@c EISCONN** the file id @c sock is already connected		
+	   	- **@c EINVAL** the given port is illegal.
+	   	- **@c ECONNREFUSED** the port does not have a listening socket bound to it by @c Listen.
+	   	- **@c ETIMEDOUT** the timeout has expired without a successful connection.
+        - **@c EINTR** The call was interrupted
 */
 int Connect(Fid_t sock, port_t port, timeout_t timeout);
 
@@ -749,7 +766,10 @@ typedef enum {
    @param sock the file ID of the socket to shut down.
    @param how the type of shutdown requested
    @returns 0 on success and -1 on error. Possible reasons for error:
-       - the file id @c sock is not legal (a connected socket stream).
+		- **@c EBADF** the file id @c sock is not legal
+		- **@c ENOTSOCK** the file id @c sock is not of a socket or is a listening socket
+		- **@c ENOTCONN** the file id @c sock is already connected
+	   	- **@c EINVAL** the shutdown mode @c how is illegal.
 */
 int ShutDown(Fid_t sock, shutdown_mode how);
 
@@ -792,7 +812,7 @@ typedef struct procinfo
             real argument length, not just the length of the @c args field, which is
             limited at @c PROCINFO_MAX_ARGS_SIZE. */
 	char args[PROCINFO_MAX_ARGS_SIZE]; /**< @brief The first 
-    @c PROCINFO_MAX_ARGS_SIZE bytes of the argument of the main task. 
+       @c PROCINFO_MAX_ARGS_SIZE bytes of the argument of the main task. 
 
     If the task's argument is longer (as designated by the @c argl field), the
     bytes contained in this field are just the prefix.  */
@@ -815,7 +835,9 @@ typedef struct procinfo
 
 	@returns a file id on success, or NOFILE on error. Possible reasons
 		for error are:
-		- the available file ids for the process are exhausted.
+        - **@c EMFILE** The maximum number of per-process file descriptors has been reached.
+        - **@c ENFILE** The maximum number of system-wide files has been reached.
+
  */
 Fid_t OpenInfo();
 

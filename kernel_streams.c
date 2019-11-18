@@ -70,28 +70,34 @@ int FCB_reserve(size_t num, Fid_t *fid, FCB** fcb)
 
     /* Find distinct fids */
     for(i=0; i<num; i++) {
-	while(f<MAX_FILEID && cur->FIDT[f]!=NULL)
-	    f++;
-	if(f==MAX_FILEID) break;
-	fid[i] = f; f++;
+		while(f<MAX_FILEID && cur->FIDT[f]!=NULL)
+	    	f++;
+		if(f==MAX_FILEID) 
+			break;
+		fid[i] = f; f++;
     }
-    if(i<num) return 0;
+
+    if(i<num) { set_errcode(EMFILE); return 0; }
+
     /* Allocate FCBs */
     for(i=0;i<num;i++)
-	if((fcb[i] = acquire_FCB()) == NULL)
-	    break;
-    if(i<num) {
-	/* Roll back */
-	while(i>0) {
-	    release_FCB(fcb[i-1]);
-	    i--;
-	}
-	return 0;
+		if((fcb[i] = acquire_FCB()) == NULL)
+	    	break;
+    
+	if(i<num) {
+		/* Roll back */
+		while(i>0) {
+		    release_FCB(fcb[i-1]);
+		    i--;
+		}
+		set_errcode(ENFILE);
+		return 0;
     }
+
     /* Found all */
     for(i=0;i<num;i++) {
-	cur->FIDT[fid[i]]=fcb[i];
-	FCB_incref(fcb[i]);
+		cur->FIDT[fid[i]]=fcb[i];
+		FCB_incref(fcb[i]);
     }
     return 1;
 }
@@ -102,9 +108,9 @@ void FCB_unreserve(size_t num, Fid_t *fid, FCB** fcb)
 {
     PCB* cur = CURPROC;
     for(size_t i=0; i<num ; i++) {
-	assert(cur->FIDT[fid[i]]==fcb[i]);
-	cur->FIDT[fid[i]] = NULL;
-	release_FCB(fcb[i]);
+		assert(cur->FIDT[fid[i]]==fcb[i]);
+		cur->FIDT[fid[i]] = NULL;
+		release_FCB(fcb[i]);
     }
 }
 
@@ -229,33 +235,32 @@ int sys_Close(int fd)
  */
 int sys_Dup2(int oldfd, int newfd)
 {
-  int retcode=0;
-  if(oldfd<0 || newfd<0 || oldfd>=MAX_FILEID || newfd>=MAX_FILEID) {
-  	set_errcode(EBADF);
-    return -1;  	
-  }
+	if(oldfd<0 || newfd<0 || oldfd>=MAX_FILEID || newfd>=MAX_FILEID) {
+		set_errcode(EBADF);
+		return -1;  	
+	}
 
-  FCB* old = get_fcb(oldfd);
-  FCB* new = get_fcb(newfd);
+	FCB* old = get_fcb(oldfd);
+	FCB* new = get_fcb(newfd);
 
-  if(old==NULL) {
-  	set_errcode(EBADF);
-    retcode = -1;
-  }
-  else if(old!=new) {
-    if(new) FCB_decref(new);
-    FCB_incref(old);
-    CURPROC->FIDT[newfd] = old;
-  }
-
-  return retcode;
+	if(old==NULL) {
+		set_errcode(EBADF);
+		return -1;
+	}
+	else if(old!=new) {
+		if(new) 
+			FCB_decref(new);
+		FCB_incref(old);
+		CURPROC->FIDT[newfd] = old;
+		return 0;
+	}
 }
 
 
 
 unsigned int sys_GetTerminalDevices()
 {
-  return device_no(DEV_SERIAL);
+	return device_no(DEV_SERIAL);
 }
 
 
@@ -264,37 +269,31 @@ unsigned int sys_GetTerminalDevices()
   */
 Fid_t open_stream(Device_type major, unsigned int minor)
 {
-  Fid_t fid;
-  FCB* fcb;
+	Fid_t fid;
+	FCB* fcb;
 
 
-  if(! FCB_reserve(1, &fid, &fcb)) {
-      set_errcode(ENODEV);    
-      goto finerr;
-  }
+	if(! FCB_reserve(1, &fid, &fcb)) {
+		return NOFILE;
+	}
   
-  if(device_open(major, minor, & fcb->streamobj, &fcb->streamfunc)) {
-      FCB_unreserve(1, &fid, &fcb);
-      set_errcode(ENFILE);
-      goto finerr;
-  }
+	if(device_open(major, minor, & fcb->streamobj, &fcb->streamfunc)) {
+		FCB_unreserve(1, &fid, &fcb);
+		return NOFILE;
+	}
   
-  goto finok;
-finerr:
-  fid = NOFILE;
-finok:
-  return fid;
+	return fid;
 }
 
 
 int sys_OpenNull()
 {
-  return open_stream(DEV_NULL, 0);
+	return open_stream(DEV_NULL, 0);
 }
 
 
 Fid_t sys_OpenTerminal(unsigned int termno)
 {
-  return open_stream(DEV_SERIAL, termno);
+	return open_stream(DEV_SERIAL, termno);
 }
 
