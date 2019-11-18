@@ -55,7 +55,7 @@ void tinyos_pseudo_console()
 	   we expect pair[0]==0 and pair[1]==1 */
 	if(FCB_reserve(2, fid, fcb)==0 || fid[0]!=0 || fid[1]!=1)
 	{
-		printf("Failed to allocate console Fids\n");
+		fprintf(stderr,"Failed to allocate console Fids\n");
 		abort();
 	}
 
@@ -64,5 +64,4 @@ void tinyos_pseudo_console()
 
 	fcb[0]->streamfunc = &__stdio_ops;
 	fcb[1]->streamfunc = &__stdio_ops;
-
 }

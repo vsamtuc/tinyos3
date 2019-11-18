@@ -52,6 +52,8 @@ typedef struct process_control_block {
   rlnode children_node;   /**< @brief Intrusive node for @c children_list */
   rlnode exited_node;     /**< @brief Intrusive node for @c exited_list */
 
+  volatile int errcode;   /**< @brief The last error code returned to the process */
+
   wait_queue child_exit;     /**< @brief Wait queue for @c WaitChild. 
 
                              This queue is  broadcast each time a child
@@ -94,6 +96,18 @@ PCB* get_pcb(Pid_t pid);
   @returns the PID of the process, or NOPROC.
 */
 Pid_t get_pid(PCB* pcb);
+
+
+/**
+  @brief Set the error code in the current process.
+
+  @param e the new value of the error code.
+  */
+static inline void set_errcode(int e)
+{
+  CURPROC->errcode = e;
+}
+
 
 /** @} */
 

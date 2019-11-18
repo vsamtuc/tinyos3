@@ -124,7 +124,7 @@ typedef struct device_control_block
                           */
 
   file_ops dev_fops;	/**< @brief Device operations
-
+  
   							This structure is provided by the device driver. */
 } DCB;
 

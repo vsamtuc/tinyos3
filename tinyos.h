@@ -63,6 +63,55 @@ typedef uintptr_t Tid_t;
 
 
 /*******************************************
+ *      Error handling
+ *******************************************/
+
+#if 0
+#define EPERM            1      /* Operation not permitted */
+#define ENOENT           2      /* No such file or directory */
+#define ESRCH            3      /* No such process */
+#define EINTR            4      /* Interrupted system call */
+#define EIO              5      /* I/O error */
+#define ENXIO            6      /* No such device or address */
+#define E2BIG            7      /* Argument list too long */
+#define ENOEXEC          8      /* Exec format error */
+#define EBADF            9      /* Bad file number */
+#define ECHILD          10      /* No child processes */
+#define EAGAIN          11      /* Try again */
+#define ENOMEM          12      /* Out of memory */
+#define EACCES          13      /* Permission denied */
+#define EFAULT          14      /* Bad address */
+#define ENOTBLK         15      /* Block device required */
+#define EBUSY           16      /* Device or resource busy */
+#define EEXIST          17      /* File exists */
+#define EXDEV           18      /* Cross-device link */
+#define ENODEV          19      /* No such device */
+#define ENOTDIR         20      /* Not a directory */
+#define EISDIR          21      /* Is a directory */
+#define EINVAL          22      /* Invalid argument */
+#define ENFILE          23      /* File table overflow */
+#define EMFILE          24      /* Too many open files */
+#define ENOTTY          25      /* Not a typewriter */
+#define ETXTBSY         26      /* Text file busy */
+#define EFBIG           27      /* File too large */
+#define ENOSPC          28      /* No space left on device */
+#define ESPIPE          29      /* Illegal seek */
+#define EROFS           30      /* Read-only file system */
+#define EMLINK          31      /* Too many links */
+#define EPIPE           32      /* Broken pipe */
+#define EDOM            33      /* Math argument out of domain of func */
+#define ERANGE          34      /* Math result not representable */
+#endif
+
+/**
+	@brief Return the error code of the last error.
+
+	@return the last error code.
+*/
+int GetError();
+
+
+/*******************************************
  *      Concurrency control
  *******************************************/
 
@@ -237,7 +286,7 @@ typedef int (*Task)(int, void*);
    @return On success, the pid of the new process is returned.
     On error, NOPROC is returned.
      Possible errors:
-   -  The maximum number of processes has been reached.
+   -  **@c EAGAIN** The maximum number of processes has been reached.
   */
 Pid_t Exec(Task task, int argl, void* args);
 
@@ -263,7 +312,7 @@ void Exit(int val);
    When parameter
    @c pid holds the value of a specific child process of this process,
    @c WaitChild will wait for this specific process to finish. If
-   parameter @c pid is equal to @c NOPROC, then @c WaitChild will wait for
+   parameter @p pid is equal to @c NOPROC, then @c WaitChild will wait for
    *any* child process to exit. 
 
    If parameter @c exitval is a not null, the exit code of the child
@@ -274,9 +323,10 @@ void Exit(int val);
     @param exitval a location whithin which the exit status of the terminates
    @return On success, @c WaitChild returns the pid of an exited child.
    On error, WaitChild returns @c NOPROC. Possible errors are:
-   - the specified pid is not a valid pid.
-   - the specified process is not a child of this process.
-   - the process has no child processes to wait on (when pid=NOPROC).
+	- **@c ESRCH** the specified pid is not a valid pid.
+	- **@c ECHILD** the specified process is not a child of this process.
+	- **@c ECHILD** the process has no child processes to wait on (when pid=NOPROC).
+	- **@c EINTR** The call was interrupted.
 */
 Pid_t WaitChild(Pid_t pid, int* exitval);
 
@@ -399,8 +449,8 @@ unsigned int GetTerminalDevices();
   @return the file ID of the new descriptor
     On success, OpenTerminal returns the file id for a new file for this 
    terminal. On error, it returns @c NOFILE. Possible errors are:
-   - The terminal device does not exist.
-   - The maximum number of file descriptors has been reached.
+   - **@c ENODEV** The terminal device does not exist.
+   - **@c ENFILE** The maximum number of file descriptors has been reached.
  */
 Fid_t OpenTerminal(unsigned int termno);
 
@@ -434,8 +484,10 @@ Fid_t OpenNull();
   @param size maximum size of @c buf
   @return the number of bytes copied, 0 if we have reached EOF, or -1, indicating some error.
         Possible errors are:
-         - The file descriptor is invalid.
-         - There was an I/O runtime problem.
+         - **@c EBADF** The file id is invalid.
+         - **@c EINVAL** The file id is not suitable for reading.
+         - **@c EIO** There was an I/O runtime problem.
+         - **@c EINTR** The call was interrupted
  */
 int Read(Fid_t fd, char *buf, unsigned int size);
 
@@ -457,8 +509,10 @@ int Read(Fid_t fd, char *buf, unsigned int size);
   @return As its function result, the @c Write function should return the 
    number of bytes copied from @c buf, or -1 on error. 
    Possible errors are:
-   - The file id is invalid.
-   - There was a I/O runtime problem.
+	- **@c EBADF** The file id is invalid.
+	- **@c EINVAL** The file id is not suitable for writing.
+	- **@c EIO** There was a I/O runtime problem.
+	- **@c EINTR** The call was interrupted
  */
 int Write(Fid_t fd, const char* buf, unsigned int size);
 
@@ -471,8 +525,9 @@ int Write(Fid_t fd, const char* buf, unsigned int size);
    Note that it is not an error to call Close on a (valid)
    file id which is already closed.
    Possible reasons for failure:
-   - The file id is invalid.
-   - There was a I/O runtime problem.   
+	- **@c EBADF** The file id is invalid.
+	- **@c EIO**There was a I/O runtime problem.   
+	- **@c EINTR** The call was interrupted
  */
 int Close(Fid_t fd);
 
@@ -489,8 +544,8 @@ int Close(Fid_t fd);
   @param newfd the new file id.
   @return This call returns 0 on success and -1 on failure.
   Possible reasons for failure:
-  - Either oldfd or newfd is invalid.
-  - oldfd is not an open file.
+  - **@c EBADF** Either oldfd or newfd is invalid.
+  - **@c EBADF** oldfd is not an open file.
  */
 int Dup2(Fid_t oldfd, Fid_t newfd);
 

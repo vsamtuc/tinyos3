@@ -139,7 +139,11 @@ Pid_t sys_Exec(Task call, int argl, void* args)
   /* The new process PCB */
   newproc = acquire_PCB();
 
-  if(newproc == NULL) goto finish;  /* We have run out of PIDs! */
+	if(newproc == NULL) {
+		/* We have run out of PIDs! */
+		set_errcode(EAGAIN);
+		goto finish;
+	}
 
   if(get_pid(newproc)<=1) {
     /* Processes with pid<=1 (the scheduler and the init process) 
@@ -201,9 +205,14 @@ Pid_t sys_GetPid()
 
 Pid_t sys_GetPPid()
 {
-  return get_pid(CURPROC->parent);
+  	return get_pid(CURPROC->parent);
 }
 
+
+int sys_GetError()
+{
+	return CURPROC->errcode;
+}
 
 static void cleanup_zombie(PCB* pcb, int* status)
 {
@@ -223,6 +232,7 @@ static Pid_t wait_for_specific_child(Pid_t cpid, int* status)
 
   /* Legality checks */
   if((cpid<0) || (cpid>=MAX_PROC)) {
+  	set_errcode(ESRCH);
     cpid = NOPROC;
     goto finish;
   }
@@ -231,6 +241,7 @@ static Pid_t wait_for_specific_child(Pid_t cpid, int* status)
   PCB* child = get_pcb(cpid);
   if( child == NULL || child->parent != parent)
   {
+  	set_errcode(ECHILD);
     cpid = NOPROC;
     goto finish;
   }
@@ -254,6 +265,7 @@ static Pid_t wait_for_any_child(int* status)
 
   /* Make sure I have children! */
   if(is_rlist_empty(& parent->children_list)) {
+  	set_errcode(ECHILD);
     cpid = NOPROC;
     goto finish;
   }

@@ -146,11 +146,17 @@ int sys_Read(Fid_t fd, char *buf, unsigned int size)
        while we are using it! */
     FCB_incref(fcb);
   
-    if(devread)
+    if(devread) {
       retcode = devread(sobj, buf, size);
+    } else {
+      set_errcode(EINVAL);
+    }
 
     /* Need to decrease the reference to FCB */
     FCB_decref(fcb);
+
+  } else {
+    set_errcode(EBADF);
   }
   
   /* We must not go into non-preemptive domain with kernel_mutex locked */
@@ -179,15 +185,18 @@ int sys_Write(Fid_t fd, const char *buf, unsigned int size)
        while we are using it! */
     FCB_incref(fcb);
   
-
-    if(devwrite)
+    if(devwrite) {
       retcode = devwrite(sobj, buf, size);
+    } else {
+      set_errcode(EINVAL);
+    }
 
     /* Need to decrease the reference to FCB */
     FCB_decref(fcb);
 
+  } else {
+    set_errcode(EBADF);
   }
-
 
   return retcode;
 }
@@ -195,16 +204,19 @@ int sys_Write(Fid_t fd, const char *buf, unsigned int size)
 
 int sys_Close(int fd)
 {
-  int retcode = (fd>=0 && fd<MAX_FILEID) ? 0 : -1;  /* Closing a closed fd is legal! */
+	if(fd<0 || fd>=MAX_FILEID) {
+		set_errcode(EBADF);
+		return -1;
+	}
+	int retcode = 0;
+	FCB* fcb = get_fcb(fd);
 
-  FCB* fcb = get_fcb(fd);
+	if(fcb) {
+	  CURPROC->FIDT[fd] = NULL;
+	  retcode = FCB_decref(fcb);    
+	}
 
-  if(fcb) {
-    CURPROC->FIDT[fd] = NULL;
-    retcode = FCB_decref(fcb);    
-  }
-
-  return retcode;
+	return retcode;
 }
 
 
@@ -218,18 +230,20 @@ int sys_Close(int fd)
 int sys_Dup2(int oldfd, int newfd)
 {
   int retcode=0;
-  if(oldfd<0 || newfd<0 || oldfd>=MAX_FILEID || newfd>=MAX_FILEID)
-    return -1;
+  if(oldfd<0 || newfd<0 || oldfd>=MAX_FILEID || newfd>=MAX_FILEID) {
+  	set_errcode(EBADF);
+    return -1;  	
+  }
 
   FCB* old = get_fcb(oldfd);
   FCB* new = get_fcb(newfd);
 
   if(old==NULL) {
+  	set_errcode(EBADF);
     retcode = -1;
   }
   else if(old!=new) {
-    if(new)
-      FCB_decref(new);
+    if(new) FCB_decref(new);
     FCB_incref(old);
     CURPROC->FIDT[newfd] = old;
   }
@@ -254,11 +268,14 @@ Fid_t open_stream(Device_type major, unsigned int minor)
   FCB* fcb;
 
 
-  if(! FCB_reserve(1, &fid, &fcb))
+  if(! FCB_reserve(1, &fid, &fcb)) {
+      set_errcode(ENODEV);    
       goto finerr;
+  }
   
   if(device_open(major, minor, & fcb->streamobj, &fcb->streamfunc)) {
       FCB_unreserve(1, &fid, &fcb);
+      set_errcode(ENFILE);
       goto finerr;
   }
   

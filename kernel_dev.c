@@ -12,8 +12,6 @@
 
  *************************************/
 
-DCB DT[MAX_TERMINALS];
-
 
 /* ===================================
 
@@ -21,6 +19,8 @@ DCB DT[MAX_TERMINALS];
 
   ====================================*/
 
+
+static struct {} nulldev;
 
 int nulldev_read(void* dev, char *buf, unsigned int size)
 {
@@ -44,8 +44,9 @@ int nulldev_close(void* dev)
 
 void* nulldev_open(uint minor)
 {
-  return NULL;
+  return &nulldev;
 }
+
 
 static file_ops nulldev_fops = {
   .Open = nulldev_open,
