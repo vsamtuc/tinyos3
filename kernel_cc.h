@@ -28,9 +28,6 @@
 #include "kernel_sys.h"
 #include "kernel_sched.h"
 
-
-
-
 /*
  * Kernel preemption control.
  * These are wrappers for the kernel monitor.
@@ -67,49 +64,6 @@ void kernel_signal(wait_queue* wq);
   */
 void kernel_broadcast(wait_queue* wq);
 
-
-/** @brief Set the preemption status for the current thread.
-
- 	Depending on the value of the argument, this function will set preemption on 
- 	or off. 
- 	Preemption is disabled by disabling interrupts. This function is usually called 
- 	via the convenience macros @c preempt_on and @c preempt_off.
-	A typical non-preemptive section is declared as
-	@code
-	int preempt = preempt_off;
-	..
-	    // do stuff without preemption 
-	...
-	if(preempt) preempt_on;
-	@endcode
-
-	@param preempt  the new preemption status 
- 	@returns the previous preemption status, where 0 means that preemption was previously off,
- 	and 1 means that it was on.
-
-
- 	@see preempt_off
- 	@see preempt_on
-*/
-int set_core_preemption(int preempt);
-
-/** @brief Get the current preemption status.
-
-	@return the current preemption status for this core, 0 means no preemption and 1 means
-	preemption.
-	@see set_core_preemption
- */
-int get_core_preemption();
-
-/** @brief Easily turn preemption off.
-	@see set_core_preemption
- */
-#define preempt_off  (set_core_preemption(0))
-
-/** @brief Easily turn preemption off.
-	@see set_core_preemption
- */
-#define preempt_on  (set_core_preemption(1))
 
 
 /* @}  cc */

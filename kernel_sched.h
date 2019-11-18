@@ -65,7 +65,6 @@ typedef enum {
 */
 typedef enum {
 	CTX_CLEAN, /**< @brief Context is clean. */
-
 	CTX_DIRTY /**< @brief Context is dirty. */
 } Thread_phase;
 
@@ -91,13 +90,15 @@ typedef enum {
   adjust the dynamic priority of the current thread.
  */
 enum SCHED_CAUSE {
-	SCHED_USER,    /**< @brief User-space code called yield */
+	SCHED_USER,    /**< @brief User-space code called yield (e.g., CondVar) */
 	SCHED_QUANTUM, /**< @brief The quantum has expired */
 	SCHED_MUTEX,   /**< @brief @c Mutex_Lock yielded on contention */
+	SCHED_JOIN,	   /**< @brief The thread is waiting for another thread */
 	SCHED_IO,      /**< @brief The thread is waiting for I/O */
 	SCHED_PIPE,    /**< @brief Sleep at a pipe or socket */
 	SCHED_POLL,    /**< @brief The thread is polling a device */
 	SCHED_IDLE,    /**< @brief The idle thread called yield */
+	SCHED_INIT,    /**< @brief Just an initializer */	
 	SCHED_EXIT     /**< @brief An exiting thread called yield */
 };
 
@@ -113,26 +114,28 @@ struct wait_queue;
 typedef struct thread_control_block {
 	PCB* owner_pcb; /**< @brief This is null for a free TCB */
 
+	void (*thread_func)(); /**< @brief The initial function executed by this thread */
 	cpu_context_t context; /**< @brief The thread context */
 
 	Thread_type type; /**< @brief The type of thread */
 	Thread_state state; /**< @brief The state of the thread */
 	Thread_phase phase; /**< @brief The phase of the thread */
 
-	void (*thread_func)(); /**< @brief The initial function executed by this thread */
+	TimerDuration wakeup_time; 	/**< @brief The time this thread will be woken up by the scheduler */
+	int cancel;					/**< @brief Flag to request that the thread be cancelled. */
 
-	TimerDuration wakeup_time; /**< @brief The time this thread will be woken up by the scheduler */
+	rlnode sched_node; 	/**< @brief Node to use when queueing in the scheduler lists */
+	rlnode wqueue_node;	/**< @brief Node to use when waiting on a wait_queue */
+	struct wait_queue* wqueue;  /**< @brief A pointer to a wait_queue we are waiting on, or NULL */
+	int wait_signalled;			/**< @brief Set when signalled in a wait_queue */
 
-	rlnode sched_node; /**< @brief Node to use when queueing in the scheduler lists */
+
 	TimerDuration its; /**< @brief Initial time-slice for this thread */
 	TimerDuration rts; /**< @brief Remaining time-slice for this thread */
 
 	enum SCHED_CAUSE curr_cause; /**< @brief The endcause for the current time-slice */
 	enum SCHED_CAUSE last_cause; /**< @brief The endcause for the last time-slice */
 
-	rlnode wqueue_node;			/**< @brief Node to use when waiting on a wait_queue */
-	struct wait_queue* wqueue;  /**< @brief A pointer to a wait_queue we are waiting on, or NULL */
-	int wait_signalled;			/**< @brief Set when signalled in a wait_queue */
 
 #ifndef NVALGRIND
 	unsigned valgrind_stack_id; /**< @brief Valgrind helper for stacks. 
@@ -254,7 +257,7 @@ void wqueue_broadcast(wait_queue* wqueue);
 
 /************************
  *
- *      Scheduler
+ *      CPU core related
  *
  ************************/
 
@@ -278,12 +281,65 @@ extern CCB cctx[MAX_CORES];
 /** @brief The current core's CCB */
 #define CURCORE (cctx[cpu_core_id])
 
+
 /** 
   @brief The current thread.
 
   This is a pointer to the TCB of the thread currently executing on this core.
 */
 #define CURTHREAD (CURCORE.current_thread)
+
+
+/** @brief Set the preemption status for the current thread.
+
+ 	Depending on the value of the argument, this function will set preemption on 
+ 	or off. 
+ 	Preemption is disabled by disabling interrupts. This function is usually called 
+ 	via the convenience macros @c preempt_on and @c preempt_off.
+	A typical non-preemptive section is declared as
+	@code
+	int preempt = preempt_off;
+	..
+	    // do stuff without preemption 
+	...
+	if(preempt) preempt_on;
+	@endcode
+
+	@param preempt  the new preemption status 
+ 	@returns the previous preemption status, where 0 means that preemption was previously off,
+ 	and 1 means that it was on.
+
+
+ 	@see preempt_off
+ 	@see preempt_on
+*/
+int set_core_preemption(int preempt);
+
+/** @brief Get the current preemption status.
+
+	@return the current preemption status for this core, 0 means no preemption and 1 means
+	preemption.
+	@see set_core_preemption
+ */
+int get_core_preemption();
+
+/** @brief Easily turn preemption off.
+	@see set_core_preemption
+ */
+#define preempt_off  (set_core_preemption(0))
+
+/** @brief Easily turn preemption off.
+	@see set_core_preemption
+ */
+#define preempt_on  (set_core_preemption(1))
+
+
+/************************
+ *
+ *      Scheduler API
+ *
+ ************************/
+
 
 /** 
   @brief The current thread.

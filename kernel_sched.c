@@ -2,7 +2,6 @@
 #include <assert.h>
 #include <sys/mman.h>
 
-#include "kernel_cc.h"
 #include "kernel_proc.h"
 #include "kernel_sched.h"
 #include "tinyos.h"
@@ -125,16 +124,16 @@ TCB* spawn_thread(PCB* pcb, void (*func)())
 	tcb->phase = CTX_CLEAN;
 	tcb->thread_func = func;
 	tcb->wakeup_time = NO_TIMEOUT;
+	tcb->cancel = 0;
 	rlnode_init(&tcb->sched_node, tcb); /* Intrusive list node */
-
+	rlnode_init(& tcb->wqueue_node, tcb);
+	tcb->wqueue = NULL;
+	tcb->wait_signalled = 0;
 	tcb->its = QUANTUM;
 	tcb->rts = QUANTUM;
 	tcb->last_cause = SCHED_IDLE;
 	tcb->curr_cause = SCHED_IDLE;
 
-	rlnode_init(& tcb->wqueue_node, tcb);
-	tcb->wqueue = NULL;
-	tcb->wait_signalled = 0;
 
 	/* Compute the stack segment address and size */
 	void* sp = ((void*)tcb) + THREAD_TCB_SIZE;
@@ -467,6 +466,7 @@ _Noreturn void exit_thread()
 
 	/* We should not get here! */
 	assert(0);	
+	abort();
 }
 
 
@@ -608,13 +608,19 @@ void run_scheduler()
 	curcore->idle_thread.state = RUNNING;
 	curcore->idle_thread.phase = CTX_DIRTY;
 	curcore->idle_thread.wakeup_time = NO_TIMEOUT;
+	curcore->idle_thread.cancel = 0;
 	rlnode_init(&curcore->idle_thread.sched_node, &curcore->idle_thread);
+	rlnode_init(&curcore->idle_thread.wqueue_node, &curcore->idle_thread);
+	curcore->idle_thread.wqueue = NULL;
+	curcore->idle_thread.wait_signalled = 0;
 
 	curcore->idle_thread.its = QUANTUM;
 	curcore->idle_thread.rts = QUANTUM;
 
 	curcore->idle_thread.curr_cause = SCHED_IDLE;
 	curcore->idle_thread.last_cause = SCHED_IDLE;
+
+
 
 	/* Initialize interrupt handler */
 	cpu_interrupt_handler(ALARM, yield_handler);

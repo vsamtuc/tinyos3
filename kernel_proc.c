@@ -19,7 +19,8 @@
 PCB PT[MAX_PROC];
 unsigned int process_count;
 
-static wait_channel wchan_wait_child = { SCHED_USER, "wait_child" };
+/* wait channels */
+static wait_channel wchan_wait_child = { SCHED_JOIN, "wait_child" };
 
 
 PCB* get_pcb(Pid_t pid)

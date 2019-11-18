@@ -76,7 +76,7 @@ typedef uintptr_t Tid_t;
     @see Mutex_Unlock
     @see MUTEX_INIT
 */
-typedef char Mutex;
+typedef volatile _Atomic char Mutex;
 
 /**
   @brief This macro is used to initialize mutexes. 

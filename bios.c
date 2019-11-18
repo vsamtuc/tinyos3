@@ -936,6 +936,8 @@ int bios_write_serial(uint serial, char value)
 
 BOOT_TEST(bios_timings, "Measure and print timings about the bios")
 {
+	unsigned int fibo(unsigned int);
+
 	struct timespec t1,t2;
 	clock_gettime(CLOCK_REALTIME, &t1);
 	fibo(44);

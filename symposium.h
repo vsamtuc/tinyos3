@@ -60,11 +60,14 @@
 /** @brief The default for constant \f$F_\text{GAP}\f$ */
 #define FGAP  10
 
-/** @brief Compute the n-th Fibonacci number recursively. 
+/** @brief Burn CPU time by computing Fibonacci numbers. 
 
-	The purpose of this function is to burn CPU cycles. Its complexity
-	is \f$ O( \phi^n )\f$ where
-	\f$\phi=\frac{1+\sqrt{5}}{2}\approx 1.618\f$ is the golden ratio.
+	The purpose of this function is to burn CPU cycles. In this
+	respect, it is a terrible way to compute Fibonacci numbers.
+	The code uses a recursion on the basic definition. Its complexity
+	is __exponential__ in \f$n\f$. More precisely, it takes
+	time \f$ O( \phi^n )\f$, where \f$\phi=\frac{1+\sqrt{5}}{2}\approx 1.618\f$ 
+	is the golden ratio. 
 
 	@param n the index of the Fibonacci number
 	@returns the n-th Fibonacci number

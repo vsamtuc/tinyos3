@@ -1,6 +1,7 @@
 
 
 #include <assert.h>
+#include <stdatomic.h>
 
 #include "kernel_sched.h"
 #include "kernel_proc.h"
@@ -19,6 +20,31 @@
   */
 
 
+
+static inline int spin_trylock(Mutex* lock, int spin)
+{
+#ifdef __STDC_NO_ATOMICS__
+  while(__atomic_test_and_set(lock,__ATOMIC_ACQUIRE)) {
+    while(__atomic_load_n(lock, __ATOMIC_RELAXED)) {
+      __builtin_ia32_pause();      
+      if( (--spin) <= 0)
+      	return 0;
+    }
+  }
+  return 1;
+#else
+  while(atomic_flag_test_and_set_explicit(lock, memory_order_acquire)) {
+    while(*lock) {
+      __builtin_ia32_pause();
+      if( (--spin) <= 0)
+      	return 0;
+    }
+  }
+  return 1;
+#endif
+}
+
+
 /*
  	Pre-emption aware mutex.
  	-------------------------
@@ -35,27 +61,20 @@
 void Mutex_Lock(Mutex* lock)
 {
 #define MUTEX_SPINS 1000
-
-  while(__atomic_test_and_set(lock,__ATOMIC_ACQUIRE)) {
-    int spin=MUTEX_SPINS;
-    while(__atomic_load_n(lock, __ATOMIC_RELAXED)) {
-      __builtin_ia32_pause();      
-      if(spin>0) 
-      	spin--; 
-      else { 
-      	spin=MUTEX_SPINS; 
+	while(! spin_trylock(lock, MUTEX_SPINS))
       	if(get_core_preemption())
-      		yield(SCHED_MUTEX); 
-      }
-    }
-  }
+      		yield(SCHED_MUTEX);
 #undef MUTEX_SPINS
 }
 
 
 void Mutex_Unlock(Mutex* lock)
 {
+#ifdef __STDC_NO_ATOMICS__
   __atomic_clear(lock, __ATOMIC_RELEASE);
+#else
+  atomic_flag_clear_explicit(lock, memory_order_release);
+#endif
 }
 
 
