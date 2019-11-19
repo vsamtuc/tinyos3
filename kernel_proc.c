@@ -72,7 +72,7 @@ void initialize_processes()
   process_count = 0;
 
   /* Execute a null "idle" process */
-  if(Exec(NULL,0,NULL)!=0)
+  if(sys_Exec(NULL,0,NULL)!=0)
     FATAL("The scheduler process does not have pid==0");
 }
 

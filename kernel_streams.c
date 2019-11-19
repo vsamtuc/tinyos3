@@ -247,13 +247,14 @@ int sys_Dup2(int oldfd, int newfd)
 		set_errcode(EBADF);
 		return -1;
 	}
-	else if(old!=new) {
+
+	if(old!=new) {
 		if(new) 
 			FCB_decref(new);
 		FCB_incref(old);
 		CURPROC->FIDT[newfd] = old;
-		return 0;
 	}
+	return 0;
 }
 
 

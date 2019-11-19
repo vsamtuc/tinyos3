@@ -388,10 +388,10 @@ BOOT_TEST(test_cond_timedwait_timeout,
 		return 0;
 	}
 
-	for(timeout_t t=500; t < 1000; t+=100) {
+	for(timeout_t t=100; t < 400; t+=100) {
 		Exec(do_timeout, sizeof(t), &t);
 	}
-	for(timeout_t t=550; t < 1000; t+=100) {
+	for(timeout_t t=150; t < 400; t+=100) {
 		Exec(do_timeout, sizeof(t), &t);
 	}
 

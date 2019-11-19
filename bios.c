@@ -13,6 +13,8 @@
 #include <fcntl.h>
 #include <poll.h>
 
+#include <setjmp.h>
+
 #include "util.h"
 #include "bios.h"
 

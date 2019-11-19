@@ -127,34 +127,6 @@ void Cond_Broadcast(CondVar* cv)
 }
 
 
-/*
- *  Pre-emption control
- */ 
-int set_core_preemption(int preempt)
-{
-	/* 
-	   Just ensure that CURCORE.preemption is changed only with preemption off! 
-	   That is, after cpu_disable_interrupts() and before cpu_enable_interrupts().
-	 */
-	sig_atomic_t old_preempt;
-	if(preempt) {
-		old_preempt = __atomic_exchange_n(& CURCORE.preemption, preempt, __ATOMIC_RELAXED);
-		cpu_enable_interrupts();
-	} 
-	else {				
-		cpu_disable_interrupts();
-		old_preempt = __atomic_exchange_n(& CURCORE.preemption, preempt, __ATOMIC_RELAXED);
-	}
-
-	return old_preempt;
-}
-
-
-int get_core_preemption()
-{
-	return CURCORE.preemption;
-}
-
 
 
 /*

@@ -21,8 +21,9 @@
 */
 
 #include "bios.h"
-#include "tinyos.h"
 #include "util.h"
+#include "tinyos.h"
+#include "kernel_sched_queue.h"
 
 /*****************************
  *
@@ -117,11 +118,12 @@ typedef struct thread_control_block {
 	void (*thread_func)(); /**< @brief The initial function executed by this thread */
 	cpu_context_t context; /**< @brief The thread context */
 
-	Thread_type type; /**< @brief The type of thread */
-	Thread_state state; /**< @brief The state of the thread */
-	Thread_phase phase; /**< @brief The phase of the thread */
+	Thread_type type;     /**< @brief The type of thread */
+	Thread_state state;   /**< @brief The state of the thread */
+	Thread_phase phase;   /**< @brief The phase of the thread */
 
-	TimerDuration wakeup_time; 	/**< @brief The time this thread will be woken up by the scheduler */
+	TimerDuration wakeup_time; 	/**< @brief The absolute time this thread will be woken up 
+								by the scheduler after a timeout */
 	int cancel;					/**< @brief Flag to request that the thread be cancelled. */
 
 	rlnode sched_node; 	/**< @brief Node to use when queueing in the scheduler lists */
@@ -129,13 +131,22 @@ typedef struct thread_control_block {
 	struct wait_queue* wqueue;  /**< @brief A pointer to a wait_queue we are waiting on, or NULL */
 	int wait_signalled;			/**< @brief Set when signalled in a wait_queue */
 
+	/* Information related to the scheduler queue but maintained by the scheduler. */
 
-	TimerDuration its; /**< @brief Initial time-slice for this thread */
-	TimerDuration rts; /**< @brief Remaining time-slice for this thread */
+	TimerDuration its;   /**< @brief Initial time-slice for this thread. This is determined by the scheduling
+								algorithm, by returning from \c sched_queue_select(). This is an **output** of
+								the scheduling algorithm, fed back to it as an input.
+							*/
+	TimerDuration rts;   /**< @brief For a thread is \c RUNNING, this attribute contains the remaining 
+	                           time-slice for this thread, at the time that the scheduler is called. This
+	                           is an **input** to the scheduling algorithm. */
 
-	enum SCHED_CAUSE curr_cause; /**< @brief The endcause for the current time-slice */
-	enum SCHED_CAUSE last_cause; /**< @brief The endcause for the last time-slice */
+	enum SCHED_CAUSE curr_cause; /**< @brief The endcause for the current time-slice.
+	 				This is an **input** to the scheduling algorithm. */
+	enum SCHED_CAUSE last_cause; /**< @brief The endcause for the last time-slice 
+					This is an **input** to the scheduling algorithm. */
 
+	struct sched_queue_tcb q;	/**< @brief Information maintained by and for the scheduler queue */
 
 #ifndef NVALGRIND
 	unsigned valgrind_stack_id; /**< @brief Valgrind helper for stacks. 
@@ -214,7 +225,7 @@ void wqueue_init(wait_queue* wqueue, const wait_channel* wchan);
 	@c wmx before returning.
 
 	In particular, what is meant by 'atomically' is that the thread state will change
-	to @c newstate atomically with the mutex unlocking. Note that, the state of
+	to @c STOPPED atomically with the mutex unlocking. Note that, the state of
 	the current thread is @c RUNNING. 
 	Therefore, no other state change (such as a wakeup, a yield, another sleep etc) 
 	can happen "between" the thread's state change and the unlocking.
@@ -224,8 +235,8 @@ void wqueue_init(wait_queue* wqueue, const wait_channel* wchan);
 
 	If @c timeout is other than @c NO_TIMEOUT, then the scheduler will awaken the thread 
 	after a time roughly equal to the timeout (in microseconds) has passed. 
-	The term "roughly equal" means "depending on the resolution of the system clock", which
-	is currently on the order of ten milliseconds. Note that the actual time of returning from 
+	The term "roughly equal" means "depending on the resolution of the system clock and the quantum", 
+	which is currently on the order of ten milliseconds. Note that the actual time of returning from 
 	@c wqueue_wait may be several quantums later, depending on the scheduler.
 
 	@param wqueue the queue on which the caling thread will wait
@@ -272,7 +283,6 @@ typedef struct core_control_block {
 	TCB* previous_thread; /**< @brief Points to the thread that previously owned the core */
 	TCB idle_thread; /**< @brief Used by the scheduler to handle the core's idle thread */
 	sig_atomic_t preemption; /**< @brief Marks preemption, used by the locking code */
-
 } CCB;
 
 /** @brief the array of Core Control Blocks (CCB) for the kernel */
@@ -378,7 +388,7 @@ TCB* spawn_thread(PCB* pcb, void (*func)());
   thread is blocked) to @c READY. 
 
   @param tcb the thread to be made @c READY.
-  @returns 1 if the thread state was @c STOPPED or @c INIT, 0 otherwise
+  @returns 1 if the thread was blocked, 0 otherwise
 
 */
 int wakeup(TCB* tcb);
@@ -387,7 +397,7 @@ int wakeup(TCB* tcb);
 /**
 	@brief Terminate the current thread.
 
-	This call
+	This call causes the calling thread to terminate. It does not return.
   */
 _Noreturn void exit_thread();
 
@@ -398,6 +408,8 @@ _Noreturn void exit_thread();
   This call asks the scheduler to terminate the quantum of the current thread
   and possibly switch to a different thread. The scheduler may decide that 
   it will renew the quantum for the current thread.
+
+  @param cause is the cause for the yield, see @ref SCHED_CAUSE
  */
 void yield(enum SCHED_CAUSE cause);
 
@@ -422,7 +434,7 @@ void initialize_scheduler(void);
 
   This is the default quantum for each thread, in microseconds.
   */
-#define QUANTUM (1000L)
+#define QUANTUM (10000L)
 
 /**
 	@brief An object containing some information copied from a TCB.

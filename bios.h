@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <ucontext.h>
+#include <setjmp.h>
 
 /**
 	@file bios.h
