@@ -46,7 +46,7 @@ int sys_Kill(Pid_t pid)
 	if(pid==1) { set_errcode(EPERM); return -1; }
 
 	PCB* target = get_pcb(pid);
-	if(pid==0 || target==NULL) { set_errcode(ESRCH); return -1; }
+	if(pid==0 || target==NULL) { set_errcode(EINVAL); return -1; }
 
 	/* deliver the signal to the target process */
 	int preempt = preempt_off;

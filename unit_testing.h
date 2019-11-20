@@ -261,7 +261,7 @@ void abort_test();
  		MSG("... Too many errors, ABORTING\n"); \
  		abort_test(); \
  	}\
-   } }while(0) \
+   } break; }while(0) \
 
 /**
 	@brief Like @c FATAL_ASSERT but with a custom message.

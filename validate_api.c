@@ -13,6 +13,13 @@
 
 
 /*
+	Test helpers
+ */
+#define ASSERT_ERRNO(expt, ecode)  ASSERT(expt); \
+	ASSERT_MSG( ecode==GetError(), "Expected erro %s==%d and got %d\n", (#ecode), (ecode), GetError());\
+
+
+/*
  *
  *   TESTS
  *
@@ -108,9 +115,9 @@ BOOT_TEST(test_waitchild_error_on_invalid_pid,
 	void waitchild_error()
 	{
 		/* Cannot wait on myself */
-		ASSERT(WaitChild(GetPid(),NULL)==NOPROC);
-		ASSERT(WaitChild(MAX_PROC, NULL)==NOPROC);
-		ASSERT(WaitChild(GetPid()+1, NULL)==NOPROC);
+		ASSERT_ERRNO(WaitChild(GetPid(),NULL)==NOPROC, ECHILD);
+		ASSERT_ERRNO(WaitChild(MAX_PROC, NULL)==NOPROC, ESRCH);
+		ASSERT_ERRNO(WaitChild(GetPid()+1, NULL)==NOPROC, ECHILD);
 	}
 	int subprocess(int argl, void* args) 
 	{
@@ -134,7 +141,7 @@ BOOT_TEST(test_waitchild_error_on_nonchild,
 	Pid_t cpid = Exec(void_child, 0, NULL);
 	int bad_child(int argl, void* args)
 	{
-		ASSERT(WaitChild(cpid, NULL)==NOPROC);
+		ASSERT_ERRNO(WaitChild(cpid, NULL)==NOPROC, ECHILD);
 		return 0;
 	}
 	Pid_t badpid = Exec(bad_child, 0, NULL);
@@ -254,7 +261,7 @@ BOOT_TEST(test_wait_for_any_child,
 			rec[j].pid = NOPROC;  /* Reset it so we don't find it again! */
 		}
 
-		ASSERT(WaitChild(NOPROC, NULL)==NOPROC);
+		ASSERT_ERRNO(WaitChild(NOPROC, NULL)==NOPROC, ECHILD);
 	}
 	return 0;
 #undef NCHILDREN
@@ -315,6 +322,7 @@ BOOT_TEST(test_orphans_adopted_by_init,
 	{
 		for(int i=0;i<5;i++)
 			ASSERT(Exec(grandchild, 0, NULL)!=NOPROC);
+		/* We do note WaitChild the children, they become orphans! */
 		return 100;
 	}
 
@@ -332,7 +340,7 @@ BOOT_TEST(test_orphans_adopted_by_init,
 	
 
 	/* Check that we have no more */
-	ASSERT(WaitChild(NOPROC, NULL) == NOPROC);
+	ASSERT_ERRNO(WaitChild(NOPROC, NULL) == NOPROC, ECHILD);
 
 	ASSERT(sum == 315);
 
@@ -503,7 +511,7 @@ BOOT_TEST(test_dup2_error_on_nonfile,
 	"Test that Dup2 will return an error if oldfd is not a file.")
 {
 	for(Fid_t fid = 0; fid < MAX_FILEID; fid++)
-		ASSERT(Dup2(fid, MAX_FILEID-1-fid)==-1);
+		ASSERT_ERRNO(Dup2(fid, MAX_FILEID-1-fid)==-1, EBADF);
 	return 0;
 }
 
@@ -511,12 +519,12 @@ BOOT_TEST(test_dup2_error_on_invalid_fid,
 	"Test that Dup2 returns error when some fid is invalid."
 	)
 {
-	ASSERT(Dup2(NOFILE, 3)==-1);
-	ASSERT(Dup2(MAX_FILEID, 3)==-1);
+	ASSERT_ERRNO(Dup2(NOFILE, 3)==-1, EBADF);
+	ASSERT_ERRNO(Dup2(MAX_FILEID, 3)==-1, EBADF);
 	Fid_t fid = OpenNull(0);
 	FATAL_ASSERT(fid!=NOFILE);
-	ASSERT(Dup2(fid, NOFILE)==-1);
-	ASSERT(Dup2(fid, MAX_FILEID)==-1);		
+	ASSERT_ERRNO(Dup2(fid, NOFILE)==-1, EBADF);
+	ASSERT_ERRNO(Dup2(fid, MAX_FILEID)==-1, EBADF);
 	return 0;
 }
 
@@ -538,8 +546,8 @@ BOOT_TEST(test_close_error_on_invalid_fid,
 	"Test that Close returns error on invalid fid."
 	)
 {
-	ASSERT(Close(NOFILE)==-1);
-	ASSERT(Close(MAX_FILEID)==-1);
+	ASSERT_ERRNO(Close(NOFILE)==-1, EBADF);
+	ASSERT_ERRNO(Close(MAX_FILEID)==-1, EBADF);
 	return 0;
 }
 
@@ -663,7 +671,7 @@ BOOT_TEST(test_read_error_on_bad_fid,
 	)
 {
 	char buffer[10];
-	ASSERT(Read(0, buffer, 10)==-1);
+	ASSERT_ERRNO(Read(0, buffer, 10)==-1, EBADF);
 	return 0;
 }
 
@@ -829,7 +837,7 @@ BOOT_TEST(test_write_error_on_bad_fid,
 	)
 {
 	char buffer[10];
-	ASSERT(Write(0, buffer, 10)==-1);
+	ASSERT_ERRNO(Write(0, buffer, 10)==-1, EBADF);
 	return 0;
 }
 
@@ -2325,10 +2333,30 @@ BOOT_TEST(test_kill_sleeping, "Test the kill syscall on an io-intensive process"
 }
 
 
+BOOT_TEST(test_error_to_kill_init, "Test that it is an error to send a kill signal to init")
+{
+	ASSERT_ERRNO(Kill(GetPid()), EPERM)
+	return 0;
+}
+
+BOOT_TEST(test_error_kill_nonexistent, "Test that it is an error to send kill to illegal pid")
+{
+	ASSERT_ERRNO(Kill(NOPROC), EINVAL);
+	ASSERT_ERRNO(Kill(0), EINVAL);
+	ASSERT_ERRNO(Kill(-11), EINVAL);
+	ASSERT_ERRNO(Kill(-1), EINVAL);
+	for(Pid_t p=2; p < 20; p+=2)
+		ASSERT_ERRNO(Kill(p), EINVAL);
+	return 0;
+}
+
+
 TEST_SUITE(signal_tests, "Tests for process signals")
 {
 	&test_kill_ready,
 	&test_kill_sleeping,
+	&test_error_to_kill_init,
+	&test_error_kill_nonexistent,
 	NULL
 };
 

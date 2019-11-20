@@ -518,7 +518,7 @@ int Write(Fid_t fd, const char* buf, unsigned int size);
    file id which is already closed.
    Possible reasons for failure:
 	- **@c EBADF** The file id is invalid.
-	- **@c EIO**There was a I/O runtime problem.   
+	- **@c EIO** There was a I/O runtime problem.   
 	- **@c EINTR** The call was interrupted
  */
 int Close(Fid_t fd);

@@ -3,6 +3,7 @@
 #include <sys/mman.h>
 
 #include "tinyos.h"
+#include "kernel_cc.h"
 #include "kernel_proc.h"
 #include "kernel_sched.h"
 #include "kernel_sig.h"
@@ -151,14 +152,17 @@ void free_thread(void* ptr, size_t size) { free(ptr); }
 
 
 /*
-  This is the function that is executed by a normal thread.
+  This is the function that is executed by a thread the first time it is
+  scheduled.
 */
 static _Noreturn void thread_start()
 {
+	/* Exit the kernel to user land */
 	sched_gain();
 	sched_unlock();
 	preempt_on;
 
+	/* Execute the function */
 	CURTHREAD->thread_func();
 
 	/* If we belong to a process, we are not supposed to get here! */
