@@ -37,22 +37,24 @@ typedef enum pid_state_e {
  */
 typedef struct process_control_block {
   pid_state  pstate;      /**< @brief The pid state for this PCB */
-
   PCB* parent;            /**< @brief Parent's pcb. */
-  int exitval;            /**< @brief The exit value of the process */
 
+
+  int exitval;            /**< @brief The exit value of the process */
   TCB* main_thread;       /**< @brief The main thread */
   Task main_task;         /**< @brief The main thread's function */
   int argl;               /**< @brief The main thread's argument length */
   void* args;             /**< @brief The main thread's argument string */
 
-  rlnode children_list;   /**< @brief List of children */
-  rlnode exited_list;     /**< @brief List of exited children */
+  volatile int sigkill;            /**< @brief Mark a process for termination */
 
-  rlnode children_node;   /**< @brief Intrusive node for @c children_list */
-  rlnode exited_node;     /**< @brief Intrusive node for @c exited_list */
+  rlnode children_list;     /**< @brief List of children */
+  rlnode exited_list;       /**< @brief List of exited children */
 
-  volatile int errcode;   /**< @brief The last error code returned to the process */
+  rlnode children_node;     /**< @brief Intrusive node for @c children_list */
+  rlnode exited_node;       /**< @brief Intrusive node for @c exited_list */
+
+  volatile int errcode;     /**< @brief The last error code returned to the process */
 
   wait_queue child_exit;     /**< @brief Wait queue for @c WaitChild. 
 

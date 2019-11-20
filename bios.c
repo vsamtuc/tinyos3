@@ -246,8 +246,8 @@ static inline void raise_interrupt(Core* core, Interrupt intno)
 	coreval.sival_int = core->id;
 	core->intpending[intno] = 1;
 	core->irq_raised[intno] ++;
-	CHECKRC(pthread_sigqueue(core->thread, SIGUSR1, coreval));
 	cpu_core_restart(core->id);
+	CHECKRC(pthread_sigqueue(core->thread, SIGUSR1, coreval));
 }
 
 

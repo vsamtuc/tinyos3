@@ -2267,10 +2267,80 @@ TEST_SUITE(io_tests,
 
 
 
+BOOT_TEST(test_kill_ready, "Test the kill syscall on a compute-intensive process")
+{
+
+	int very_slow(int argl, void* args)
+	{
+		fibo(43);
+		ASSERT_MSG(0, "The compute process was not interrupted!");
+		return 0;
+	}
+
+	Pid_t child = Exec(very_slow, 0, NULL);
+
+	/* We take a short nap! */
+	CondVar cond = COND_INIT;
+	int ret = Cond_TimedWait(NULL, &cond, 20);
+	ASSERT(ret==0);
+
+	ASSERT(Kill(child)==0);
+	int status=0;
+	ASSERT(WaitChild(child, &status)==child);
+	ASSERT(status==-1);
+	return 0;
+}
+
+
+BOOT_TEST(test_kill_sleeping, "Test the kill syscall on an io-intensive process",
+	.timeout=2)
+{
+	Mutex smx = MUTEX_INIT;
+
+	int take_a_nap(int argl, void* args)
+	{
+		CondVar cond = COND_INIT;
+		while(1) {
+			Cond_TimedWait(&smx, &cond, 3000);
+			ASSERT_MSG(0,"The sleeping timeout was exhausted!");
+		}
+		return 0;
+	}
+
+	Mutex_Lock(&smx);
+	Pid_t child = Exec(take_a_nap, 0, NULL);
+
+	/* We take a short nap! */
+	CondVar cond = COND_INIT;
+	Mutex_Lock(&smx);
+	int ret = Cond_TimedWait(NULL, &cond, 20);
+	Mutex_Unlock(&smx);
+	ASSERT(ret==0);
+
+	ASSERT(Kill(child)==0);
+	int status=0;
+	ASSERT(WaitChild(child, &status)==child);
+	ASSERT(status==-1);
+	return 0;
+}
+
+
+TEST_SUITE(signal_tests, "Tests for process signals")
+{
+	&test_kill_ready,
+	&test_kill_sleeping,
+	NULL
+};
+
+
+
+
+
 TEST_SUITE(all_tests,
 	"A suite containing all tests.")
 {
 	&basic_tests,
+	&signal_tests,
 	//&concurrency_tests,
 	//&io_tests,
 	&thread_tests,

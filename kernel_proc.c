@@ -1,6 +1,7 @@
 
 #include <assert.h>
 #include "kernel_cc.h"
+#include "kernel_sys.h"
 #include "kernel_proc.h"
 #include "kernel_streams.h"
 
@@ -145,27 +146,30 @@ Pid_t sys_Exec(Task call, int argl, void* args)
 		goto finish;
 	}
 
-  if(get_pid(newproc)<=1) {
-    /* Processes with pid<=1 (the scheduler and the init process) 
-       are parentless and are treated specially. */
-    newproc->parent = NULL;
-  }
-  else
-  {
-    /* Inherit parent */
-    curproc = CURPROC;
+	/* Clear the kill flag */
+	newproc->sigkill = 0;
 
-    /* Add new process to the parent's child list */
-    newproc->parent = curproc;
-    rlist_push_front(& curproc->children_list, & newproc->children_node);
+	if(get_pid(newproc)<=1) {
+		/* Processes with pid<=1 (the scheduler and the init process) 
+		   are parentless and are treated specially. */
+		newproc->parent = NULL;
+	}
+	else
+	{
+		/* Inherit parent */
+		curproc = CURPROC;
 
-    /* Inherit file streams from parent */
-    for(int i=0; i<MAX_FILEID; i++) {
-       newproc->FIDT[i] = curproc->FIDT[i];
-       if(newproc->FIDT[i])
-          FCB_incref(newproc->FIDT[i]);
-    }
-  }
+		/* Add new process to the parent's child list */
+		newproc->parent = curproc;
+		rlist_push_front(& curproc->children_list, & newproc->children_node);
+
+		/* Inherit file streams from parent */
+		for(int i=0; i<MAX_FILEID; i++) {
+		   newproc->FIDT[i] = curproc->FIDT[i];
+		   if(newproc->FIDT[i])
+		      FCB_incref(newproc->FIDT[i]);
+		}
+	}
 
 
   /* Set the main thread's function */
@@ -194,6 +198,7 @@ Pid_t sys_Exec(Task call, int argl, void* args)
 finish:
   return get_pid(newproc);
 }
+
 
 
 /* System call */

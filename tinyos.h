@@ -313,6 +313,22 @@ Pid_t GetPid(void);
  */
 Pid_t GetPPid(void);
 
+
+/**
+	@brief Terminate a process.
+
+	This system call will terminate another process.
+	The only exception is that the INIT process cannot be terminated.
+	The terminated process may be leave memory in an inconsistent state.
+
+	@param pid the pid of the process to terminate
+	@return 0 on success, or -1 if an error occurred. Possible errors include:
+	- **@c EPERM** The \c init process was targeted (i.e., pid==1)
+	- **@c EINVAL** The pid is not of a valid process
+*/
+int Kill(Pid_t pid);
+
+
 /*******************************************
  *
  * Threads
@@ -373,7 +389,7 @@ Tid_t ThreadSelf();
     - **@c ESRCH** there is no thread with the given tid in this process.
     - **@c EDEADLK** the tid corresponds to the current thread.
     - **@c EINVAL** the tid corresponds to a detached thread.
-
+    - **@c EINTR** The call was interrupted
   */
 int ThreadJoin(Tid_t tid, int* exitval);
 

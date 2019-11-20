@@ -25,8 +25,44 @@
 	Many of the header definitions for Mutexes and CondVars are in the 
    	tinyos.h file
 */
-#include "kernel_sys.h"
 #include "kernel_sched.h"
+
+
+/**
+	@brief Try to lock a mutex.
+
+	This function will try at most \c spins times to 
+	acquire (set while unset) mutex \c lock. It returns a success flag.
+
+	@param lock a pointer to the mutex
+	@param spins the number of attempts to acquire `lock`
+	@return 1 if `lock` was acquired, 0 on failure
+  */
+int spin_trylock(Mutex* lock, int spins);
+
+
+/**
+	@brief Lock a mutex by spinning.
+
+	This function will loop until it acquires mutex `lock`.
+	Internally, it calls @ref spin_trylock() repeatedly until it 
+	succeeds.
+
+	@param lock a pointer to the mutex
+	@see spin_trylock()
+  */
+void spin_lock(Mutex* lock);
+
+
+/**
+	@brief Unock a mutex.
+
+	@param lock a pointer to the mutex
+	@see spin_lock()
+  */
+void spin_unlock(Mutex* unlock);
+
+
 
 /*
  * Kernel preemption control.

@@ -6,7 +6,7 @@
 #include "kernel_sched.h"
 #include "kernel_proc.h"
 #include "kernel_cc.h"
-
+#include "kernel_sig.h"
 
 /**
 	@file kernel_cc.c
@@ -21,7 +21,7 @@
 
 
 
-static inline int spin_trylock(Mutex* lock, int spin)
+int spin_trylock(Mutex* lock, int spin)
 {
 #ifdef __STDC_NO_ATOMICS__
   while(__atomic_test_and_set(lock,__ATOMIC_ACQUIRE)) {
@@ -44,6 +44,20 @@ static inline int spin_trylock(Mutex* lock, int spin)
 #endif
 }
 
+void spin_lock(Mutex* lock)
+{
+	while(! spin_trylock(lock, 10000));
+}
+
+void spin_unlock(Mutex* lock)
+{
+#ifdef __STDC_NO_ATOMICS__
+  __atomic_clear(lock, __ATOMIC_RELEASE);
+#else
+  atomic_flag_clear_explicit(lock, memory_order_release);
+#endif	
+}
+
 
 /*
  	Pre-emption aware mutex.
@@ -60,21 +74,16 @@ static inline int spin_trylock(Mutex* lock, int spin)
  */
 void Mutex_Lock(Mutex* lock)
 {
-#define MUTEX_SPINS 1000
-	while(! spin_trylock(lock, MUTEX_SPINS))
-      	if(get_core_preemption())
+	while(! spin_trylock(lock, 1000))
+      	if(get_core_preemption()) {
       		yield(SCHED_MUTEX);
-#undef MUTEX_SPINS
+      	}
 }
 
 
 void Mutex_Unlock(Mutex* lock)
 {
-#ifdef __STDC_NO_ATOMICS__
-  __atomic_clear(lock, __ATOMIC_RELEASE);
-#else
-  atomic_flag_clear_explicit(lock, memory_order_release);
-#endif
+	spin_unlock(lock);
 }
 
 
@@ -103,13 +112,17 @@ static inline void cv_ensure_init(CondVar* cv) {
 int Cond_Wait(Mutex* mutex, CondVar* cv)
 {
 	cv_ensure_init(cv);
-	return wqueue_wait((wait_queue*) cv, mutex, NO_TIMEOUT);
+	int retval = wqueue_wait((wait_queue*) cv, mutex, NO_TIMEOUT);
+	check_sigs();
+	return retval;
 }
 
 int Cond_TimedWait(Mutex* mutex, CondVar* cv, timeout_t timeout)
 {
 	cv_ensure_init(cv);
-	return wqueue_wait((wait_queue*) cv, mutex, timeout*1000ul);
+	int retval = wqueue_wait((wait_queue*) cv, mutex, timeout*1000ul);
+	check_sigs();
+	return retval;
 }
 
 
@@ -183,7 +196,8 @@ int kernel_timedwait(wait_queue* wq, TimerDuration timeout)
 	kernel_sem++;
 	wqueue_signal(&ksem_queue);
 
-	/* Enter the wait queue */
+	/* Enter the wait queue WITH PREEMPTION ON, since we will attempt to take
+	   kernel_mutex. */
 	int signalled = wqueue_wait(wq, &kernel_mutex, timeout);
 
 	/* Reacquire kernel semaphore */

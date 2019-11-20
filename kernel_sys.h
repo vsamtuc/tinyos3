@@ -27,6 +27,7 @@ SYSCALL(Exec, int, (Task task, int argl, void* args), (task, argl, args))\
 SYSCALLV(Exit, (int exitval), (exitval))\
 SYSCALL(GetPid, int, (void), ())\
 SYSCALL(GetPPid, int, (void), ())\
+SYSCALL(Kill, int, (Pid_t pid), (pid))\
 SYSCALL(WaitChild, Pid_t, (Pid_t proc, int* exitval), (proc, exitval))\
 SYSCALL(CreateThread, Tid_t, (Task task, int argl, void* args), (task, argl, args))\
 SYSCALL(ThreadSelf, Tid_t, (void), ())\

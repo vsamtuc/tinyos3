@@ -2,9 +2,10 @@
 #include <assert.h>
 #include <sys/mman.h>
 
+#include "tinyos.h"
 #include "kernel_proc.h"
 #include "kernel_sched.h"
-#include "tinyos.h"
+#include "kernel_sig.h"
 
 #ifndef NVALGRIND
 #include <valgrind/valgrind.h>
@@ -79,12 +80,12 @@ Mutex sched_spinlock = MUTEX_INIT;
 
 static inline void sched_lock()
 {
-	Mutex_Lock(&sched_spinlock);
+	spin_lock(&sched_spinlock);
 }
 
 static inline void sched_unlock()
 {
-	Mutex_Unlock(&sched_spinlock);
+	spin_unlock(&sched_spinlock);
 }
 
 
@@ -226,9 +227,9 @@ TCB* spawn_thread(PCB* pcb, void (*func)())
 #endif
 
 	/* increase the count of active threads */
-	Mutex_Lock(&active_threads_spinlock);
+	spin_lock(&active_threads_spinlock);
 	active_threads++;
-	Mutex_Unlock(&active_threads_spinlock);
+	spin_unlock(&active_threads_spinlock);
 
 	return tcb;
 }
@@ -243,9 +244,9 @@ void release_thread(TCB* tcb)
 #endif
 
 	free_thread(tcb, THREAD_SIZE);
-	Mutex_Lock(&active_threads_spinlock);
+	spin_lock(&active_threads_spinlock);
 	active_threads--;
-	Mutex_Unlock(&active_threads_spinlock);
+	spin_unlock(&active_threads_spinlock);
 }
 
 
@@ -529,7 +530,7 @@ int wqueue_wait(wait_queue* wqueue, Mutex* wmx, TimerDuration timeout)
 	rlist_push_back(& wqueue->thread_list, &current->wqueue_node);
 
 	/* Release wmx */
-	if (wmx != NULL)  Mutex_Unlock(wmx);
+	if (wmx != NULL)  spin_unlock(wmx);
 
 	/* call this to schedule someone else */
 	sched_yield(STOPPED, wqueue->wchan->cause, timeout);
@@ -541,7 +542,7 @@ int wqueue_wait(wait_queue* wqueue, Mutex* wmx, TimerDuration timeout)
 	if(preempt) preempt_on;
 
 	/* Reacquire mutex */
-	if(wmx) Mutex_Lock(wmx);
+	if(wmx) spin_lock(wmx);
 
 	return signalled;
 }
@@ -597,11 +598,16 @@ void wqueue_broadcast(wait_queue* wqueue)
 ============================================================ */ 
 
 /* Interrupt handler for ALARM */
-void yield_handler() { yield(SCHED_QUANTUM); }
+void yield_handler() 
+{
+	yield(SCHED_QUANTUM); 
+	if(get_core_preemption()==1) check_sigs();
+}
 
 /* Interrupt handle for inter-core interrupts */
 void ici_handler()
 { /* noop for now... */
+	if(get_core_preemption()==1) check_sigs();
 }
 
 

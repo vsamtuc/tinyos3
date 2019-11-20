@@ -2,6 +2,7 @@
 #include "tinyos.h"
 #include "kernel_sys.h"
 #include "kernel_cc.h"
+#include "kernel_sig.h"
 
 #ifndef NVALGRIND
 #include <valgrind/valgrind.h>
@@ -13,12 +14,15 @@
 
 
 #define PRE_CALL \
+assert(get_core_preemption()==1);\
+check_sigs();\
 kernel_lock();\
 
 
-
 #define POST_CALL \
+assert(get_core_preemption()==1);\
 kernel_unlock();\
+check_sigs();\
 
 
 /* with return */
