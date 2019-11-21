@@ -113,11 +113,17 @@ struct wait_queue;
   are stored all the metadata that relate to the thread.
 */
 typedef struct thread_control_block {
+
+	/* These fields are PUBLIC and can be read/changed outside the scheduler */
+
 	PCB* owner_pcb; /**< @brief This is null for a free TCB */
-
 	void (*thread_func)(); /**< @brief The initial function executed by this thread */
-	cpu_context_t context; /**< @brief The thread context */
+	void* ss_sp;		   /**< @brief Pointer to the stack */
+	size_t ss_size;			/**< @brief The stack size */
 
+	/* All these fields are private and should only be accessed by the scheduler */
+
+	cpu_context_t context; /**< @brief The thread context */
 	Thread_type type;     /**< @brief The type of thread */
 	Thread_state state;   /**< @brief The state of the thread */
 	Thread_phase phase;   /**< @brief The phase of the thread */

@@ -296,12 +296,24 @@ void cpu_initialize_context(cpu_context_t* ctx, void* ss_sp, size_t ss_size, voi
 	@brief Switch the CPU context.
 
 	Save the current context into @c oldctx and load the contents of @c newctx
-	into the CPU.
+	into the CPU. Note that, one of these two pointers is NULL, in which case
+	the corresponding operation is not permitted.
 
 	@param oldctx pointer to the storage for the old context
 	@param newctx pointer to the new context to be loaded
 */
 void cpu_swap_context(cpu_context_t* oldctx, cpu_context_t* newctx);
+
+
+/**	
+	@brief The cpu architecture page size.
+
+ 	Currently this is a macro specific to the Intel Pentium architecture.
+
+ 	@todo it could be replaced by a function.
+*/
+#define SYSTEM_PAGE_SIZE (1 << 12)
+
 
 
 /********************************************************************************

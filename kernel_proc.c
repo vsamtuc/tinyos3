@@ -5,6 +5,10 @@
 #include "kernel_proc.h"
 #include "kernel_streams.h"
 
+#ifndef NVALGRIND
+#include <valgrind/valgrind.h>
+#endif
+
 
 /* 
  The process table and related system calls:
@@ -40,6 +44,7 @@ static inline void initialize_PCB(PCB* pcb)
   pcb->pstate = FREE;
   pcb->argl = 0;
   pcb->args = NULL;
+  pcb->vfork_state = NULL;
 
   for(int i=0;i<MAX_FILEID;i++)
     pcb->FIDT[i] = NULL;
@@ -302,6 +307,7 @@ Pid_t sys_WaitChild(Pid_t cpid, int* status)
 
 }
 
+void restore_vfork(PCB*);
 
 void sys_Exit(int exitval)
 {
@@ -357,14 +363,175 @@ void sys_Exit(int exitval)
   curproc->exitval = exitval;
 
   /* Bye-bye cruel world */
+  restore_vfork(curproc);
   kernel_unlock();
   exit_thread();
 }
-
 
 
 Fid_t sys_OpenInfo()
 {
 	return NOFILE;
 }
+
+
+struct vfork_co_state
+{
+	cpu_context_t thread_ctx;
+	void* region_top;
+	size_t region_size;
+	void* stack;
+
+	/* coroutine stuff */
+	cpu_context_t co_ctx;
+	void* co_ss_sp;
+};
+
+void vfork_call_co(cpu_context_t* save_ctx, struct vfork_co_state* state)
+{
+	/* 
+		Take the stack frame of this call as the start of the region to save.
+		To do this, we need to take enough space for the top of the stack
+		at the moment that cpu_swap_context() actually switches context.
+
+		We estimate this to be the base of the current stack frame minus
+		another 256 bytes. Then, we round down to align with the page size.
+	 */
+	state->region_top = (void*)(
+			(uintptr_t)(__builtin_frame_address(0) - 256) 
+		& 
+			~((uintptr_t)SYSTEM_PAGE_SIZE-1)
+		);
+	state->region_size = CURTHREAD->ss_size - (state->region_top - CURTHREAD->ss_sp);
+	fprintf(stderr,"Region size to save = %lu\n", state->region_size);
+	cpu_swap_context(save_ctx, & state->co_ctx);
+}
+
+void restore_vfork(PCB* pcb)
+{
+	struct vfork_co_state* state = pcb->vfork_state;
+	if(state) {
+		pcb->vfork_state = NULL;
+		vfork_call_co(NULL, state);
+	}
+}
+
+static void vfork_co_func()
+{
+	struct vfork_co_state* state = CURPROC->vfork_state;
+
+	/* save the active stack region of the current thread */
+	state->stack = aligned_alloc(SYSTEM_PAGE_SIZE, state->region_size);
+	memcpy(state->stack, state->region_top, state->region_size);
+
+	/* Prepare for a return into the parent context */
+	PCB* parent = CURPROC->parent;
+
+	/* yield to the thread */
+	cpu_swap_context(& state->co_ctx, & state->thread_ctx);
+
+	/* restore the saved stack region */
+	memcpy(state->region_top, state->stack, state->region_size);
+	free(state->stack);
+
+	/* Prepare for a return into the child context */
+	CURPROC = parent;
+
+	/* yield to the thread */
+	cpu_swap_context(& state->co_ctx, & state->thread_ctx);
+}
+
+
+Pid_t sys_Vfork()
+{
+	PCB *curproc, *newproc;
+
+	/* The new process PCB */
+	newproc = acquire_PCB();
+
+	if(newproc == NULL) {
+		/* We have run out of PIDs! */
+		set_errcode(EAGAIN);
+		return NOPROC;
+	}
+
+	/* Clear the kill flag */
+	newproc->sigkill = 0;
+
+	/* We cannot fork 0 or init */
+	if(get_pid(newproc)<=1) {
+		release_PCB(newproc);
+		return NOPROC;
+	}
+	else
+	{
+		/* Inherit parent */
+		curproc = CURPROC;
+
+		/* Add new process to the parent's child list */
+		newproc->parent = curproc;
+		rlist_push_front(& curproc->children_list, & newproc->children_node);
+
+		/* Inherit file streams from parent */
+		for(int i=0; i<MAX_FILEID; i++) {
+		   newproc->FIDT[i] = curproc->FIDT[i];
+		   if(newproc->FIDT[i])
+		      FCB_incref(newproc->FIDT[i]);
+		}
+	}
+
+
+	/* Set the main thread's function to NULL */
+	newproc->main_task = curproc->main_task;
+
+  	/* Copy the arguments to new storage, owned by the new process */
+  	newproc->argl = curproc->argl;
+  	if(curproc->args!=NULL) {
+    	newproc->args = malloc(newproc->argl);
+    	memcpy(newproc->args, curproc->args, newproc->argl);
+  	}
+  	else
+		newproc->args=NULL;
+
+
+	/* Allocate the vfork coroutine state */
+	//struct vfork_co_state* state = new_vfork_co(newproc);
+
+	struct vfork_co_state* state = (struct vfork_co_state*) malloc(sizeof(struct vfork_co_state));
+	newproc->vfork_state = state;
+
+	/* allocate a very small stack for this co-routine, just 2 pages!  */
+	// getcontext(& state->thread_ctx);
+	size_t co_ss_size = SYSTEM_PAGE_SIZE << 1;
+	state->co_ss_sp = aligned_alloc(SYSTEM_PAGE_SIZE, co_ss_size);
+	cpu_initialize_context(&state->co_ctx, state->co_ss_sp, co_ss_size, vfork_co_func);
+
+#ifndef NVALGRIND
+	int valgrind_stack_id = VALGRIND_STACK_REGISTER(state->co_ss_sp, state->co_ss_sp + co_ss_size);
+#endif
+
+	/*==================
+		Switch to the coroutine. 
+		The saved context will be restored twice. The first time it will
+		be restored as the child and the second time it will be restored as 
+		the parent.
+	====================*/
+	CURPROC = newproc;
+	vfork_call_co(&state->thread_ctx, state);
+
+	if(CURPROC == newproc) {
+		return 0;
+	} else {
+		/* stack is restored, clean up coroutine state */
+#ifndef NVALGRIND
+	VALGRIND_STACK_DEREGISTER(valgrind_stack_id);
+#endif
+		free(state->co_ss_sp);
+		free(state);
+
+		return get_pid(newproc);
+	}
+}
+
+
 

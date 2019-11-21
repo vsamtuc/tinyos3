@@ -2351,8 +2351,28 @@ BOOT_TEST(test_error_kill_nonexistent, "Test that it is an error to send kill to
 }
 
 
+BOOT_TEST(test_fork, "Test forking")
+{
+	MSG("Hello for pid=%d\n", GetPid());
+
+	Pid_t pid = Vfork();
+	if(pid==0) {
+		MSG("In the child, we have pid=%d\n", GetPid());
+		fibo(12);
+		Exit(11);
+	}
+
+	MSG("In the parent, we have pid=%d\n", GetPid());
+	int status;
+	ASSERT(WaitChild(pid, &status)==pid);
+	ASSERT(status==11);
+	return 0;
+}
+
+
 TEST_SUITE(signal_tests, "Tests for process signals")
 {
+	&test_fork,
 	&test_kill_ready,
 	&test_kill_sleeping,
 	&test_error_to_kill_init,

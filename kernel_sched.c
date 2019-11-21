@@ -127,9 +127,6 @@ static inline void sched_unlock()
 volatile unsigned int active_threads = 0;
 Mutex active_threads_spinlock = MUTEX_INIT;
 
-/* This is specific to Intel Pentium! */
-#define SYSTEM_PAGE_SIZE (1 << 12)
-
 /* The memory allocated for the TCB must be a multiple of SYSTEM_PAGE_SIZE */
 #define THREAD_TCB_SIZE \
 	(((sizeof(TCB) + SYSTEM_PAGE_SIZE - 1) / SYSTEM_PAGE_SIZE) * SYSTEM_PAGE_SIZE)
@@ -225,6 +222,9 @@ TCB* spawn_thread(PCB* pcb, void (*func)())
 	/* Init the context */
 	tcb->thread_func = func;
 	cpu_initialize_context(&tcb->context, sp, THREAD_STACK_SIZE, thread_start);
+
+	tcb->ss_sp = sp;
+	tcb->ss_size = THREAD_STACK_SIZE;
 
 #ifndef NVALGRIND
 	tcb->valgrind_stack_id = VALGRIND_STACK_REGISTER(sp, sp + THREAD_STACK_SIZE);

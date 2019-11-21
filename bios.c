@@ -839,7 +839,8 @@ void cpu_initialize_context(cpu_context_t* ctx, void* ss_sp, size_t ss_size, voi
 
 void cpu_swap_context(cpu_context_t* oldctx, cpu_context_t* newctx)
 {
-	swapcontext(oldctx, newctx);
+	if(oldctx==NULL) setcontext(newctx); else if(newctx==NULL) getcontext(oldctx); 
+	else swapcontext(oldctx, newctx);
 }
 
 
