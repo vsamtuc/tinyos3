@@ -12,6 +12,7 @@
 
 /* 
  The process table and related system calls:
+ - Vfork
  - Exec
  - Exit
  - WaitPid
@@ -20,8 +21,16 @@
 
  */
 
-/* The process table */
+/*==============================
+
+  Process table 
+
+ ============================== */
+
+/* The process table is implemented as an array of PCB */
 PCB PT[MAX_PROC];
+
+/* Number of used pids */
 unsigned int process_count;
 
 /* wait channels */
@@ -30,6 +39,7 @@ static wait_channel wchan_wait_child = { SCHED_JOIN, "wait_child" };
 
 PCB* get_pcb(Pid_t pid)
 {
+  if(pid<0 || pid>=MAX_PROC) return NULL;
   return PT[pid].pstate==FREE ? NULL : &PT[pid];
 }
 
@@ -78,7 +88,7 @@ void initialize_processes()
   process_count = 0;
 
   /* Execute a null "idle" process */
-  if(sys_Exec(NULL,0,NULL)!=0)
+  if(sys_Spawn(NULL,0,NULL)!=0)
     FATAL("The scheduler process does not have pid==0");
 }
 
@@ -112,110 +122,149 @@ void release_PCB(PCB* pcb)
 }
 
 
-/*
- *
- * Process creation
- *
- */
+Fid_t sys_OpenInfo()
+{
+	return NOFILE;
+}
+
+
+/*=============================================
+ 
+ Program execution
+ 
+ ============================================*/
 
 /*
-	This function is provided as an argument to spawn,
+	This function is provided as an argument to Spawn,
 	to execute the main thread of a process.
 */
-void start_main_thread()
+static void start_main_thread()
 {
-  int exitval;
+	int exitval;
 
-  Task call =  CURPROC->main_task;
-  int argl = CURPROC->argl;
-  void* args = CURPROC->args;
+	Task call =  CURPROC->main_task;
+	int argl = CURPROC->argl;
+	void* args = CURPROC->args;
 
-  exitval = call(argl,args);
-  Exit(exitval);
+	exitval = call(argl,args);
+	Exit(exitval);
 }
+
+
+/* 
+	Create and wake up the thread for the main function. 
+*/
+void process_exec(PCB* proc, Task call, int argl, void* args)
+{
+	/* Set the main thread's function */
+	proc->main_task = call;
+
+	/* Copy the arguments to new storage, owned by the new process */
+	proc->argl = argl;
+	if(args!=NULL) {
+		proc->args = malloc(argl);
+		memcpy(proc->args, args, argl);
+	}
+	else
+		proc->args=NULL;
+
+	if(call != NULL) {
+		proc->main_thread = spawn_thread(proc, start_main_thread);
+		wakeup(proc->main_thread);
+	}
+}
+
+
+
+void sys_Exec(Task call, int argl, void* args)
+{
+
+}
+
+
+
+/*=============================================
+ 
+ Process creation
+ 
+ ============================================*/
+
+
+
+void process_init_resources(PCB* newproc, PCB* parent)
+{
+	/* link to parent */
+	newproc->parent = parent;
+
+	/* Clear the kill flag */
+	newproc->sigkill = 0;
+
+	if(parent==NULL) return;
+
+	/* link from parent */
+	rlist_push_front(& parent->children_list, & newproc->children_node);
+
+	/* Inherit file streams from parent */
+	for(int i=0; i<MAX_FILEID; i++) {
+		   newproc->FIDT[i] = parent->FIDT[i];
+		   if(newproc->FIDT[i])
+		      FCB_incref(newproc->FIDT[i]);
+	}
+}
+
+
 
 
 /*
 	System call to create a new process.
  */
-Pid_t sys_Exec(Task call, int argl, void* args)
+Pid_t sys_Spawn(Task call, int argl, void* args)
 {
-  PCB *curproc, *newproc;
-  
-  /* The new process PCB */
-  newproc = acquire_PCB();
+	/* The new process PCB */
+	PCB* newproc = acquire_PCB();
 
 	if(newproc == NULL) {
 		/* We have run out of PIDs! */
 		set_errcode(EAGAIN);
-		goto finish;
+		return NOPROC;
 	}
 
-	/* Clear the kill flag */
-	newproc->sigkill = 0;
-
-	if(get_pid(newproc)<=1) {
+	if(get_pid(newproc)<=1) 
 		/* Processes with pid<=1 (the scheduler and the init process) 
 		   are parentless and are treated specially. */
-		newproc->parent = NULL;
-	}
+		process_init_resources(newproc, NULL);
 	else
-	{
-		/* Inherit parent */
-		curproc = CURPROC;
+		process_init_resources(newproc, CURPROC);
 
-		/* Add new process to the parent's child list */
-		newproc->parent = curproc;
-		rlist_push_front(& curproc->children_list, & newproc->children_node);
+	/* 
+		This must be the last thing we do, because once we wakeup the new thread it may run! 
+		So we need to have finished the initialization of the PCB.
+	*/
+	process_exec(newproc, call, argl, args);
 
-		/* Inherit file streams from parent */
-		for(int i=0; i<MAX_FILEID; i++) {
-		   newproc->FIDT[i] = curproc->FIDT[i];
-		   if(newproc->FIDT[i])
-		      FCB_incref(newproc->FIDT[i]);
-		}
-	}
-
-
-  /* Set the main thread's function */
-  newproc->main_task = call;
-
-  /* Copy the arguments to new storage, owned by the new process */
-  newproc->argl = argl;
-  if(args!=NULL) {
-    newproc->args = malloc(argl);
-    memcpy(newproc->args, args, argl);
-  }
-  else
-    newproc->args=NULL;
-
-  /* 
-    Create and wake up the thread for the main function. This must be the last thing
-    we do, because once we wakeup the new thread it may run! so we need to have finished
-    the initialization of the PCB.
-   */
-  if(call != NULL) {
-    newproc->main_thread = spawn_thread(newproc, start_main_thread);
-    wakeup(newproc->main_thread);
-  }
-
-
-finish:
-  return get_pid(newproc);
+	return get_pid(newproc);
 }
+
+
+
+/*=============================================
+ 
+	Getting information
+ 
+ ============================================*/
 
 
 
 /* System call */
 Pid_t sys_GetPid()
 {
-  return get_pid(CURPROC);
+  	return get_pid(CURPROC);
 }
 
 
 Pid_t sys_GetPPid()
 {
-  	return get_pid(CURPROC->parent);
+	return get_pid(CURPROC->parent);
 }
 
 
@@ -224,73 +273,110 @@ int sys_GetError()
 	return CURPROC->errcode;
 }
 
+
+/*=============================================
+ 
+ Wait on processes for state change
+ 
+ ============================================*/
+
+
 static void cleanup_zombie(PCB* pcb, int* status)
 {
-  if(status != NULL)
-    *status = pcb->exitval;
+	assert(pcb->pstate == ZOMBIE);
+	if(status != NULL)
+		*status = pcb->exitval;
 
-  rlist_remove(& pcb->children_node);
-  rlist_remove(& pcb->exited_node);
+	rlist_remove(& pcb->children_node);
+	rlist_remove(& pcb->exited_node);
 
-  release_PCB(pcb);
+	release_PCB(pcb);
+	assert(pcb->pstate == FREE);
 }
 
 
 
-static Pid_t wait_for_specific_child(Pid_t cpid, int* status)
+static Pid_t wait_for_specific_child(PCB* parent, Pid_t cpid, int* status)
 {
 
-  /* Legality checks */
-  if((cpid<0) || (cpid>=MAX_PROC)) {
-  	set_errcode(ESRCH);
-    cpid = NOPROC;
-    goto finish;
-  }
+	/* Legality checks */
+	if((cpid<0) || (cpid>=MAX_PROC)) {
+  		set_errcode(ESRCH);
+    	return NOPROC;
+	}
 
-  PCB* parent = CURPROC;
-  PCB* child = get_pcb(cpid);
-  if( child == NULL || child->parent != parent)
-  {
-  	set_errcode(ECHILD);
-    cpid = NOPROC;
-    goto finish;
-  }
+  	/* 
+  		Condition:
+  		child==NULL or child->parent!=parent or child->pstate==ZOMBIE  
 
-  /* Ok, child is a legal child of mine. Wait for it to exit. */
-  while(child->pstate == ALIVE)
-    kernel_wait(& parent->child_exit);
-  
-  cleanup_zombie(child, status);
-  
-finish:
-  return cpid;
+		Action:
+		if child==NULL || child->parent!=parent
+			return error ECHILD
+		else
+			cleanup and return status of child
+
+  		It is complicated to write the condition as an expression inside while(), 
+  		because get_pcb(cpid) may return a different thing every time a waiter is woken up! 
+  		We write it more verbosely as below:
+  	 */
+  	PCB* child;
+	while(1)
+	{
+  		child = get_pcb(cpid);
+
+  		/* If the condition is true proceed */
+  		if(child == NULL
+  			|| child->parent!=parent
+  			|| child->pstate == ZOMBIE
+  			)
+  			break;
+  		/* Else wait */
+		kernel_wait(& parent->child_exit);
+    }
+
+    /* This is the action */
+
+    /* error */
+	if( child == NULL || child->parent != parent)
+	{
+		set_errcode(ECHILD);
+		return NOPROC;
+	}
+
+	/* good case */
+	cleanup_zombie(child, status);  
+  	return cpid;
 }
 
 
-static Pid_t wait_for_any_child(int* status)
+static Pid_t wait_for_any_child(PCB* parent, int* status)
 {
-  Pid_t cpid;
+	/* 
+		Condition: parent has no children or some child is exited
+		Action:
+			If parent has no children
+				return error ECHILD
+			else
+				cleanup and return status of some exited child
+	*/
+	while(! is_rlist_empty(& parent->children_list)
+		&& is_rlist_empty(& parent->exited_list))
+	{
+		kernel_wait(& parent->child_exit);
+	}	
 
-  PCB* parent = CURPROC;
+  	/* Make sure I have children! */
+	if(is_rlist_empty(& parent->children_list)) {
+		set_errcode(ECHILD);
+		return NOPROC;
+	}
 
-  /* Make sure I have children! */
-  if(is_rlist_empty(& parent->children_list)) {
-  	set_errcode(ECHILD);
-    cpid = NOPROC;
-    goto finish;
-  }
+	PCB* child = parent->exited_list.next->pcb;
+	Pid_t cpid = get_pid(child);
+	assert(child->pstate == ZOMBIE);
+	cleanup_zombie(child, status);
 
-  while(is_rlist_empty(& parent->exited_list)) {
-    kernel_wait(& parent->child_exit);
-  }
-
-  PCB* child = parent->exited_list.next->pcb;
-  assert(child->pstate == ZOMBIE);
-  cpid = get_pid(child);
-  cleanup_zombie(child, status);
-
-finish:
-  return cpid;
+  	return cpid;
 }
 
 
@@ -298,19 +384,29 @@ Pid_t sys_WaitChild(Pid_t cpid, int* status)
 {
   /* Wait for specific child. */
   if(cpid != NOPROC) {
-    return wait_for_specific_child(cpid, status);
+    return wait_for_specific_child(CURPROC, cpid, status);
   }
   /* Wait for any child */
   else {
-    return wait_for_any_child(status);
+    return wait_for_any_child(CURPROC, status);
   }
 
 }
+
+
+/*=============================================
+ 
+	Process termination
+ 
+ ============================================*/
+
+
 
 void restore_vfork(PCB*);
 
 void sys_Exit(int exitval)
 {
+
   /* Right here, we must check that we are not the boot task. If we are, 
      we must wait until all processes exit. */
   if(sys_GetPid()==1) {
@@ -319,7 +415,13 @@ void sys_Exit(int exitval)
 
   PCB *curproc = CURPROC;  /* cache for efficiency */
 
+  /* Save the exit status */
+  curproc->exitval = exitval;
+
   /* Do all the other cleanup we want here, close files etc. */
+
+  /* Disconnect my main_thread */
+  curproc->main_thread = NULL;
   if(curproc->args) {
     free(curproc->args);
     curproc->args = NULL;
@@ -355,12 +457,9 @@ void sys_Exit(int exitval)
     kernel_broadcast(& curproc->parent->child_exit);
   }
 
-  /* Disconnect my main_thread */
-  curproc->main_thread = NULL;
 
   /* Now, mark the process as exited. */
   curproc->pstate = ZOMBIE;
-  curproc->exitval = exitval;
 
   /* Bye-bye cruel world */
   restore_vfork(curproc);
@@ -369,10 +468,14 @@ void sys_Exit(int exitval)
 }
 
 
-Fid_t sys_OpenInfo()
-{
-	return NOFILE;
-}
+
+
+
+/*=============================================
+ 
+	Change of executable in process
+ 
+ ============================================*/
 
 
 struct vfork_co_state
@@ -444,10 +547,8 @@ static void vfork_co_func()
 
 Pid_t sys_Vfork()
 {
-	PCB *curproc, *newproc;
-
 	/* The new process PCB */
-	newproc = acquire_PCB();
+	PCB* newproc = acquire_PCB();
 
 	if(newproc == NULL) {
 		/* We have run out of PIDs! */
@@ -455,47 +556,22 @@ Pid_t sys_Vfork()
 		return NOPROC;
 	}
 
-	/* Clear the kill flag */
-	newproc->sigkill = 0;
+	assert(get_pid(newproc)>1); /* Or else, who did we fork? */
+	assert(CURPROC!=NULL);
 
-	/* We cannot fork 0 or init */
-	if(get_pid(newproc)<=1) {
-		release_PCB(newproc);
-		return NOPROC;
-	}
-	else
-	{
-		/* Inherit parent */
-		curproc = CURPROC;
+	process_init_resources(newproc, CURPROC);
 
-		/* Add new process to the parent's child list */
-		newproc->parent = curproc;
-		rlist_push_front(& curproc->children_list, & newproc->children_node);
-
-		/* Inherit file streams from parent */
-		for(int i=0; i<MAX_FILEID; i++) {
-		   newproc->FIDT[i] = curproc->FIDT[i];
-		   if(newproc->FIDT[i])
-		      FCB_incref(newproc->FIDT[i]);
-		}
-	}
-
+  	/* 
+  		The main thread has already been executed, we do not need these!
+  		N.B. there is a possible race here, in addition with signals!
+  	 */
+  	newproc->argl = 0;
+	newproc->args=NULL;
 
 	/* Set the main thread's function to NULL */
-	newproc->main_task = curproc->main_task;
-
-  	/* Copy the arguments to new storage, owned by the new process */
-  	newproc->argl = curproc->argl;
-  	if(curproc->args!=NULL) {
-    	newproc->args = malloc(newproc->argl);
-    	memcpy(newproc->args, curproc->args, newproc->argl);
-  	}
-  	else
-		newproc->args=NULL;
-
+	newproc->main_task = CURPROC->main_task;
 
 	/* Allocate the vfork coroutine state */
-	//struct vfork_co_state* state = new_vfork_co(newproc);
 
 	struct vfork_co_state* state = (struct vfork_co_state*) malloc(sizeof(struct vfork_co_state));
 	newproc->vfork_state = state;

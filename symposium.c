@@ -181,7 +181,7 @@ int SymposiumOfProcesses(int argl, void* args)
     philosopher_args Args;
     Args.i = i;
     Args.S = &S;
-    Exec(PhilosopherProcess, sizeof(Args), &Args);
+    Spawn(PhilosopherProcess, sizeof(Args), &Args);
   }  
 
   /* Wait for philosophers to exit */  

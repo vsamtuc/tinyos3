@@ -163,7 +163,7 @@ int Execute(Program prog, size_t argc, const char** argv)
 	argvpack(args+sizeof(prog), argc, argv);
 
 	/* Execute the process */
-	return Exec(exec_wrapper, argl, args);
+	return Spawn(exec_wrapper, argl, args);
 }
 
 

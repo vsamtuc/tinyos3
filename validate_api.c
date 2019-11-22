@@ -126,7 +126,7 @@ BOOT_TEST(test_waitchild_error_on_invalid_pid,
 		return 0;
 	}
 	waitchild_error();
-	Pid_t cpid = Exec(subprocess, 0, NULL);
+	Pid_t cpid = Spawn(subprocess, 0, NULL);
 	ASSERT(WaitChild(NOPROC, NULL)==cpid);
 	return 0;
 }
@@ -138,13 +138,13 @@ BOOT_TEST(test_waitchild_error_on_nonchild,
 	)
 {
 	int void_child(int argl, void* args) { return 0; }
-	Pid_t cpid = Exec(void_child, 0, NULL);
+	Pid_t cpid = Spawn(void_child, 0, NULL);
 	int bad_child(int argl, void* args)
 	{
 		ASSERT_ERRNO(WaitChild(cpid, NULL)==NOPROC, ECHILD);
 		return 0;
 	}
-	Pid_t badpid = Exec(bad_child, 0, NULL);
+	Pid_t badpid = Spawn(bad_child, 0, NULL);
 	ASSERT(badpid != NOPROC);
 	ASSERT(WaitChild(badpid, NULL)==badpid);
 	ASSERT(WaitChild(cpid, NULL)==cpid);
@@ -159,8 +159,8 @@ struct test_pid_rec {
 };
 
 
-BOOT_TEST(test_exec_getpid_wait, 
-	"Test that Exec returns the same pid as the child sees\n"
+BOOT_TEST(test_spawn_getpid_wait, 
+	"Test that Spawn returns the same pid as the child sees\n"
 	"by calling GetPid(). Also, that WaitChild with a given pid\n"
 	"returns the correct status.",
 	.timeout=20
@@ -184,9 +184,9 @@ BOOT_TEST(test_exec_getpid_wait,
 			/* Prepare rec for child */
 			struct test_pid_rec rec;
 			rec.level = prec->level - 1;
-			/* Exec child */
+			/* Spawn child */
 			struct test_pid_rec* arg = &rec;
-			Pid_t cpid = Exec(test_exec_getpid_wait.boot, sizeof(arg), &arg);
+			Pid_t cpid = Spawn(test_spawn_getpid_wait.boot, sizeof(arg), &arg);
 			ASSERT(cpid != NOPROC);
 			/* Wait for child and verify */
 			if(cpid != NOPROC) {
@@ -202,8 +202,8 @@ BOOT_TEST(test_exec_getpid_wait,
 
 
 
-BOOT_TEST(test_exec_copies_arguments,
-	"Test that Exec creates of copy of the arguments of the new process."
+BOOT_TEST(test_spawn_copies_arguments,
+	"Test that Spawn creates of copy of the arguments of the new process."
 	)
 {
 	int child(int argl, void* args)
@@ -214,7 +214,7 @@ BOOT_TEST(test_exec_copies_arguments,
 
 	Pid_t cpid;
 	int value = 0;
-	ASSERT((cpid = Exec(child, sizeof(value), &value))!=NOPROC);
+	ASSERT((cpid = Spawn(child, sizeof(value), &value))!=NOPROC);
 	WaitChild(cpid, NULL);
 	ASSERT(value==0);
 	return 0;
@@ -245,7 +245,7 @@ BOOT_TEST(test_wait_for_any_child,
 		for(int i=0; i<NCHILDREN; i++) {
 			struct test_pid_rec* arg = &rec[i];
 			rec[i].level = prec->level - 1;
-			Pid_t cpid = Exec(test_wait_for_any_child.boot, sizeof(arg), &arg);
+			Pid_t cpid = Spawn(test_wait_for_any_child.boot, sizeof(arg), &arg);
 			ASSERT(cpid!=NOPROC);
 		}
 
@@ -280,7 +280,7 @@ BOOT_TEST(test_exit_returns_status,
 	}
 	Pid_t children[100];
 	for(int i=0;i<100;i++)
-		children[i] = Exec(child, 0, NULL);
+		children[i] = Spawn(child, 0, NULL);
 
 	for(int i=0;i<100;i++) {
 		int status;
@@ -300,7 +300,7 @@ BOOT_TEST(test_main_return_returns_status,
 	const int N=10;
 	Pid_t children[N];
 	for(int i=0;i<N;i++)
-		children[i] = Exec(child, 0, NULL);
+		children[i] = Spawn(child, 0, NULL);
 	for(int i=0;i<N;i++) {
 		int status;
 		WaitChild(children[i], &status);
@@ -321,13 +321,13 @@ BOOT_TEST(test_orphans_adopted_by_init,
 	int child(int arg, void* args)
 	{
 		for(int i=0;i<5;i++)
-			ASSERT(Exec(grandchild, 0, NULL)!=NOPROC);
+			ASSERT(Spawn(grandchild, 0, NULL)!=NOPROC);
 		/* We do note WaitChild the children, they become orphans! */
 		return 100;
 	}
 
 	for(int i=0;i<3; i++)
-		ASSERT(Exec(child,0,NULL)!=NOPROC);
+		ASSERT(Spawn(child,0,NULL)!=NOPROC);
 
 
 	/* Now wait for 18 children (3 child + 15 grandchild) */
@@ -397,10 +397,10 @@ BOOT_TEST(test_cond_timedwait_timeout,
 	}
 
 	for(timeout_t t=100; t < 400; t+=100) {
-		Exec(do_timeout, sizeof(t), &t);
+		Spawn(do_timeout, sizeof(t), &t);
 	}
 	for(timeout_t t=150; t < 400; t+=100) {
-		Exec(do_timeout, sizeof(t), &t);
+		Spawn(do_timeout, sizeof(t), &t);
 	}
 
 	/* 
@@ -434,7 +434,7 @@ BOOT_TEST(test_cond_timedwait_signal,
 		return 0;
 	}
 
-	Pid_t child = Exec(long_blocking, 0, NULL);
+	Pid_t child = Spawn(long_blocking, 0, NULL);
 	Mutex_Lock(&m);
 	while(! flag)
 		Cond_Wait(&m, &cv);
@@ -469,7 +469,7 @@ BOOT_TEST(test_cond_timedwait_broadcast,
 	const int N=100;  // spawn 100 children
 
 	// create N children
-	for(int i=0; i<N; i++) Exec(long_blocking, 0, NULL);
+	for(int i=0; i<N; i++) Spawn(long_blocking, 0, NULL);
 
 	Mutex_Lock(&m);
 	// wait for all children to sleep
@@ -724,7 +724,7 @@ BOOT_TEST(test_child_inherits_files,
 	}
 
 	sendme(0, "Hello child");
-	Pid_t cpid = Exec(greeted_child, 0, NULL);
+	Pid_t cpid = Spawn(greeted_child, 0, NULL);
 	ASSERT(Close(0)==0);
 	ASSERT(Close(fterm)==0);
 	sendme(0, "Hello again");
@@ -882,8 +882,8 @@ TEST_SUITE(basic_tests,
 	&test_pid_of_init_is_one,
 	&test_waitchild_error_on_nonchild,
 	&test_waitchild_error_on_invalid_pid,
-	&test_exec_getpid_wait,
-	&test_exec_copies_arguments,
+	&test_spawn_getpid_wait,
+	&test_spawn_copies_arguments,
 	&test_exit_returns_status,
 	&test_main_return_returns_status,
 	&test_wait_for_any_child,
@@ -1078,7 +1078,7 @@ BOOT_TEST(test_exit_many_threads,
 		return 0;
 	}
 
-	Exec(mthread, 0, NULL);
+	Spawn(mthread, 0, NULL);
 	ASSERT(WaitChild(NOPROC, NULL)!=NOPROC);
 
 	return 0;
@@ -1095,7 +1095,7 @@ BOOT_TEST(test_nonexit_cleanup,
 		return 0;
 	}
 
-	Exec(mthread, 0, NULL);
+	Spawn(mthread, 0, NULL);
 	ASSERT(WaitChild(NOPROC, NULL)!=NOPROC);
 
 	return 0;
@@ -1314,8 +1314,8 @@ BOOT_TEST(test_pipe_single_producer,
 	}
 
 	int N = 10000000;
-	ASSERT(Exec(data_consumer, sizeof(N), &N)!=NOPROC);
-	ASSERT(Exec(data_producer, sizeof(N), &N)!=NOPROC);
+	ASSERT(Spawn(data_consumer, sizeof(N), &N)!=NOPROC);
+	ASSERT(Spawn(data_producer, sizeof(N), &N)!=NOPROC);
 
 	Close(0);
 	Close(1);
@@ -1351,9 +1351,9 @@ BOOT_TEST(test_pipe_multi_producer,
 
 	int N = 1000000;
 	for(int i=0;i<10;i++)
-		ASSERT(Exec(data_producer, sizeof(N), &N)!=NOPROC);
+		ASSERT(Spawn(data_producer, sizeof(N), &N)!=NOPROC);
 	N = 10*N;
-	ASSERT(Exec(data_consumer, sizeof(N), &N)!=NOPROC);
+	ASSERT(Spawn(data_consumer, sizeof(N), &N)!=NOPROC);
 
 	Close(0);
 	Close(1);
@@ -1767,8 +1767,8 @@ BOOT_TEST(test_socket_single_producer,
 	}
 
 	int N = 10000000;
-	ASSERT(Exec(data_consumer, sizeof(N), &N)!=NOPROC);
-	ASSERT(Exec(data_producer, sizeof(N), &N)!=NOPROC);
+	ASSERT(Spawn(data_consumer, sizeof(N), &N)!=NOPROC);
+	ASSERT(Spawn(data_producer, sizeof(N), &N)!=NOPROC);
 
 	Close(0);
 	Close(1);
@@ -1808,9 +1808,9 @@ BOOT_TEST(test_socket_multi_producer,
 
 	int N = 1000000;
 	for(int i=0;i<10;i++)
-		ASSERT(Exec(data_producer, sizeof(N), &N)!=NOPROC);
+		ASSERT(Spawn(data_producer, sizeof(N), &N)!=NOPROC);
 	N = 10*N;
-	ASSERT(Exec(data_consumer, sizeof(N), &N)!=NOPROC);
+	ASSERT(Spawn(data_consumer, sizeof(N), &N)!=NOPROC);
 
 	Close(0);
 	Close(1);
@@ -1966,7 +1966,7 @@ unsigned int get_timestamp()
 
 
 BOOT_TEST(test_multitask,
-	"Test that Exec returns before execution of the child is finished."
+	"Test that Spawn returns before execution of the child is finished."
 	)
 {
 	unsigned int tschild;
@@ -1977,7 +1977,7 @@ BOOT_TEST(test_multitask,
 		return f>10;
 	}	
 
-	Exec(child, 0, NULL);
+	Spawn(child, 0, NULL);
 	unsigned int ts = get_timestamp();
 	WaitChild(NOPROC, NULL);
 
@@ -2011,7 +2011,7 @@ BOOT_TEST(test_preemption,
 		args[0] = &start[i];
 		args[1] = &end[i];
 
-		Exec(child, sizeof(args), args);
+		Spawn(child, sizeof(args), args);
 	}
 
 
@@ -2064,8 +2064,8 @@ BARE_TEST(test_parallelism,
 	int run_twice(int argl, void* args)
 	{
 		mark_time(&tstart);
-		Exec(compute_child, 0, NULL);
-		Exec(compute_child, 0, NULL);
+		Spawn(compute_child, 0, NULL);
+		Spawn(compute_child, 0, NULL);
 		WaitChild(NOPROC, NULL);
 		WaitChild(NOPROC, NULL);
 		Trun = time_since(&tstart);
@@ -2159,9 +2159,9 @@ BOOT_TEST(test_input_concurrency,
 
 
 	open_at_0(0);
-	Pid_t p0 = Exec(input_line, 0, NULL);
+	Pid_t p0 = Spawn(input_line, 0, NULL);
 	open_at_0(1);
-	Pid_t p1 = Exec(input_line, 0, NULL);
+	Pid_t p1 = Spawn(input_line, 0, NULL);
 
 	sendme(0, "Hello ");
 	sendme(1, "Hellow world\n");
@@ -2194,7 +2194,7 @@ BOOT_TEST(test_term_input_driver_interrupt,
 	{
 		for(int I=0;I<ntimes; I++) {
 			mark_time(&t0);
-			Pid_t pid = Exec(compute_child,0,NULL);
+			Pid_t pid = Spawn(compute_child,0,NULL);
 			ASSERT(pid!=NOPROC);
 			ASSERT(WaitChild(pid, NULL)==pid);
 			double Trun = time_since(&t0);
@@ -2211,7 +2211,7 @@ BOOT_TEST(test_term_input_driver_interrupt,
 	void run_with_io(int nioproc)
 	{
 		for(int i=0; i< nioproc; i++)
-			ASSERT(Exec(input_char, 0, NULL)!=NOPROC);
+			ASSERT(Spawn(input_char, 0, NULL)!=NOPROC);
 
 		/* If the readers are polling as the compute task runs, 
 		   this will take a long time! */
@@ -2285,7 +2285,7 @@ BOOT_TEST(test_kill_ready, "Test the kill syscall on a compute-intensive process
 		return 0;
 	}
 
-	Pid_t child = Exec(very_slow, 0, NULL);
+	Pid_t child = Spawn(very_slow, 0, NULL);
 
 	/* We take a short nap! */
 	CondVar cond = COND_INIT;
@@ -2316,7 +2316,7 @@ BOOT_TEST(test_kill_sleeping, "Test the kill syscall on an io-intensive process"
 	}
 
 	Mutex_Lock(&smx);
-	Pid_t child = Exec(take_a_nap, 0, NULL);
+	Pid_t child = Spawn(take_a_nap, 0, NULL);
 
 	/* We take a short nap! */
 	CondVar cond = COND_INIT;

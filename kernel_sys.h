@@ -24,7 +24,7 @@
 #define SYSCALLS \
 SYSCALL(Vfork, Pid_t, (void), ())\
 SYSCALL(GetError, int, (void), ())\
-SYSCALL(Exec, int, (Task task, int argl, void* args), (task, argl, args))\
+SYSCALL(Spawn, int, (Task task, int argl, void* args), (task, argl, args))\
 SYSCALLV(Exit, (int exitval), (exitval))\
 SYSCALL(GetPid, int, (void), ())\
 SYSCALL(GetPPid, int, (void), ())\

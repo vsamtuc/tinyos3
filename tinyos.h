@@ -232,7 +232,7 @@ void Cond_Broadcast(CondVar*);
 /** @brief The signature for the main function of a process. 
 
    New processes are created by calling a starting function, whose signature is Task. 
-   @see Exec
+   @see Spawn
   */
 typedef int (*Task)(int, void*);
 
@@ -242,7 +242,7 @@ typedef int (*Task)(int, void*);
   This call creates a new process by calling function @c task, 
   passing it a byte array. The byte array is described by a pair
   of  (int length,void* position), and is a _copy_ of the
-  byte array defined by the (argl, args) pair of arguments to Exec.
+  byte array defined by the (argl, args) pair of arguments to `Spawn`.
   
   
   - The new process inherits all file ids of the current process.
@@ -259,7 +259,7 @@ typedef int (*Task)(int, void*);
      Possible errors:
    -  **@c EAGAIN** The maximum number of processes has been reached.
   */
-Pid_t Exec(Task task, int argl, void* args);
+Pid_t Spawn(Task task, int argl, void* args);
 
 
 /** @brief Exit the current process.
@@ -272,7 +272,7 @@ Pid_t Exec(Task task, int argl, void* args);
   main function becomes the exit status.
 
   @param val the exit status of the process
-  @see Exec
+  @see Spawn
    */
 void Exit(int val);
 
@@ -346,7 +346,7 @@ int Kill(Pid_t pid);
 
   The new thread is created by executing function `task`,
   with the arguments of `argl` and `args` passed to it.
-  Note that, unlike `Exec`, where argl and args must define
+  Note that, unlike @ref Spawn(), where argl and args must define
   a byte buffer, here there is no such requirement! 
   The two arguments are passed to the new thread verbatim,
   and can be unrelated. It is the responsibility of the

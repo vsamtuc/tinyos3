@@ -35,7 +35,7 @@ typedef int (*Program)(size_t argc, const char** argv);
 /**
 	@brief Execute a new process, passing it the given arguments.
 
-	The underlying implementation uses the Exec system call, to
+	The underlying implementation uses the @ref Spawn system call, to
 	create a new process. 
 
 	By convention, argument argv[0] is assumed to be the program name, 
