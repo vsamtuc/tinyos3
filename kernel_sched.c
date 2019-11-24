@@ -93,8 +93,6 @@ static inline void sched_unlock()
 /*============================================================================
 	Thread creation   
   --------------------
-
-
   ## The thread layout.
 
   On the x86 (Pentium) architecture, the stack grows upward. Therefore, we
@@ -118,6 +116,11 @@ static inline void sched_unlock()
 
   Disadvantages: The stack cannot grow unless we move the whole TCB. Of course,
   we do not support stack growth anyway!
+
+  Spawning:
+  When a new thread is created by spawning, its stack and context are initialized
+  with the new function to call. The new thread is initialized in the INIT state.
+  
 ============================================================================== */
 
 /*
@@ -188,8 +191,8 @@ void initialize_TCB(TCB* tcb, PCB* pcb, Thread_type type)
 	tcb->wait_signalled = 0;
 	tcb->its = QUANTUM;
 	tcb->rts = QUANTUM;
-	tcb->last_cause = SCHED_IDLE;
-	tcb->curr_cause = SCHED_IDLE;
+	tcb->last_cause = SCHED_INIT;
+	tcb->curr_cause = SCHED_INIT;
 	
 	/* Init the state */
 	if(type==IDLE_THREAD) {
@@ -237,6 +240,7 @@ TCB* spawn_thread(PCB* pcb, void (*func)())
 
 	return tcb;
 }
+
 
 /*
   This is called with sched_spinlock locked !

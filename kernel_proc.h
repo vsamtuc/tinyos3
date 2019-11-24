@@ -30,6 +30,16 @@ typedef enum pid_state_e {
   ZOMBIE  /**< @brief The PID is held by a zombie */
 } pid_state;
 
+
+
+typedef struct thread_snapshot_s {
+  TCB* tcb;
+  void* data;
+  ssize_t size;
+  cpu_context_t context;
+} thread_snapshot;
+
+
 /**
   @brief Process Control Block.
 
@@ -42,7 +52,7 @@ typedef struct process_control_block {
 
   int exitval;            /**< @brief The exit value of the process */
   TCB* main_thread;       /**< @brief The main thread */
-  void* vfork_state;      /**< used by fork **/
+  thread_snapshot* snapshot; /**< used by fork **/
 
   Task main_task;         /**< @brief The main thread's function */
   int argl;               /**< @brief The main thread's argument length */

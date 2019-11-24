@@ -2354,7 +2354,7 @@ BOOT_TEST(test_error_kill_nonexistent, "Test that it is an error to send kill to
 BOOT_TEST(test_fork, "Test forking")
 {
 	MSG("Hello for pid=%d\n", GetPid());
-
+	/* Fork and check immediately */
 	Pid_t pid = Vfork();
 	if(pid==0) {
 		MSG("In the child, we have pid=%d\n", GetPid());
@@ -2362,10 +2362,17 @@ BOOT_TEST(test_fork, "Test forking")
 		Exit(11);
 	}
 
-	MSG("In the parent, we have pid=%d\n", GetPid());
+	MSG("In the parent, we have pid=%d, and child pid=%d\n", GetPid(), pid);
 	int status;
 	ASSERT(WaitChild(pid, &status)==pid);
 	ASSERT(status==11);
+
+	/* Now fork and let run out */
+	Vfork();
+	Vfork();
+	MSG("We are now in pid=%d\n", GetPid());
+	WaitChild(NOPROC, NULL);
+
 	return 0;
 }
 

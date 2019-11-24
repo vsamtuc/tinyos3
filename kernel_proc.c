@@ -54,7 +54,7 @@ static inline void initialize_PCB(PCB* pcb)
   pcb->pstate = FREE;
   pcb->argl = 0;
   pcb->args = NULL;
-  pcb->vfork_state = NULL;
+  pcb->snapshot = NULL;
 
   for(int i=0;i<MAX_FILEID;i++)
     pcb->FIDT[i] = NULL;
@@ -402,7 +402,7 @@ Pid_t sys_WaitChild(Pid_t cpid, int* status)
 
 
 
-void restore_vfork(PCB*);
+void restore_snapshot(thread_snapshot*);
 
 void sys_Exit(int exitval)
 {
@@ -462,7 +462,11 @@ void sys_Exit(int exitval)
   curproc->pstate = ZOMBIE;
 
   /* Bye-bye cruel world */
-  restore_vfork(curproc);
+  if(curproc->parent) {
+  	thread_snapshot* snap = curproc->parent->snapshot;
+  	if(snap)
+  		restore_snapshot(snap);
+  }
   kernel_unlock();
   exit_thread();
 }
@@ -478,71 +482,69 @@ void sys_Exit(int exitval)
  ============================================*/
 
 
-struct vfork_co_state
-{
-	cpu_context_t thread_ctx;
-	void* region_top;
-	size_t region_size;
-	void* stack;
 
-	/* coroutine stuff */
-	cpu_context_t co_ctx;
-	void* co_ss_sp;
-};
 
-void vfork_call_co(cpu_context_t* save_ctx, struct vfork_co_state* state)
+static void save_snapshot(thread_snapshot* volatile *  snap_ptr)
 {
+	thread_snapshot* snap = * snap_ptr;
+	snap->tcb = CURTHREAD;
+	void* sp = (void*) snap->context.uc_mcontext.gregs[REG_RSP];
+	snap->size = (CURTHREAD->ss_sp+CURTHREAD->ss_size)-sp;
+#if 0
+	fprintf(stderr, "Snapshot size=%lu\n", snap->size);
+#endif
+	snap->data = xmalloc(snap->size + 2048);
+	*snap_ptr = NULL;
+	memcpy(snap->data, sp, snap->size);
+	*snap_ptr = snap;
+}
+
+static void load_snapshot(thread_snapshot* snap)
+{
+	void* sp = CURTHREAD->ss_sp + (CURTHREAD->ss_size-snap->size);
+	memcpy(sp, snap->data, snap->size);
+}
+
+void restore_snapshot(thread_snapshot* snap)
+{
+	assert(snap!=NULL);
+	assert(CURTHREAD == snap->tcb);
+
 	/* 
-		Take the stack frame of this call as the start of the region to save.
-		To do this, we need to take enough space for the top of the stack
-		at the moment that cpu_swap_context() actually switches context.
+		Ok, we must restore ourselves.
 
-		We estimate this to be the base of the current stack frame minus
-		another 256 bytes. Then, we round down to align with the page size.
-	 */
-	state->region_top = (void*)(
-			(uintptr_t)(__builtin_frame_address(0) - 256) 
-		& 
-			~((uintptr_t)SYSTEM_PAGE_SIZE-1)
-		);
-	state->region_size = CURTHREAD->ss_size - (state->region_top - CURTHREAD->ss_sp);
-	fprintf(stderr,"Region size to save = %lu\n", state->region_size);
-	cpu_swap_context(save_ctx, & state->co_ctx);
+		This is tricky, because we are running on the thread we are about to restore! 
+
+		Thus, if we are running on a whose address is inside the snapshot,
+		we must do the restoration on another stack! Thankfully it doesn't
+		have to be very big, so we can use the unused space on our stack!
+
+		Otoh, our current stack frame is above the snapshot, we should be fine!
+	*/
+	ucontext_t ctx;
+	getcontext(&ctx);	
+	ctx.uc_link = &snap->context;
+	ctx.uc_stack.ss_sp = snap->data+snap->size;
+	ctx.uc_stack.ss_size = 2048;
+	ctx.uc_stack.ss_flags = 0;
+	makecontext(&ctx, (void*)load_snapshot, 1, snap);
+	setcontext(&ctx);
 }
 
-void restore_vfork(PCB* pcb)
+thread_snapshot* take_snapshot()
 {
-	struct vfork_co_state* state = pcb->vfork_state;
-	if(state) {
-		pcb->vfork_state = NULL;
-		vfork_call_co(NULL, state);
-	}
+	/* Create a snapshot thread */
+	thread_snapshot* volatile snap = (thread_snapshot*)malloc(sizeof(thread_snapshot));
+	getcontext(& snap->context);
+
+	/* We are returning after a restore */
+	if(snap==NULL) return NULL;
+
+	/* Save and return the snapshot */
+	save_snapshot(&snap);
+	return snap;
 }
 
-static void vfork_co_func()
-{
-	struct vfork_co_state* state = CURPROC->vfork_state;
-
-	/* save the active stack region of the current thread */
-	state->stack = aligned_alloc(SYSTEM_PAGE_SIZE, state->region_size);
-	memcpy(state->stack, state->region_top, state->region_size);
-
-	/* Prepare for a return into the parent context */
-	PCB* parent = CURPROC->parent;
-
-	/* yield to the thread */
-	cpu_swap_context(& state->co_ctx, & state->thread_ctx);
-
-	/* restore the saved stack region */
-	memcpy(state->region_top, state->stack, state->region_size);
-	free(state->stack);
-
-	/* Prepare for a return into the child context */
-	CURPROC = parent;
-
-	/* yield to the thread */
-	cpu_swap_context(& state->co_ctx, & state->thread_ctx);
-}
 
 
 Pid_t sys_Vfork()
@@ -567,46 +569,30 @@ Pid_t sys_Vfork()
   	 */
   	newproc->argl = 0;
 	newproc->args=NULL;
+	newproc->main_task=NULL;
 
-	/* Set the main thread's function to NULL */
-	newproc->main_task = CURPROC->main_task;
+	Pid_t newpid = get_pid(newproc);
+	assert(CURTHREAD==CURPROC->main_thread);
+	PCB* oldproc = CURPROC;
 
-	/* Allocate the vfork coroutine state */
-
-	struct vfork_co_state* state = (struct vfork_co_state*) malloc(sizeof(struct vfork_co_state));
-	newproc->vfork_state = state;
-
-	/* allocate a very small stack for this co-routine, just 2 pages!  */
-	// getcontext(& state->thread_ctx);
-	size_t co_ss_size = SYSTEM_PAGE_SIZE << 1;
-	state->co_ss_sp = aligned_alloc(SYSTEM_PAGE_SIZE, co_ss_size);
-	cpu_initialize_context(&state->co_ctx, state->co_ss_sp, co_ss_size, vfork_co_func);
-
-#ifndef NVALGRIND
-	int valgrind_stack_id = VALGRIND_STACK_REGISTER(state->co_ss_sp, state->co_ss_sp + co_ss_size);
-#endif
-
-	/*==================
-		Switch to the coroutine. 
-		The saved context will be restored twice. The first time it will
-		be restored as the child and the second time it will be restored as 
-		the parent.
-	====================*/
-	CURPROC = newproc;
-	vfork_call_co(&state->thread_ctx, state);
-
-	if(CURPROC == newproc) {
+	/* Ok, we are ready to fork */
+	thread_snapshot* snap = take_snapshot();
+	if(snap != NULL) {
+		/* Return in the child process */
+		newproc->main_thread = CURTHREAD;
+		oldproc->snapshot = snap;
+		CURPROC = newproc;
 		return 0;
 	} else {
-		/* stack is restored, clean up coroutine state */
-#ifndef NVALGRIND
-	VALGRIND_STACK_DEREGISTER(valgrind_stack_id);
-#endif
-		free(state->co_ss_sp);
-		free(state);
-
-		return get_pid(newproc);
+		/* Return in the parent process */
+		free(oldproc->snapshot->data);
+		free(oldproc->snapshot);
+		oldproc->snapshot = NULL;
+		CURPROC = oldproc;
+		return newpid;
 	}
+
+
 }
 
 

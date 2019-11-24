@@ -71,7 +71,7 @@ typedef enum {
 
 /** @brief Thread type. 
 	
-	There are three types of threads.
+	The following types of threads are used
 	- **idle threads** are threads which are not created by @c spawn_thread(). They
 	  are the initial threads of the scheduler, and they are always @c READY.
 	- **kernel threads** are threads that do not belong to a process. They are
