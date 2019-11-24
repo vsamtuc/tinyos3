@@ -35,7 +35,8 @@ typedef enum pid_state_e {
 typedef struct thread_snapshot_s {
   TCB* tcb;
   void* data;
-  ssize_t size;
+  void* sp;
+  rlnode snapnode;
   cpu_context_t context;
 } thread_snapshot;
 

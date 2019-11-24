@@ -187,6 +187,7 @@ void initialize_TCB(TCB* tcb, PCB* pcb, Thread_type type)
 	tcb->cancel = 0;
 	rlnode_init(&tcb->sched_node, tcb);
 	rlnode_init(& tcb->wqueue_node, tcb);
+	rlnode_init(& tcb->snapshots, tcb);
 	tcb->wqueue = NULL;
 	tcb->wait_signalled = 0;
 	tcb->its = QUANTUM;

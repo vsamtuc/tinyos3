@@ -379,30 +379,32 @@ BOOT_TEST(test_cond_timedwait_timeout,
 
 		Mutex mx = MUTEX_INIT;
 		CondVar cv = COND_INIT;
-
+#define USED_CLOCK CLOCK_MONOTONIC
 		struct timespec t1, t2;
-		clock_gettime(CLOCK_REALTIME, &t1);
+		CHECK(clock_gettime(USED_CLOCK, &t1));
 
 		Mutex_Lock(&mx);
 		Cond_TimedWait(&mx, &cv, t);
 
-		clock_gettime(CLOCK_REALTIME, &t2);
-
+		CHECK(clock_gettime(USED_CLOCK, &t2));
+#undef USED_CLOCK
 		unsigned long Dt = tspec2msec(t2)-tspec2msec(t1);
-
-		/* Allow a large, 20% error */
-		ASSERT(abs(Dt-t)*5 <= Dt);
+#if 0
+		MSG("Dt=%lu  timeout=%lu  err=%4.0f %%\n", Dt, t, 100.*((double)Dt -t)/t);
+#endif
+		/* Allow a large, 33% error */
+		ASSERT(abs(Dt-t)*5 <= Dt+300);
 
 		return 0;
 	}
-
-	for(timeout_t t=100; t < 400; t+=100) {
+#define TIMEBASE 200
+	for(timeout_t t=TIMEBASE+100; t < TIMEBASE+400; t+=100) {
 		Spawn(do_timeout, sizeof(t), &t);
 	}
-	for(timeout_t t=150; t < 400; t+=100) {
+	for(timeout_t t=TIMEBASE+150; t < TIMEBASE+400; t+=100) {
 		Spawn(do_timeout, sizeof(t), &t);
 	}
-
+#undef TIMEBASE
 	/* 
 		Wait all child processes, before leaving the current stack frame!
 		Else, the local functions may cause a crash!
@@ -2375,6 +2377,7 @@ BOOT_TEST(test_fork, "Test forking")
 
 	return 0;
 }
+
 
 
 TEST_SUITE(signal_tests, "Tests for process signals")

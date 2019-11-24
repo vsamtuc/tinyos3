@@ -10,6 +10,103 @@
 #endif
 
 
+/*
+	Thread snapshots: this is a mechanism for implementing Vfork().
+ */
+
+static void load_snapshot(thread_snapshot* snap)
+{
+	size_t size = (CURTHREAD->ss_sp + CURTHREAD->ss_size)-snap->sp;
+	memcpy(snap->sp, snap->data, size);
+}
+
+void restore_snapshot()
+{
+	if(is_rlist_empty(&CURTHREAD->snapshots)) return;
+	thread_snapshot* snap = (thread_snapshot*) rlist_pop_front(&CURTHREAD->snapshots)->obj;
+	assert(snap!=NULL);
+	assert(CURTHREAD == snap->tcb);
+
+	/* 
+		Ok, we must restore ourselves.
+
+		This is tricky, because we are running on the thread we are about to restore! 
+
+		Thus, if we are running on a whose address is inside the snapshot,
+		we must do the restoration on another stack! Thankfully it doesn't
+		have to be very big, so we can use the unused space on our stack!
+
+		Otoh, if our current stack frame is above the snapshot, we should be fine!
+	*/
+
+	if((uintptr_t)snap->sp > (uintptr_t) __builtin_frame_address(0) )
+	{
+		/* We can directly copy the snapshot and jump to it! */
+		load_snapshot(snap);
+		setcontext(&snap->context);
+	} 
+	/* 
+		We can use the top of the thread stack for our mini context.
+		The stack we need should be minimal.
+	 */
+#define SNAP_LOAD_SS_SIZE 1024
+	assert((snap->sp - CURTHREAD->ss_sp) > SNAP_LOAD_SS_SIZE);
+	ucontext_t ctx;
+	assert( (void*)&ctx - CURTHREAD->ss_sp > SNAP_LOAD_SS_SIZE );
+	getcontext(&ctx);	
+	ctx.uc_link = &snap->context;
+	ctx.uc_stack.ss_sp = CURTHREAD->ss_sp;
+	ctx.uc_stack.ss_size = SNAP_LOAD_SS_SIZE;
+	ctx.uc_stack.ss_flags = 0;
+	makecontext(&ctx, (void*)load_snapshot, 1, snap);
+	setcontext(&ctx);
+}
+
+
+static void save_snapshot(thread_snapshot* snap, volatile int* snap_flag)
+{
+	snap->tcb = CURTHREAD;
+	rlnode_init(& snap->snapnode, snap);
+	rlist_push_front(& CURTHREAD->snapshots, & snap->snapnode);
+	snap->sp = (void*) snap->context.uc_mcontext.gregs[REG_RSP];
+	ssize_t size = (CURTHREAD->ss_sp+CURTHREAD->ss_size)-snap->sp;
+	assert(size >= 0);
+#if 0
+	fprintf(stderr, "Snapshot size=%lu\n", size);
+#endif
+	snap->data = xmalloc(size);
+	*snap_flag = 0;
+	memcpy(snap->data, snap->sp, size);
+}
+
+thread_snapshot* take_snapshot()
+{
+	/* Create a snapshot thread */
+	thread_snapshot* snap = (thread_snapshot*)malloc(sizeof(thread_snapshot));
+
+	/* Status flag: 1 for taking the snapshot, 0 for restoration */
+	volatile int snap_flag = 1;
+
+	/* Save the context on which we will return */
+	getcontext(& snap->context);
+
+	/* We are returning after the snapshot is restored  */
+	if(snap_flag==0) {
+		free(snap->data);
+		free(snap);
+		return NULL;
+	}
+
+	/* Save and return the snapshot */
+	save_snapshot(snap, &snap_flag);
+	return snap;
+}
+
+
+
+
+
+
 /* 
  The process table and related system calls:
  - Vfork
@@ -174,11 +271,36 @@ void process_exec(PCB* proc, Task call, int argl, void* args)
 	}
 }
 
+void process_clear_exec_info(PCB* proc)
+{
+	if(proc->args != NULL) free(proc->args);
+	proc->argl = 0;
+	proc->args = NULL;
+	proc->main_task = NULL;
+}
+
+
+void process_exit_thread()
+{
+
+  	/*
+		Note: if the exiting thread is snapshotted, the previous snapshot will be restored and
+		restore_snapshot() will not return.
+		Else, if there are no snapshots to be restored, restore_snapshot() returns, and the
+		thread is terminated by the call to exit_thread().
+	*/
+	restore_snapshot();
+	/* We need to release the kernel lock before we die! */
+  	kernel_unlock();
+  	exit_thread();
+}
 
 
 void sys_Exec(Task call, int argl, void* args)
 {
-
+	process_clear_exec_info(CURPROC);
+	process_exec(CURPROC, call, argl, args);
+	process_exit_thread();
 }
 
 
@@ -220,6 +342,16 @@ void process_init_resources(PCB* newproc, PCB* parent)
  */
 Pid_t sys_Spawn(Task call, int argl, void* args)
 {
+#if 0
+	if(get_pcb(1) && get_pcb(1)->pstate==ALIVE) {
+		Pid_t cpid = sys_Vfork();
+		if(cpid==0) {
+			sys_Exec(call,argl,args);
+		}
+		return cpid;		
+	}
+#endif
+
 	/* The new process PCB */
 	PCB* newproc = acquire_PCB();
 
@@ -244,7 +376,6 @@ Pid_t sys_Spawn(Task call, int argl, void* args)
 
 	return get_pid(newproc);
 }
-
 
 
 /*=============================================
@@ -402,7 +533,7 @@ Pid_t sys_WaitChild(Pid_t cpid, int* status)
 
 
 
-void restore_snapshot(thread_snapshot*);
+void restore_snapshot();
 
 void sys_Exit(int exitval)
 {
@@ -422,10 +553,7 @@ void sys_Exit(int exitval)
 
   /* Disconnect my main_thread */
   curproc->main_thread = NULL;
-  if(curproc->args) {
-    free(curproc->args);
-    curproc->args = NULL;
-  }
+  process_clear_exec_info(curproc);
 
   /* Clean up FIDT */
   for(int i=0;i<MAX_FILEID;i++) {
@@ -458,92 +586,18 @@ void sys_Exit(int exitval)
   }
 
 
-  /* Now, mark the process as exited. */
-  curproc->pstate = ZOMBIE;
+	/* Now, mark the process as exited. */
+	curproc->pstate = ZOMBIE;
 
-  /* Bye-bye cruel world */
-  if(curproc->parent) {
-  	thread_snapshot* snap = curproc->parent->snapshot;
-  	if(snap)
-  		restore_snapshot(snap);
-  }
-  kernel_unlock();
-  exit_thread();
+	process_exit_thread();
 }
-
-
-
 
 
 /*=============================================
  
-	Change of executable in process
+	Fork
  
  ============================================*/
-
-
-
-
-static void save_snapshot(thread_snapshot* volatile *  snap_ptr)
-{
-	thread_snapshot* snap = * snap_ptr;
-	snap->tcb = CURTHREAD;
-	void* sp = (void*) snap->context.uc_mcontext.gregs[REG_RSP];
-	snap->size = (CURTHREAD->ss_sp+CURTHREAD->ss_size)-sp;
-#if 0
-	fprintf(stderr, "Snapshot size=%lu\n", snap->size);
-#endif
-	snap->data = xmalloc(snap->size + 2048);
-	*snap_ptr = NULL;
-	memcpy(snap->data, sp, snap->size);
-	*snap_ptr = snap;
-}
-
-static void load_snapshot(thread_snapshot* snap)
-{
-	void* sp = CURTHREAD->ss_sp + (CURTHREAD->ss_size-snap->size);
-	memcpy(sp, snap->data, snap->size);
-}
-
-void restore_snapshot(thread_snapshot* snap)
-{
-	assert(snap!=NULL);
-	assert(CURTHREAD == snap->tcb);
-
-	/* 
-		Ok, we must restore ourselves.
-
-		This is tricky, because we are running on the thread we are about to restore! 
-
-		Thus, if we are running on a whose address is inside the snapshot,
-		we must do the restoration on another stack! Thankfully it doesn't
-		have to be very big, so we can use the unused space on our stack!
-
-		Otoh, our current stack frame is above the snapshot, we should be fine!
-	*/
-	ucontext_t ctx;
-	getcontext(&ctx);	
-	ctx.uc_link = &snap->context;
-	ctx.uc_stack.ss_sp = snap->data+snap->size;
-	ctx.uc_stack.ss_size = 2048;
-	ctx.uc_stack.ss_flags = 0;
-	makecontext(&ctx, (void*)load_snapshot, 1, snap);
-	setcontext(&ctx);
-}
-
-thread_snapshot* take_snapshot()
-{
-	/* Create a snapshot thread */
-	thread_snapshot* volatile snap = (thread_snapshot*)malloc(sizeof(thread_snapshot));
-	getcontext(& snap->context);
-
-	/* We are returning after a restore */
-	if(snap==NULL) return NULL;
-
-	/* Save and return the snapshot */
-	save_snapshot(&snap);
-	return snap;
-}
 
 
 
@@ -585,8 +639,6 @@ Pid_t sys_Vfork()
 		return 0;
 	} else {
 		/* Return in the parent process */
-		free(oldproc->snapshot->data);
-		free(oldproc->snapshot);
 		oldproc->snapshot = NULL;
 		CURPROC = oldproc;
 		return newpid;

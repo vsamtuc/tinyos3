@@ -265,6 +265,9 @@ Pid_t Spawn(Task task, int argl, void* args);
 Pid_t Vfork();
 
 
+void Exec(Task task, int argl, void* args);
+
+
 /** @brief Exit the current process.
 
   When this function is called by a process thread, the process terminates
