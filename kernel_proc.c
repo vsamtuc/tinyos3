@@ -10,106 +10,12 @@
 #endif
 
 
-/*
-	Thread snapshots: this is a mechanism for implementing Vfork().
- */
-
-static void load_snapshot(thread_snapshot* snap)
-{
-	size_t size = (CURTHREAD->ss_sp + CURTHREAD->ss_size)-snap->sp;
-	memcpy(snap->sp, snap->data, size);
-}
-
-void restore_snapshot()
-{
-	if(is_rlist_empty(&CURTHREAD->snapshots)) return;
-	thread_snapshot* snap = (thread_snapshot*) rlist_pop_front(&CURTHREAD->snapshots)->obj;
-	assert(snap!=NULL);
-	assert(CURTHREAD == snap->tcb);
-
-	/* 
-		Ok, we must restore ourselves.
-
-		This is tricky, because we are running on the thread we are about to restore! 
-
-		Thus, if we are running on a whose address is inside the snapshot,
-		we must do the restoration on another stack! Thankfully it doesn't
-		have to be very big, so we can use the unused space on our stack!
-
-		Otoh, if our current stack frame is above the snapshot, we should be fine!
-	*/
-
-	if((uintptr_t)snap->sp > (uintptr_t) __builtin_frame_address(0) )
-	{
-		/* We can directly copy the snapshot and jump to it! */
-		load_snapshot(snap);
-		setcontext(&snap->context);
-	} 
-	/* 
-		We can use the top of the thread stack for our mini context.
-		The stack we need should be minimal.
-	 */
-#define SNAP_LOAD_SS_SIZE 1024
-	assert((snap->sp - CURTHREAD->ss_sp) > SNAP_LOAD_SS_SIZE);
-	ucontext_t ctx;
-	assert( (void*)&ctx - CURTHREAD->ss_sp > SNAP_LOAD_SS_SIZE );
-	getcontext(&ctx);	
-	ctx.uc_link = &snap->context;
-	ctx.uc_stack.ss_sp = CURTHREAD->ss_sp;
-	ctx.uc_stack.ss_size = SNAP_LOAD_SS_SIZE;
-	ctx.uc_stack.ss_flags = 0;
-	makecontext(&ctx, (void*)load_snapshot, 1, snap);
-	setcontext(&ctx);
-}
-
-
-static void save_snapshot(thread_snapshot* snap, volatile int* snap_flag)
-{
-	snap->tcb = CURTHREAD;
-	rlnode_init(& snap->snapnode, snap);
-	rlist_push_front(& CURTHREAD->snapshots, & snap->snapnode);
-	snap->sp = (void*) snap->context.uc_mcontext.gregs[REG_RSP];
-	ssize_t size = (CURTHREAD->ss_sp+CURTHREAD->ss_size)-snap->sp;
-	assert(size >= 0);
-#if 0
-	fprintf(stderr, "Snapshot size=%lu\n", size);
-#endif
-	snap->data = xmalloc(size);
-	*snap_flag = 0;
-	memcpy(snap->data, snap->sp, size);
-}
-
-thread_snapshot* take_snapshot()
-{
-	/* Create a snapshot thread */
-	thread_snapshot* snap = (thread_snapshot*)malloc(sizeof(thread_snapshot));
-
-	/* Status flag: 1 for taking the snapshot, 0 for restoration */
-	volatile int snap_flag = 1;
-
-	/* Save the context on which we will return */
-	getcontext(& snap->context);
-
-	/* We are returning after the snapshot is restored  */
-	if(snap_flag==0) {
-		free(snap->data);
-		free(snap);
-		return NULL;
-	}
-
-	/* Save and return the snapshot */
-	save_snapshot(snap, &snap_flag);
-	return snap;
-}
-
-
-
 
 
 
 /* 
  The process table and related system calls:
- - Vfork
+ - Spawn
  - Exec
  - Exit
  - WaitPid
@@ -282,14 +188,6 @@ void process_clear_exec_info(PCB* proc)
 
 void process_exit_thread()
 {
-
-  	/*
-		Note: if the exiting thread is snapshotted, the previous snapshot will be restored and
-		restore_snapshot() will not return.
-		Else, if there are no snapshots to be restored, restore_snapshot() returns, and the
-		thread is terminated by the call to exit_thread().
-	*/
-	restore_snapshot();
 	/* We need to release the kernel lock before we die! */
   	kernel_unlock();
   	exit_thread();
@@ -342,16 +240,6 @@ void process_init_resources(PCB* newproc, PCB* parent)
  */
 Pid_t sys_Spawn(Task call, int argl, void* args)
 {
-#if 0
-	if(get_pcb(1) && get_pcb(1)->pstate==ALIVE) {
-		Pid_t cpid = sys_Vfork();
-		if(cpid==0) {
-			sys_Exec(call,argl,args);
-		}
-		return cpid;		
-	}
-#endif
-
 	/* The new process PCB */
 	PCB* newproc = acquire_PCB();
 
@@ -593,59 +481,6 @@ void sys_Exit(int exitval)
 }
 
 
-/*=============================================
- 
-	Fork
- 
- ============================================*/
-
-
-
-Pid_t sys_Vfork()
-{
-	/* The new process PCB */
-	PCB* newproc = acquire_PCB();
-
-	if(newproc == NULL) {
-		/* We have run out of PIDs! */
-		set_errcode(EAGAIN);
-		return NOPROC;
-	}
-
-	assert(get_pid(newproc)>1); /* Or else, who did we fork? */
-	assert(CURPROC!=NULL);
-
-	process_init_resources(newproc, CURPROC);
-
-  	/* 
-  		The main thread has already been executed, we do not need these!
-  		N.B. there is a possible race here, in addition with signals!
-  	 */
-  	newproc->argl = 0;
-	newproc->args=NULL;
-	newproc->main_task=NULL;
-
-	Pid_t newpid = get_pid(newproc);
-	assert(CURTHREAD==CURPROC->main_thread);
-	PCB* oldproc = CURPROC;
-
-	/* Ok, we are ready to fork */
-	thread_snapshot* snap = take_snapshot();
-	if(snap != NULL) {
-		/* Return in the child process */
-		newproc->main_thread = CURTHREAD;
-		oldproc->snapshot = snap;
-		CURPROC = newproc;
-		return 0;
-	} else {
-		/* Return in the parent process */
-		oldproc->snapshot = NULL;
-		CURPROC = oldproc;
-		return newpid;
-	}
-
-
-}
 
 
 

@@ -22,7 +22,6 @@
 #include "tinyos.h"
 
 #define SYSCALLS \
-SYSCALL(Vfork, Pid_t, (void), ())\
 SYSCALL(GetError, int, (void), ())\
 SYSCALL(Spawn, int, (Task task, int argl, void* args), (task, argl, args))\
 SYSCALLV(Exec, (Task task, int argl, void* args), (task, argl, args))\

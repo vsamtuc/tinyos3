@@ -20,6 +20,10 @@
 #include <assert.h>
 #include <stdarg.h>
 
+#ifndef NVALGRIND
+#include <valgrind/valgrind.h>
+#endif
+
 #include "unit_testing.h"
 #include "util.h"
 
@@ -1019,8 +1023,21 @@ void show_suite(const Test* suite)
 
 int run_program(int argc, char**argv, const Test* default_test)
 {
+#ifndef NVALGRIND
+	unsigned int isOnValgrind = RUNNING_ON_VALGRIND;
+	if(isOnValgrind)
+		VALGRIND_PRINTF("unit testing: VALGRIND is detected, tests will not fork\n");
+#else
+	unsigned int isOnValgrind = 0;
+#endif
+
+	int isOnDebugger = isDebuggerAttached();
+	if(isOnDebugger)
+		MSG("unit testing: Debugger detected, forking is disabled\n");
+
+
 	__default_test = default_test;
-	ARGS.fork = ! isDebuggerAttached();
+	ARGS.fork = !(isOnDebugger || isOnValgrind);
 	argp_program_version = argv[0];
 	argp_parse(&argp, argc, argv, 0, 0, &ARGS);
 

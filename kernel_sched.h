@@ -120,7 +120,6 @@ typedef struct thread_control_block {
 	void (*thread_func)(); /**< @brief The initial function executed by this thread */
 	void* ss_sp;		   /**< @brief Pointer to the stack */
 	size_t ss_size;			/**< @brief The stack size */
-	rlnode snapshots;	/**< @brief stack of snapshots on this thread */
 
 	/* All these fields are private and should only be accessed by the scheduler */
 

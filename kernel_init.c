@@ -47,10 +47,12 @@ void boot_tinyos_kernel()
 
   cpu_core_barrier_sync();
 
+#if 0
 #ifndef NVALGRIND
   VALGRIND_PRINTF_BACKTRACE("TINYOS: Entering scheduler for core %d\n",cpu_core_id);
 #endif
-
+#endif
+  
   run_scheduler();
 
   if(cpu_core_id==0) {
