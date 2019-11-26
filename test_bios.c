@@ -26,8 +26,41 @@ BARE_TEST(test_system_sizes,"Just test and print some info about sizes")
 	ASSERT(sizeof(rlnode_key)==sizeof(void*));
 }
 
+
+int FooProgram(int argl, void* args)
+{
+	int z __attribute__((unused)) = 0;
+	char foo[10] __attribute__((unused));
+
+	auto void print_something();
+
+
+	int mymain(int argl, void* args)
+	{
+		print_something();
+		return 0;
+	}
+
+	void print_something()
+	{
+		printf("Hello world\n");
+	}
+
+	mymain(argl, args);
+	return 0;
+}
+
+
+
+BARE_TEST(test_nested_funcs, "A simple test for gcc nested functions")
+{
+	FooProgram(0,NULL);
+}
+
+
 TEST_SUITE(sched_tests, "Scheduler tests")
 {
+	&test_nested_funcs,
 	&test_system_sizes,
 	&bios_all_tests,
 	NULL

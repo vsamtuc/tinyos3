@@ -379,7 +379,10 @@ typedef struct resource_list_node * rlnode_ptr;
 	An rlnode key is a union of pointer types and numeric types.
 	There are two numeric types, one signed and one unsigned.
 */
-typedef union { RLNODE_KEY } rlnode_key;
+typedef union  __attribute__((__transparent_union__))
+{ 
+	RLNODE_KEY 
+} rlnode_key;
 
 /**
 	@brief List node
@@ -441,9 +444,9 @@ static inline rlnode* rlnode_new(rlnode* p)
 	@param ptr the pointer to store as the node key
 	@returns the node itself
  */
-static inline rlnode* rlnode_init(rlnode* p, void* ptr)  
+static inline rlnode* rlnode_init(rlnode* p, rlnode_key key)  
 {
-	rlnode_new(p)->obj = ptr; 
+	rlnode_new(p)->key = key; 
 	return p;
 }
 
@@ -636,11 +639,11 @@ static inline void rlist_reverse(rlnode* l)
 	@param key the key to search for in the list
 	@param fail the node pointer to return on failure
   */
-static inline rlnode* rlist_find(rlnode* List, void* key, rlnode* fail)
+static inline rlnode* rlist_find(rlnode* List, rlnode_key key, rlnode* fail)
 {
 	rlnode* i= List->next;
 	while(i!=List) {
-		if(i->obj == key)
+		if(i->obj == key.obj)
 			return i;
 		else
 			i = i->next;
