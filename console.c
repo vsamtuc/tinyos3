@@ -43,7 +43,7 @@ static int stdio_close(void* this) { return 0; }
 file_ops __stdio_ops = {
 	.Read = stdio_read,
 	.Write = stdio_write,
-	.Close = stdio_close
+	.Release = stdio_close
 };
 
 void tinyos_pseudo_console()

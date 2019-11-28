@@ -52,7 +52,7 @@ int FCB_decref(FCB* fcb)
   assert(fcb);
   fcb->refcount --;
   if(fcb->refcount==0) {
-    int retval = fcb->streamfunc->Close(fcb->streamobj);
+    int retval = fcb->streamfunc->Release(fcb->streamobj);
     release_FCB(fcb);
     return retval;
   }

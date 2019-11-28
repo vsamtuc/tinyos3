@@ -1,7 +1,7 @@
 #ifndef __KERNEL_FS_H
 #define __KERNEL_FS_H
 
-#include <stdint.h>
+#include "kernel_io.h"
 
 /* Determines the API */
 typedef enum {
@@ -20,7 +20,8 @@ typedef uintptr_t fse_id;
 typedef struct fs_element Inode;
 typedef struct dir_entry dir_entry;
 
-typedef struct {
+typedef struct 
+{
 	struct dir_entry* (*Lookup)(const char* name);
 	int (*Link)(const char* name, fse_id id);
 	int (*Unlink)(const char* name);
@@ -28,20 +29,10 @@ typedef struct {
 } DIR_ops;
 
 
-typedef struct {
-	int (*Truncate)(void* this, intptr_t size);
-	intptr_t (*Seek)(void* this, intptr_t offset, int whence);
-    int (*Read)(void* this, char *buf, unsigned int size);
-    int (*Write)(void* this, const char* buf, unsigned int size);
-    int (*Close)(void* this);
-} FILE_ops;
-
-
 
 typedef struct {
 	Inode* (*Open)(fse_id id);
 	void (*Sync)();
-
 } FS_ops;
 
 
@@ -57,6 +48,8 @@ typedef struct fs_element
 {
 	Fse_type type;
 } Inode;
+
+
 
 
 
