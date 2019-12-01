@@ -268,7 +268,7 @@ unsigned int sys_GetTerminalDevices()
 /**
   Open a stream for the given device.
   */
-Fid_t open_stream(Device_type major, unsigned int minor)
+Fid_t open_stream(uint major, unsigned int minor)
 {
 	Fid_t fid;
 	FCB* fcb;

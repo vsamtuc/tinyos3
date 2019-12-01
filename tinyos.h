@@ -425,7 +425,6 @@ int ThreadDetach(Tid_t tid);
 void ThreadExit(int exitval);
 
 
-
 /*******************************************
  *
  * Low-level I/O
@@ -465,6 +464,41 @@ Fid_t OpenTerminal(unsigned int termno);
    - **@c ENFILE** The maximum number of system-wide files has been reached.
 */
 Fid_t OpenNull();
+
+
+/*******************************************
+ *
+ * File system I/O
+ *
+ *******************************************/
+
+
+Fid_t Open(const char* pathname, int flags);
+
+
+typedef uint64_t Dev_t;
+
+#define NO_DEVICE ((Dev_t) -1)
+#define DEV_MAJOR(dev)  ((uint32_t) ((dev)>>32))
+#define DEV_MINOR(dev)  ((uint32_t) (dev))
+
+
+struct Stat {
+	Dev_t			dev;	/**< @brief Device id for device containing file */
+	uintptr_t		inode; 	/**< @brief I-node number */
+	unsigned int	linkno;	/**< @brief Number of hard links */
+	intptr_t		size;	/**< @brief Total size in bytes */
+};
+
+int Stat(const char* pathname, struct Stat* statbuf);
+
+
+
+/*******************************************
+ *
+ * Generic stream I/O
+ *
+ *******************************************/
 
 
 /** 

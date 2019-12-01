@@ -47,28 +47,35 @@
   @brief The device type.
 	
   The device type of a device determines the driver used.
+
+  When new 
 */
-typedef enum { 
+enum Device_type
+{ 
 	DEV_NULL,    /**< @brief Null device */
 	DEV_SERIAL,  /**< @brief Serial device */
 	DEV_MAX      /**< @brief placeholder for maximum device number */
-}  Device_type;
+};
 
 
 /**
   @brief Device control block.
 
   These objects hold the information that is needed to 
-  access a particular device.
+  access a particular device type. There is one such object for each
+  major device number. The device table is just an array of pointers
+  to such objects.
+
 */
 typedef struct device_control_block
 {
 
 	/** @brief Device type. 
     
-		Much like 'major number' in Unix, determines the driver. 
+		Much like 'major number' in Unix. It determines the driver.
+		This number is also the index of this object in @c device_table.
   	*/
-  	Device_type type;     
+  	unsigned int type;     
 
 
 	/**
@@ -86,7 +93,10 @@ typedef struct device_control_block
 	*/
 	void* (*Open)(uint minor);
 
-	uint devnum;		/**< @brief Number of devices for this major number. */
+	/** 
+		@brief Number of devices for this major number. 
+	*/
+	int devnum;
 
 	/** @brief File operations for this device.
 
@@ -145,7 +155,7 @@ void initialize_devices();
 
   It returns 0 on success and -1 on failure.
   */
-int device_open(Device_type major, uint minor, void** obj, file_ops** ops);
+int device_open(uint major, uint minor, void** obj, file_ops** ops);
 
 /**
   @brief Get the number of devices of a particular major number.
@@ -153,7 +163,7 @@ int device_open(Device_type major, uint minor, void** obj, file_ops** ops);
   The number of devices M determines the legal range of minor numbers,
   namely 0<= minor < M.
   */
-uint device_no(Device_type major);
+uint device_no(uint major);
 
 /** @} */
 

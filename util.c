@@ -201,6 +201,44 @@ rlnode* rheap_to_ring(rlnode* heap)
 
 
 /**********************
+	Dict
+ **********************/
+
+
+void rdict_init(rdict* dict, unsigned long buckno)
+{
+	dict->size = 0;
+	dict->bucketno = buckno;
+	size_t bucket_bytes = buckno* sizeof(rlnode*);
+	dict->buckets = (rlnode**)malloc(bucket_bytes);
+	memset(dict->buckets, 0, bucket_bytes);
+}
+
+void rdict_destroy(rdict* dict)
+{
+	if(dict->bucketno>0) {
+		rdict_clear(dict);
+		free(dict->buckets);
+		dict->bucketno = 0;
+	}
+}
+
+
+void rdict_clear(rdict* dict)
+{
+	for(unsigned long h = 0; h < dict->bucketno; h++) {
+		rlnode* ring = dict->buckets[h];
+		if(ring == NULL) continue;
+		while(ring->next != ring) rl_splice(ring, ring->next);
+		dict->buckets[h] = NULL;
+	}
+	dict->size = 0;
+}
+
+
+
+
+/**********************
 	Exceptions
  **********************/
 

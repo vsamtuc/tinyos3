@@ -359,6 +359,8 @@ typedef struct thread_control_block TCB;	/**< @brief Forward declaration */
 typedef struct core_control_block CCB;		/**< @brief Forward declaration */
 typedef struct device_control_block DCB;	/**< @brief Forward declaration */
 typedef struct file_control_block FCB;		/**< @brief Forward declaration */
+typedef struct Inode Inode;					/**< @brief Forward declaration */
+typedef struct Mount Mount;					/**< @brief Forward declaration */
 
 /** @brief A convenience typedef */
 typedef struct resource_list_node * rlnode_ptr;
@@ -369,6 +371,8 @@ typedef struct resource_list_node * rlnode_ptr;
     CCB* ccb; \
     DCB* dcb; \
     FCB* fcb; \
+    Inode* inode; \
+    Mount* mnt; \
     void* obj; \
     rlnode_ptr node_ptr; \
     intptr_t num; \
@@ -449,6 +453,27 @@ static inline rlnode* rlnode_init(rlnode* p, rlnode_key key)
 	rlnode_new(p)->key = key; 
 	return p;
 }
+
+
+/**
+	@brief Initializer for resource list nodes.
+
+	This macro can be used as follows:
+	\code
+	rlnode foo = RLNODE(foo, .num=10);
+	\endcode
+
+	Another example, initializing an intrusive list node in some
+	`struct Foo`:
+	\code
+	struct Foo { int x; rlnode n; };
+	struct Foo foo = { .x=1, .n = RLNODE(foo.n, .obj=&foo) };
+	\endcode
+
+	This is handy for global variables.
+	@see RLIST
+  */
+#define RLNODE(N, V) ((rlnode){ V, .prev=&(N), .next=&(N) })
 
 
 /**
@@ -941,9 +966,129 @@ rlnode* rheap_from_ring(rlnode* ring, rlnode_less_func lessf);
  */
 rlnode* rheap_to_ring(rlnode* heap);
 
-
-
 /* @} rheap */
+
+
+
+/**
+	@defgroup rhashtable  Resource hash table.
+	
+	@brief  Resource hash tables.
+
+	## Overview ##
+
+	A hash table provides very fast, typically \f$O(1)\f$ insertion, deletion and lookup, based
+	on equality. This is sometimes called "dictionary access".
+
+	@{
+ */
+
+
+typedef unsigned long hash_value;
+typedef int (*rdict_equal)(rlnode*, rlnode_key key);
+typedef rlnode* rdict_bucket;
+
+
+typedef struct rdict
+{
+	unsigned long size;		/**< @brief Number of elements in the table */
+	unsigned long bucketno;	/**< @brief Number of buckets in the table */
+	rdict_bucket* buckets;		/**< @brief Array of rings */
+} rdict;
+
+
+void rdict_init(rdict* dict, unsigned long buckno);
+
+void rdict_destroy(rdict* dict);
+
+void rdict_clear(rdict* dict);
+
+static inline rdict_bucket* rdict_get_bucket(rdict* dict, hash_value h)
+{
+	return & dict->buckets[h % dict->bucketno];
+}
+
+static inline rlnode* rdict_bucket_lookup(rdict_bucket* bucket, rlnode_key key, rlnode* defval, rdict_equal equalf)
+{
+	if(*bucket == NULL) return defval;
+	rlnode* current = *bucket;
+	do {
+		if(equalf(current, key))
+			return current;
+		current = current->next;
+	} while(current!=*bucket);
+	return defval;
+}
+
+static inline rlnode* rdict_lookup(rdict* dict, hash_value h, rlnode_key key, rlnode* defval, rdict_equal equalf)
+{
+	return rdict_bucket_lookup(rdict_get_bucket(dict, h), key, defval, equalf);
+}
+
+static inline void rdict_bucket_insert(rdict_bucket* bucket, rlnode* elem)
+{
+	if(*bucket == NULL)
+		*bucket = elem;
+	else
+		rl_splice(*bucket, elem);
+}
+
+static inline int rdict_equal_nodes(rlnode* p, rlnode* q) { return p==q; }
+
+static inline int rdict_bucket_remove(rdict_bucket* bucket, rlnode* elem)
+{
+	elem = rdict_bucket_lookup(bucket, elem, NULL, rdict_equal_nodes);
+	if(elem==NULL) return 0;
+
+	if(*bucket == elem) {
+		if(elem == elem->next)
+			*bucket = NULL;
+		else {
+			*bucket = elem->next;
+			rl_splice(elem->prev, elem);
+		}
+	}
+	else {
+		rl_splice(elem->prev, elem);
+	}
+	return 1;
+}
+
+
+static inline void rdict_insert(rdict* dict, rlnode* elem, hash_value h)
+{
+	rdict_bucket_insert(rdict_get_bucket(dict, h), elem);
+	dict->size ++;
+}
+
+
+static inline void rdict_remove(rdict* dict, rlnode* elem, hash_value h)
+{
+	if(rdict_bucket_remove(rdict_get_bucket(dict, h), elem))
+		dict->size --;
+}
+
+
+static inline hash_value hash_combine(hash_value lhs, hash_value rhs)
+{
+	lhs ^= rhs + 0x9e3779b97f4a7c16 + (lhs << 6) + (lhs >> 2);
+  	return lhs;	
+}
+
+
+static inline hash_value hash_string(const char* str)
+{
+	hash_value h = 0;
+	while(*str) {
+		h *= 53;
+		h += *str;
+		str++;
+	}
+	return h;
+}
+
+
+/* @} rhashtable */
 
 
 

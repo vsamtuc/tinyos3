@@ -10,7 +10,7 @@
 #include "kernel_dev.h"
 #include "kernel_streams.h"
 #include "kernel_sys.h"
-
+#include "kernel_fs.h"
 
 
 /*
@@ -38,6 +38,7 @@ void boot_tinyos_kernel()
     initialize_processes();
     initialize_devices();
     initialize_files();
+    initialize_filesys();
     initialize_scheduler();
 
     /* The boot task is executed normally! */
@@ -56,8 +57,11 @@ void boot_tinyos_kernel()
   run_scheduler();
 
   if(cpu_core_id==0) {
-    /* Here, we could add cleanup after the scheduler has ended. */    
+    /* Here, we could add cleanup after the scheduler has ended. */
+    finalize_filesys();
   }
+
+  cpu_core_barrier_sync();
 }
 
 

@@ -45,7 +45,7 @@ LDFLAGS= $(PLFLAGS) $(BASICFLAGS)
 LIBS=-lpthread -lrt -lm
 
 
-C_PROG= test_util.c \
+C_PROG= test_util.c test_bios.c test_kernel.c \
  	mtask.c tinyos_shell.c terminal.c \
  	validate_api.c \
  	$(EXAMPLE_PROG)
@@ -67,7 +67,7 @@ FIFOS= con0 con1 con2 con3 kbd0 kbd1 kbd2 kbd3
 
 all: shorthelp mtask tinyos_shell terminal tests fifos examples
 
-tests: test_util validate_api test_example test_bios
+tests: test_util validate_api test_example test_bios test_kernel
 
 examples: $(EXAMPLE_PROG:.c=) 
 
@@ -93,6 +93,9 @@ test_util: test_util.o util.o unit_testing.o $(C_OBJ)
 	$(CC) $(LDFLAGS) -o $@ $^ $(LIBS)
 
 test_example: test_example.o util.o unit_testing.o $(C_OBJ)
+	$(CC) $(LDFLAGS) -o $@ $^ $(LIBS)
+
+test_kernel: test_kernel.o util.o unit_testing.o $(C_OBJ)
 	$(CC) $(LDFLAGS) -o $@ $^ $(LIBS)
 
 validate_api: validate_api.o $(C_OBJ)

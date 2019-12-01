@@ -18,7 +18,6 @@
 typedef struct file_operations {
 
 
-
   /** @brief Read operation.
 
     Read up to 'size' bytes from stream 'this' into buffer 'buf'. 

@@ -39,7 +39,7 @@ void register_device(DCB* dcb)
 	device_table[dcb->type] = dcb;
 }
 
-int device_open(Device_type major, uint minor, void** obj, file_ops** ops)
+int device_open(uint major, uint minor, void** obj, file_ops** ops)
 {
 	assert(major < DEV_MAX);  
 	if(minor >= device_table[major]->devnum) {
@@ -51,7 +51,7 @@ int device_open(Device_type major, uint minor, void** obj, file_ops** ops)
 	return 0;
 }
 
-uint device_no(Device_type major)
+uint device_no(uint major)
 {
   return device_table[major]->devnum;
 }

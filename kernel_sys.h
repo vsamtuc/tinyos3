@@ -38,6 +38,8 @@ SYSCALLV(ThreadExit, (int exitval), (exitval))\
 SYSCALL(GetTerminalDevices, unsigned int, (), ())\
 SYSCALL(OpenTerminal, Fid_t, (unsigned int termno), (termno))\
 SYSCALL(OpenNull, Fid_t, (), ())\
+SYSCALL(Open, Fid_t, (const char* pathname, int flags), (pathname, flags))\
+SYSCALL(Stat, int, (const char* pathname, struct Stat* statbuf), (pathname, statbuf))\
 SYSCALL(Read,int,(Fid_t fd, char *buf, unsigned int size), (fd,buf,size))\
 SYSCALL(Write,int,(Fid_t fd, const char *buf, unsigned int size), (fd,buf,size))\
 SYSCALL(Close,int,(Fid_t fd),(fd))\
