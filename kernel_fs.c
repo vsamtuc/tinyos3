@@ -312,10 +312,30 @@ void mount_decref(Mount* mnt)
   =========================================================*/
 
 
+Inode* lookup_dirname(struct parsed_path* pp)
+{
+	Inode* prev=NULL;
+	Inode* last=NULL;
+	int ncomp = 0;
+
+	
+
+
+}
+
+
 
 
 Fid_t sys_Open(const char* pathname, int flags)
 {
+	/* Take the path */
+	struct parsed_path pp;
+	if(parse_path(&pp, pathname)==-1) {
+		set_errcode(ENAMETOOLONG);
+		return -1;
+	}
+
+	Inode* dir = lookup_dirname(&pp);
 
 
 	return NOFILE;
