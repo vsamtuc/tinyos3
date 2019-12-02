@@ -4,8 +4,9 @@
 mtask
 terminal
 bios_example*
-test_*
 tinyos_shell
 validate_api
-test_example
+test_*
+!test_*.c
+!test_*.h
 doc/
