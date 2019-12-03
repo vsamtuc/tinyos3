@@ -39,7 +39,7 @@ int set_core_preemption(int preempt)
 	   Just ensure that CURCORE.preemption is changed only with preemption off! 
 	   That is, after cpu_disable_interrupts() and before cpu_enable_interrupts().
 	 */
-	sig_atomic_t old_preempt;
+	char old_preempt;
 	if(preempt) {
 		old_preempt = __atomic_exchange_n(& CURCORE.preemption, preempt, __ATOMIC_RELAXED);
 		cpu_enable_interrupts();
@@ -155,7 +155,7 @@ void free_thread(void* ptr, size_t size) { free(ptr); }
   This is the function that is executed by a thread the first time it is
   scheduled.
 */
-static _Noreturn void thread_start()
+static _Noreturn void thread_start(interrupt_handler thread_func)
 {
 	/* Exit the kernel to user land */
 	sched_gain();
@@ -163,7 +163,7 @@ static _Noreturn void thread_start()
 	preempt_on;
 
 	/* Execute the function */
-	CURTHREAD->thread_func();
+	thread_func();
 
 	/* If we belong to a process, we are not supposed to get here! */
 	assert(CURTHREAD->type != NORMAL_THREAD);
@@ -222,13 +222,6 @@ TCB* spawn_thread(PCB* pcb, void (*func)())
 	/* Compute the stack segment address and size */
 	void* sp = ((void*)tcb) + THREAD_TCB_SIZE;
 
-	/* Init the context */
-	tcb->thread_func = func;
-	cpu_initialize_context(&tcb->context, sp, THREAD_STACK_SIZE, thread_start);
-
-	tcb->ss_sp = sp;
-	tcb->ss_size = THREAD_STACK_SIZE;
-
 #ifndef NVALGRIND
 	tcb->valgrind_stack_id = VALGRIND_STACK_REGISTER(sp, sp + THREAD_STACK_SIZE);
 #endif
@@ -237,6 +230,9 @@ TCB* spawn_thread(PCB* pcb, void (*func)())
 	spin_lock(&active_threads_spinlock);
 	active_threads++;
 	spin_unlock(&active_threads_spinlock);
+
+	/* Init the context */
+	cpu_initialize_context(&tcb->context, sp, THREAD_STACK_SIZE, thread_start, 1, func);
 
 	return tcb;
 }

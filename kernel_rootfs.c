@@ -134,7 +134,7 @@ static void* rootfs_open_dir(Inode* inode, int flags)
 
 	s->pos = 0;
 	s->inode = inode;
-	inode_incref(inode);
+	repin_inode(inode);
 
 	return s;
 }
@@ -159,7 +159,7 @@ static int rootfs_read_dir(void* this, char *buf, unsigned int size)
 static int rootfs_close_dir(void* this)
 {
 	struct rootfs_dir_stream* s = this;
-	inode_decref(s->inode);
+	unpin_inode(s->inode);
 	free(s->buffer);
 	return 0;
 }
@@ -225,7 +225,7 @@ static void* rootfs_open_file(Inode* inode, int flags)
 	struct rootfs_file_stream* s = (struct rootfs_file_stream*) xmalloc(sizeof(struct rootfs_file_stream));
 	s->pos = 0;
 	s->inode = inode;
-	inode_incref(inode);
+	repin_inode(inode);
 	return s;
 }
 
@@ -325,7 +325,7 @@ static int rootfs_write_file(void* this, const char* buf, unsigned int size)
 static int rootfs_close_file(void* this)
 {
 	struct rootfs_file_stream* s = this;
-	inode_decref(s->inode);
+	unpin_inode(s->inode);
 	free(s);
 	return 0;
 }
@@ -529,15 +529,14 @@ static Mount* rootfs_mount(FSystem* this, Dev_t dev, Inode* mpoint, unsigned int
 	mnt->fsdata = NULL;
 
 	/* Get mount root */
-	Inode* mount_root = get_inode( (Inode_ref){mnt, mnt->root_dir });
-	inode_incref(mount_root);
+	Inode* mount_root = pin_inode( (Inode_ref){mnt, mnt->root_dir });
 
 	/* Take care of the mountpoint */
 	mnt->mount_point = mpoint;
 	if(mpoint != NULL) {
 
 		/* Hold it for the lifetime of this mount */
-		inode_incref(mpoint);
+		repin_inode(mpoint);
 
 		/* Update its `mount` field, so that lookups are redirected */
 		mpoint->dir.mount = mnt;
@@ -563,7 +562,7 @@ static int rootfs_unmount(Mount* mnt)
 
 	} else {
 		/* We are the root */
-		inode_decref(root_inode);
+		unpin_inode(root_inode);
 		root_inode = NULL;
 	}
 
