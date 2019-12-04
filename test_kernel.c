@@ -19,12 +19,14 @@ BOOT_TEST(test_rootfs_is_root, "Test that the rootfs filesystem is mounted as ro
 
 	ASSERT(rootfs!=NULL);	
 
+	return 0;
 }
 
 
 
-TEST_SUITE(&fsystem_tests, "Filesystem tests")
+TEST_SUITE(fsystem_tests, "Filesystem tests")
 {
+	&test_rootfs_is_root,
 	NULL
 };
 
@@ -32,6 +34,6 @@ TEST_SUITE(&fsystem_tests, "Filesystem tests")
 int main(int argc, char** argv)
 {
 
-	return register_test(&sched_tests) || 
-		run_program(argc, argv, &sched_tests);
+	return register_test(&fsystem_tests) || 
+		run_program(argc, argv, &fsystem_tests);
 }

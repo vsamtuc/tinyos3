@@ -85,7 +85,11 @@ typedef enum {
 typedef struct fs_param 
 {
 	const char* param_name;
-	rlnode_key param_value;
+	enum { FS_PARAM_INT, FS_PARAM_STRING } param_type;
+	union {
+		intptr_t param_int;
+		const char* param_string;
+	};
 } fs_param;
 
 
@@ -106,6 +110,8 @@ struct FSystem_type
 
 	/* Create and delete inodes (except for directories) */
 	Inode_id (*AllocateNode)(Mount* mnt, Fse_type type, Dev_t dev);
+
+	/* Maybe this should not be exported to the system? */
 	int (*ReleaseNode)(Mount* mnt, Inode_id id);
 
 	/* Load and save inodes */
@@ -116,9 +122,9 @@ struct FSystem_type
 	void* (*OpenInode)(Inode* inode, int flags);
 
 	/* Directory ops */
-	Inode* (*Lookup)(Inode* this, pathcomp_t name);
-	int (*Link)(Inode* this, pathcomp_t name, Inode* inode);
-	int (*Unlink)(Inode* this, pathcomp_t name);
+	Inode* (*Lookup)(Inode* this, const pathcomp_t name);
+	int (*Link)(Inode* this, const pathcomp_t name, Inode* inode);
+	int (*Unlink)(Inode* this, const pathcomp_t name);
 
 	/* Mount a file system of this type. This is a file system method */
 	struct Mount* (*Mount)(FSystem* this, Dev_t dev, Inode* mpoint, 
@@ -167,14 +173,17 @@ struct Mount
 	/* Counts users of this mount */
 	unsigned int refcount;
 
+	/* The file system */
+	FSystem* fsys;
+
+	/* The underlying device */
+	Dev_t device;
+
 	/* Inode on top of which we mounted. This is NULL for the root mount only. */
 	Inode* mount_point;			
 
 	/* Inode of our root directory */
 	Inode_id root_dir;
-
-	/* The file system */
-	FSystem* fsys;
 
 	/* List of all submounts */
 	rlnode submount_list;
@@ -243,14 +252,13 @@ typedef struct dir_entry
 */
 typedef struct Inode
 {
-	unsigned int refcount;  /**< @brief Counts the pointers to this inode */
+	unsigned int pincount;  /**< @brief Reference-counting uses to this inode handle */
+	Inode_ref ino_ref;		/**< @brief Inode reference */
+	rlnode inotab_node;   	/**< @brief Used to add this to the inode table */
 
-	Fse_type type;			/**< @brief  Type of inode (determines the API) */
-	Inode_ref ino_ref;		/**< @brief  Inode reference */
-
-	unsigned int lnkcount;  /**< @brief  Hard links to this inode */
-	int dirty;			 	/**< @brief  True if this inode is dirty */
-
+	Fse_type type;			/**< @brief Type of inode (determines the API) */
+	unsigned int lnkcount;  /**< @brief Hard links to this inode */
+	int dirty;			 	/**< @brief True if this inode is dirty */
 
 	/* API-specific data */
 	union {
@@ -266,7 +274,6 @@ typedef struct Inode
 		} dev;
 	};
 
-	rlnode inotab_node;   	/**< @brief Used to add this to the inode table */
 } Inode;
 
 
@@ -274,10 +281,41 @@ typedef struct Inode
 /* This is the root directory of the tinyos session */
 extern Inode* root_inode;
 
-Inode* get_inode(Inode_ref inoref);
+/**
+	@brief Turn an i-node reference into a handle.
+	
+	This call returns a pointer to an \c Inode handle for the
+	given reference, performing I/O if needed to fetch the i-node
+	from storage.
 
-void inode_incref(Inode* inode);
-void inode_decref(Inode* inode);
+	The caller should call @ref unpin_inode when the handle no longer 
+	needed.
+*/
+Inode* pin_inode(Inode_ref inoref);
+
+/**
+	@brief Add a pin to an already pinned i-node.
+
+	This call increases the number of holders of the `inode` handle.
+ */
+void repin_inode(Inode* inode);
+
+
+/**
+	@brief Decrease the number of holders of an inode handle.
+
+	This call decreases the number of holders of the `inode` handle.
+	When the number of holders becomes zero, the inode handle is
+	no longer valid, and the i-node may be evicted from memory.
+ */
+void unpin_inode(Inode* inode);
+
+
+Inode* dir_lookup(Inode* dir_inode, const pathcomp_t name);
+
+int dir_link(Inode* dir_inode, const pathcomp_t name, Inode* inode);
+
+int dir_unlink(Inode* dir_inode, const pathcomp_t name);
 
 void inode_flush(Inode* inode);
 

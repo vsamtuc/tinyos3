@@ -144,8 +144,58 @@ static int inode_table_equal(rlnode* node, rlnode_key key)
  */
 
 
-static void release_inode(Inode* inode)
+
+Inode* pin_inode(Inode_ref ino_ref)
 {
+	/* Look into the inode_table for existing inode */
+	hash_value hval = inode_table_hash(&ino_ref);
+	rlnode* node = rdict_lookup(&inode_table, hval, &ino_ref, NULL, inode_table_equal);
+	if(node) {
+		/* Found it! */
+		Inode* ret = node->inode;
+		ret->pincount ++;
+		return ret;
+	}
+
+	/* Not already used */
+
+	/* Get the mount and file system from the reference */
+	Mount* mnt = ino_ref.mnt;
+	FSystem* fsys = mnt->fsys;
+
+	/* 
+		Get a new Inode object and initialize it. This is currently done via malloc, but
+		we should really replace this with a pool, for speed.
+	 */
+	Inode* inode = (Inode*) xmalloc(sizeof(Inode));
+	rlnode_init(&inode->inotab_node, inode);
+
+	/* Initialize reference */
+	inode->ino_ref = ino_ref;
+	mount_incref(mnt);
+
+	/* Add to inode table */
+	inode->pincount = 1;
+	rdict_insert(&inode_table, &inode->inotab_node, hval);
+
+	/* Fetch data from file system */
+	fsys->FetchInode(inode);
+	assert(inode_table_equal(&inode->inotab_node, &ino_ref));
+
+	return inode;
+}
+
+
+void repin_inode(Inode* inode)
+{
+	inode->pincount ++;
+}
+
+void unpin_inode(Inode* inode)
+{
+	inode->pincount --;
+	if(inode->pincount != 0) return;
+	/* Nobody is pinning the inode, so we may release the handle */
 	Mount* mnt = inode->ino_ref.mnt;
 	FSystem* fsys = mnt->fsys;
 
@@ -163,52 +213,7 @@ static void release_inode(Inode* inode)
 
 	/* Delete it */
 	free(inode);
-}
 
-
-Inode* get_inode(Inode_ref ino_ref)
-{
-	/* Look into the inode_table for existing inode */
-	hash_value hval = inode_table_hash(&ino_ref);
-	rlnode* node = rdict_lookup(&inode_table, hval, &ino_ref, NULL, inode_table_equal);
-	if(node) /* Found it! */
-		return node->inode;
-
-	/* Get the mount and file system from the reference */
-	Mount* mnt = ino_ref.mnt;
-	FSystem* fsys = mnt->fsys;
-
-	/* Get a new inode and initialize it */
-	Inode* inode = (Inode*) xmalloc(sizeof(Inode));
-	rlnode_init(&inode->inotab_node, inode);
-
-	/* Initialize reference */
-	inode->ino_ref = ino_ref;
-	mount_incref(mnt);
-
-	/* Add to inode table */
-	inode->refcount = 0;
-	rdict_insert(&inode_table, &inode->inotab_node, hval);
-
-	/* Fetch data from file system */
-	fsys->FetchInode(inode);
-	assert(inode_table_equal(&inode->inotab_node, &ino_ref));
-
-	return inode;
-}
-
-
-void inode_incref(Inode* inode)
-{
-	inode->refcount ++;
-}
-
-
-void inode_decref(Inode* inode)
-{
-	inode->refcount --;
-	if(inode->refcount == 0) 
-		release_inode(inode);
 }
 
 
@@ -295,7 +300,6 @@ void mount_incref(Mount* mnt)
 	mnt->refcount ++;
 }
 
-
 void mount_decref(Mount* mnt)
 {
 	mnt->refcount --;
@@ -314,14 +318,32 @@ void mount_decref(Mount* mnt)
 
 Inode* lookup_dirname(struct parsed_path* pp)
 {
+#if 0
 	Inode* prev=NULL;
 	Inode* last=NULL;
 	int ncomp = 0;
 
-	if(pp->relpath)
-		last = g
+	/* Anchor the search */
+	if(pp->relpath) {
+		last = root_inode;  /* TODO:  THIS IS WRONG !!! */
+	} else {
+		last = root_inode;
+	}
 
+	assert(last != NULL);
 
+	while(ncomp < pp->depth) {
+
+		if(last->type != FSE_DIR) {
+			set_errcode(ENOTDIR);
+			return NULL;
+		} 
+
+		Inode* next = 0;
+
+	}
+#endif
+	return NULL;
 }
 
 
@@ -336,7 +358,7 @@ Fid_t sys_Open(const char* pathname, int flags)
 		return -1;
 	}
 
-	Inode* dir = lookup_dirname(&pp);
+	//Inode* dir = lookup_dirname(&pp);
 
 
 	return NOFILE;

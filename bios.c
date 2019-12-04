@@ -12,6 +12,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <poll.h>
+#include <stdarg.h>
 
 #include <setjmp.h>
 
@@ -821,7 +822,7 @@ void cpu_enable_interrupts()
 }
 
 
-void cpu_initialize_context(cpu_context_t* ctx, void* ss_sp, size_t ss_size, void (*ctx_func)())
+void cpu_initialize_context(cpu_context_t* ctx, void* ss_sp, size_t ss_size, void (*ctx_func)(), unsigned int args, ...)
 {
   /* Init the context from this context! */
   getcontext(ctx);
@@ -833,7 +834,37 @@ void cpu_initialize_context(cpu_context_t* ctx, void* ss_sp, size_t ss_size, voi
   ctx->uc_stack.ss_flags = 0;
 
   pthread_sigmask(0, NULL, & ctx->uc_sigmask);  /* We don't want any signals changed */
-  makecontext(ctx, (void*) ctx_func, 0);
+
+  /* Read arguments into an array */
+  assert(args <= 8);
+  va_list ap;
+  va_start(ap, args);
+  void* argv[8];
+  for(uint i=0;i<args;i++) argv[i] = va_arg(ap, void*);
+
+  /* Make the context */
+  switch(args) {
+  	case 0:
+  		makecontext(ctx, (void*) ctx_func, args); break;
+  	case 1:
+  		makecontext(ctx, (void*) ctx_func, args, argv[0]); break;
+  	case 2:
+  		makecontext(ctx, (void*) ctx_func, args, argv[0], argv[1]); break;
+  	case 3:
+  		makecontext(ctx, (void*) ctx_func, args, argv[0], argv[1], argv[2]); break;
+  	case 4:
+  		makecontext(ctx, (void*) ctx_func, args, argv[0], argv[1], argv[2], argv[3]); break;
+  	case 5:
+  		makecontext(ctx, (void*) ctx_func, args, argv[0], argv[1], argv[2], argv[3], argv[4]); break;
+  	case 6:
+  		makecontext(ctx, (void*) ctx_func, args, argv[0], argv[1], argv[2], argv[3], argv[4], argv[5]); break;
+  	case 7:
+  		makecontext(ctx, (void*) ctx_func, args, argv[0], argv[1], argv[2], argv[3], argv[4], argv[5], argv[6]); break;
+  	case 8:
+  		makecontext(ctx, (void*) ctx_func, args, argv[0], argv[1], argv[2], argv[3], argv[4], argv[5], argv[6], argv[7]); break;
+  	default:
+  		abort();
+  }
 }
 
 

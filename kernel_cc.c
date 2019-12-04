@@ -139,9 +139,6 @@ void Cond_Broadcast(CondVar* cv)
 	wqueue_broadcast((wait_queue*) cv);
 }
 
-
-
-
 /*
  *
  * The kernel locks

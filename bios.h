@@ -115,7 +115,6 @@
  */
 typedef void interrupt_handler();
 
-typedef int sig_atomic_t;
 
 /** @brief Helper declaration */
 typedef unsigned int uint;
@@ -178,7 +177,7 @@ extern _Thread_local uint cpu_core_id;
 /**
    	@brief Returns the number of cores.
  */
-uint cpu_cores();
+uint cpu_cores(void);
 
 
 /**
@@ -190,7 +189,7 @@ uint cpu_cores();
 	This is mostly useful when the machine boots the operating
 	system, or at shutdown.
  */
-void cpu_core_barrier_sync();
+void cpu_core_barrier_sync(void);
 
 
 /**
@@ -224,7 +223,7 @@ void cpu_interrupt_handler(Interrupt interrupt, interrupt_handler handler);
 
 	@see cpu_enable_interrupts
  */
-void cpu_disable_interrupts();
+void cpu_disable_interrupts(void);
 
 
 /**
@@ -235,7 +234,7 @@ void cpu_disable_interrupts();
 
 	@see cpu_disable_interrupts
 */
-void cpu_enable_interrupts();
+void cpu_enable_interrupts(void);
 
 
 /**
@@ -247,7 +246,7 @@ void cpu_enable_interrupts();
 	This function is useful when a core becomes idle. An idle core does not
 	consume simulation resources (in particular CPU time).
 */
-void cpu_core_halt();
+void cpu_core_halt(void);
 
 
 /**
@@ -263,14 +262,14 @@ void cpu_core_restart(uint c);
 
 	This call will restart some halted core, if at least one exists.
 */
-void cpu_core_restart_one();
+void cpu_core_restart_one(void);
 
 /**
 	@brief Signal all halted cores to restart.
 
 	When this function is called, all halted cores will be restarted. 
 */
-void cpu_core_restart_all();
+void cpu_core_restart_all(void);
 
 
 /**
@@ -289,7 +288,7 @@ typedef ucontext_t cpu_context_t;
 	@param ss_size the size of the stack segment
 	@param func the function to execute in the new context
 */
-void cpu_initialize_context(cpu_context_t* ctx, void* ss_sp, size_t ss_size, void (*func)());
+void cpu_initialize_context(cpu_context_t* ctx, void* ss_sp, size_t ss_size, void (*func)(), unsigned int args, ...);
 
 
 /**
@@ -347,7 +346,7 @@ TimerDuration bios_set_timer(TimerDuration usec);
 
 	@see bios_set_timer
  */
-TimerDuration bios_cancel_timer();
+TimerDuration bios_cancel_timer(void);
 
 
 /**
@@ -361,7 +360,7 @@ TimerDuration bios_cancel_timer();
 	around 100 msec. Therefore, it is inappropriate for any type of
 	precise timing.
  */
-TimerDuration bios_clock();
+TimerDuration bios_clock(void);
 
 
 
@@ -372,7 +371,7 @@ TimerDuration bios_clock();
 	This is the number specified at the initialization of the
 	VM.
  */
-uint bios_serial_ports();
+uint bios_serial_ports(void);
 
 /**
 	@brief Assign a core to interrupts from a specific serial device.

@@ -117,9 +117,6 @@ typedef struct thread_control_block {
 	/* These fields are PUBLIC and can be read/changed outside the scheduler */
 
 	PCB* owner_pcb; /**< @brief This is null for a free TCB */
-	void (*thread_func)(); /**< @brief The initial function executed by this thread */
-	void* ss_sp;		   /**< @brief Pointer to the stack */
-	size_t ss_size;			/**< @brief The stack size */
 
 	/* All these fields are private and should only be accessed by the scheduler */
 
@@ -155,14 +152,15 @@ typedef struct thread_control_block {
 	struct sched_queue_tcb q;	/**< @brief Information maintained by and for the scheduler queue */
 
 #ifndef NVALGRIND
-	unsigned valgrind_stack_id; /**< @brief Valgrind helper for stacks. 
+	/** @brief Valgrind helper for stacks. 
 
-	  This is useful in order to register the thread stack to the valgrind memory profiler. 
+	  This is used to register the thread stack to the valgrind memory profiler. 
 	  Valgrind needs to know which parts of memory are used as stacks, in order to return
 	  meaningful error information. 
 
-	  This field is not relevant to anything in the TinyOS logic and can be ignored.
-	  */
+	  This field is not relevant to the TinyOS functioning and can be ignored.
+	  */	
+	unsigned valgrind_stack_id; 
 #endif
 	  
 } TCB;
@@ -288,7 +286,7 @@ typedef struct core_control_block {
 	TCB* current_thread; /**< @brief Points to the thread currently owning the core */
 	TCB* previous_thread; /**< @brief Points to the thread that previously owned the core */
 	TCB idle_thread; /**< @brief Used by the scheduler to handle the core's idle thread */
-	sig_atomic_t preemption; /**< @brief Marks preemption, used by the locking code */
+	char preemption; /**< @brief Marks preemption, used by the locking code */
 } CCB;
 
 /** @brief the array of Core Control Blocks (CCB) for the kernel */
