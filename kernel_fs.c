@@ -318,7 +318,8 @@ Inode* lookup_dirname(struct parsed_path* pp)
 	Inode* last=NULL;
 	int ncomp = 0;
 
-	
+	if(pp->relpath)
+		last = g
 
 
 }
