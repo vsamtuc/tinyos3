@@ -22,11 +22,29 @@ BOOT_TEST(test_rootfs_is_root, "Test that the rootfs filesystem is mounted as ro
 	return 0;
 }
 
+BOOT_TEST(test_pathcomp, "Test operations on pathcomp_t")
+{
+	pathcomp_t pcomp;
+
+	strcpy(pcomp, "hello");
+
+	void change(pathcomp_t p) {
+		p[0] = 'H';
+	}
+
+	change(pcomp);
+
+	ASSERT(pcomp[0]=='H');
+	return 0;
+
+}
+
 
 
 TEST_SUITE(fsystem_tests, "Filesystem tests")
 {
 	&test_rootfs_is_root,
+	&test_pathcomp,
 	NULL
 };
 

@@ -13,10 +13,10 @@
  *----------------------------------*/
 
 /** @brief Maximum length of a directory entry name */
-#define MAX_NAME_LENGTH 31
+#define MAX_NAME_LENGTH 63
 
 /** @brief Maximum number of components in a path */
-#define MAX_PATH_DEPTH   12
+#define MAX_PATH_DEPTH   16
 
 /** @brief Maximum length of a pathname. */
 #define MAX_PATHNAME 512
@@ -53,17 +53,25 @@ int parse_path(struct parsed_path* path, const char* pathname);
  *
  *----------------------------------*/
 
-
-struct dir_entry;
-struct Inode;
-struct FSys_type;
-struct Mount;
-
 typedef uintptr_t Inode_id;
+#define NO_INODE  ((Inode_id)-1)
+
 typedef struct Inode Inode;
 typedef struct Mount Mount;
 typedef struct FSystem_type FSystem;
 typedef struct dir_entry dir_entry;
+
+
+/* A bunch of flags for the fields of interest in a call to Status */
+#define STAT_DEV	(1<<0)
+#define STAT_INO	(1<<1)
+#define STAT_TYPE	(1<<2)
+#define STAT_NLINK	(1<<3)
+#define STAT_RDEV	(1<<4)
+#define STAT_SIZE	(1<<5)
+#define STAT_BLKSZ	(1<<6)
+#define STAT_BLKNO	(1<<7)
+#define STAT_ALL	((1<<8)-1)
 
 
 typedef struct Inode_ref
@@ -71,15 +79,6 @@ typedef struct Inode_ref
 	struct Mount* mnt;
 	Inode_id id;
 } Inode_ref;
-
-
-/* The type of FSE (File System Entity) Determines the API */
-typedef enum {
-	FSE_FS,
-	FSE_DIR,
-	FSE_FILE,
-	FSE_DEV
-} Fse_type;
 
 
 typedef struct fs_param 
@@ -108,30 +107,99 @@ struct FSystem_type
 {
 	const char* name;
 
-	/* Create and delete inodes (except for directories) */
-	Inode_id (*AllocateNode)(Mount* mnt, Fse_type type, Dev_t dev);
-
-	/* Maybe this should not be exported to the system? */
-	int (*ReleaseNode)(Mount* mnt, Inode_id id);
-
-	/* Load and save inodes */
-	void (*FetchInode)(Inode* inode);
-	void (*FlushInode)(Inode* inode, int keep);
-
-	/* Return a stream object for this inode */
-	void* (*OpenInode)(Inode* inode, int flags);
-
-	/* Directory ops */
-	Inode* (*Lookup)(Inode* this, const pathcomp_t name);
-	int (*Link)(Inode* this, const pathcomp_t name, Inode* inode);
-	int (*Unlink)(Inode* this, const pathcomp_t name);
-
-	/* Mount a file system of this type. This is a file system method */
-	struct Mount* (*Mount)(FSystem* this, Dev_t dev, Inode* mpoint, 
-		unsigned int param_no, fs_param* param_vec);
+	/* Mount a file system of this type. */
+	int (*Mount)(Mount* mnt, FSystem* this, Dev_t dev, Inode* mpoint, 
+			unsigned int param_no, fs_param* param_vec);
 
 	/* Unmount a particular mount */
 	int (*Unmount)(Mount* mnt);
+
+
+	/* Create inodes (except for directories) */
+	Inode_id (*AllocateNode)(Mount* mnt, Fse_type type, Dev_t dev);
+
+	/**
+		@brief Free an i-node.
+
+		Release an i-node and the resources related to it.
+		Note: Maybe this should not be exported to the system?
+		Does any code outside of the fsys code ever call it?
+	   */
+	int (*FreeNode)(Mount* mnt, Inode_id id);
+
+	/**
+		@brief Pin i-node data for a new handle.
+
+		When a new handle is created for some i-node, via a call to @ref pin_inode(),
+		this function is called to inform the mount. Typically, this means that the 
+		i-node data is loaded from disk, so that subsequent operations are done quickly.
+
+		Returns 0 on success and -1 on failure.
+	  */
+	int (*PinInode)(Inode* inode);
+
+	/**
+		@brief Unload i-node data for a new handle.
+
+		When the handle for an i-node is about to be released (because it is unpinned),
+		this function is called.
+
+		Returns 0 on success and -1 on failure.
+	  */
+	int (*UnpinInode)(Inode* inode);
+
+	/**
+		@brief Save the i-node and related data to disk.
+
+		The entity referred to by the inode will be sent to storage. This includes the
+		inode itself as well as any data represented by this i-node (e.g., a file's content).
+
+		Returns 0 on success and -1 on failure.
+	 */
+	int (*FlushInode)(Inode* inode);
+
+	/**
+		@brief Return a stream object for this inode 
+	
+		The stream object is initialized for proper use by the kernel stream
+		system calls.
+	*/
+	int (*OpenInode)(Inode* inode, int flags, void** obj, file_ops** ops);
+
+	/**
+		@brief Search a directory for a particular entry by name.
+
+		If found, and \c id is not NULL, store the \c Inode_id in it. Else, do not touch it.
+		Return 0 on success and -1 on failure.
+	 */
+	int (*Lookup)(Inode* this, const pathcomp_t name, Inode_id* id);
+
+	/**
+		@brief Add a new entry to a directory.
+	 */
+	int (*Link)(Inode* this, const pathcomp_t name, Inode_id id);
+
+	/**
+		@brief Remove an entry from a directory
+	 */
+	int (*Unlink)(Inode* this, const pathcomp_t name);
+
+	/**
+		@brief Return the status information of an i-node.
+
+		Return status information on an i-node. The information is returned in
+		the fields of object \c status. The \c which flag indicates the information
+		actually requested.
+
+		For some file systems, actually returning some status information may be
+		expensive. Therefore, the \c which flag designates that only some information
+		may be needed.
+
+		The constant \c STAT_ALL returns the full information, to the best of the
+		file system's ability.
+	 */
+	void (*Status)(Inode* this, struct Stat* status, int which);
+
 };
 
 
@@ -202,20 +270,6 @@ void mount_decref(Mount* mnt);
 
 /*----------------------------------
  *
- * Directories
- *
- *----------------------------------*/
-
-
-typedef struct dir_entry
-{
-	pathcomp_t name;
-	Inode_id id;
-} dir_entry;
-
-
-/*----------------------------------
- *
  * Inodes
  *
  *----------------------------------*/
@@ -256,30 +310,14 @@ typedef struct Inode
 	Inode_ref ino_ref;		/**< @brief Inode reference */
 	rlnode inotab_node;   	/**< @brief Used to add this to the inode table */
 
-	Fse_type type;			/**< @brief Type of inode (determines the API) */
-	unsigned int lnkcount;  /**< @brief Hard links to this inode */
-	int dirty;			 	/**< @brief True if this inode is dirty */
+	/** @brief Points to a mount whose mount point is this directory, or NULL */
+	struct Mount* mounted;
 
-	/* API-specific data */
-	union {
-		struct {
-			struct Mount* mount;/**< @brief Points to a mount on this directory, or NULL */
-			Inode_id parent;	/**< @brief This is our parent in our own filesystem. */
-		} dir;
-
-		struct {} file;
-		
-		struct {
-			Dev_t rdev;			/**< @brief The device represented by this device node */
-		} dev;
-	};
+	/** @brief This pointer is used by the mounted file system. */
+	void* fsinode;			
 
 } Inode;
 
-
-
-/* This is the root directory of the tinyos session */
-extern Inode* root_inode;
 
 /**
 	@brief Turn an i-node reference into a handle.
@@ -306,18 +344,91 @@ void repin_inode(Inode* inode);
 
 	This call decreases the number of holders of the `inode` handle.
 	When the number of holders becomes zero, the inode handle is
-	no longer valid, and the i-node may be evicted from memory.
+	no longer valid, and the i-node will be evicted from memory.
+
+	Return 0 on success. If an error occurred, return -1. However, the
+	\c inode handle is still released and should not be used. This
+	error will often be during a @ref Close() call, and will be reported
+	to the user.
  */
-void unpin_inode(Inode* inode);
+int unpin_inode(Inode* inode);
 
 
-Inode* dir_lookup(Inode* dir_inode, const pathcomp_t name);
+/**
+	@brief Return the handle to an inode, if it exists.
 
-int dir_link(Inode* dir_inode, const pathcomp_t name, Inode* inode);
+	This method does not pin an i-node, it simply checks to see
+	if it is already pinned, and returns the handle if so.
 
-int dir_unlink(Inode* dir_inode, const pathcomp_t name);
+	Note that this handle should not be kept past the current operation,
+	as it may be invalidated. To keep this handle, call @ref repin_inode()
+	after this call.
+ */
+Inode* inode_if_pinned(Inode_ref inoref);
 
-void inode_flush(Inode* inode);
+
+/* --------------------------------------------
+	Some convenience methods on Inode objects
+ ---------------------------------------------- */
+
+/**
+	@brief Return the mount of this inode handle
+ */
+inline static Mount* inode_mnt(Inode* inode)
+{
+	return inode->ino_ref.mnt;
+}
+
+/**
+	@brief Return the file system of this inode handle
+ */
+inline static FSystem* inode_fsys(Inode* inode) 
+{
+	return inode_mnt(inode)->fsys;
+}
+
+
+/**
+	@brief Open a stream on this i-node.
+ */
+inline static int inode_open(Inode* inode, int flags, void** obj, file_ops** ops)
+{
+	return inode_fsys(inode)->OpenInode(inode, flags, obj, ops);
+}
+
+/**
+	@brief Look up a name in a directory
+ */
+inline static int inode_lookup(Inode* dir_inode, const pathcomp_t name, Inode_id* id)
+{
+	return inode_fsys(dir_inode)->Lookup(dir_inode, name, id);
+}
+
+/**
+	@brief Add a link to a file system element from a directory
+ */
+inline static int inode_link(Inode* dir_inode, const pathcomp_t name, Inode_id inode)
+{
+	return inode_fsys(dir_inode)->Link(dir_inode, name, inode);
+}
+
+
+/**
+	@brief Remove a link in a directory.
+ */
+inline static int inode_unlink(Inode* dir_inode, const pathcomp_t name)
+{
+	return inode_fsys(dir_inode)->Unlink(dir_inode, name);
+}
+
+/**
+	@brief Flush the file system element to storage.
+ */
+inline static int inode_flush(Inode* inode)
+{
+	return inode_fsys(inode)->FlushInode(inode);
+}
+
 
 
 /*----------------------------------
@@ -327,7 +438,15 @@ void inode_flush(Inode* inode);
  *
  *----------------------------------*/
 
+/**
+ 	@brief Initialize the file system data structures during boot.
+ */
 void initialize_filesys();
+
+
+/**
+ 	@brief Finalize the file system data structures during boot.
+ */
 void finalize_filesys();
 
 

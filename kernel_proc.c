@@ -4,6 +4,7 @@
 #include "kernel_sys.h"
 #include "kernel_proc.h"
 #include "kernel_streams.h"
+#include "kernel_fs.h"
 
 #ifndef NVALGRIND
 #include <valgrind/valgrind.h>
@@ -219,10 +220,27 @@ void process_init_resources(PCB* newproc, PCB* parent)
 	/* Clear the kill flag */
 	newproc->sigkill = 0;
 
-	if(parent==NULL) return;
+	if(parent==NULL) {
+		if(get_pid(newproc) == 1) {
+			/* This is init, we need to prepare resources that will be inherited. */
+
+			/* Make the current and root directories point at the system root */
+			newproc->root_dir = pin_inode((Inode_ref){ mount_table, mount_table->root_dir});
+			newproc->cur_dir = newproc->root_dir;
+			repin_inode(newproc->cur_dir);
+		
+		}
+		return;
+	}
 
 	/* link from parent */
 	rlist_push_front(& parent->children_list, & newproc->children_node);
+
+	/* get the root and current directories */
+	newproc->root_dir = parent->root_dir;
+	newproc->cur_dir = parent->cur_dir;
+	repin_inode(newproc->root_dir);
+	repin_inode(newproc->cur_dir);
 
 	/* Inherit file streams from parent */
 	for(int i=0; i<MAX_FILEID; i++) {
@@ -439,17 +457,21 @@ void sys_Exit(int exitval)
 
   /* Do all the other cleanup we want here, close files etc. */
 
+  	/* Release directory handles */
+	unpin_inode(curproc->root_dir);
+	unpin_inode(curproc->cur_dir);
+
   /* Disconnect my main_thread */
   curproc->main_thread = NULL;
   process_clear_exec_info(curproc);
 
-  /* Clean up FIDT */
-  for(int i=0;i<MAX_FILEID;i++) {
-    if(curproc->FIDT[i] != NULL) {
-      FCB_decref(curproc->FIDT[i]);
-      curproc->FIDT[i] = NULL;
-    }
-  }
+	/* Clean up FIDT */
+	for(int i=0;i<MAX_FILEID;i++) {
+		if(curproc->FIDT[i] != NULL) {
+			FCB_decref(curproc->FIDT[i]);
+			curproc->FIDT[i] = NULL;
+		}
+	}
 
   /* Reparent any children of the exiting process to the 
      initial task */

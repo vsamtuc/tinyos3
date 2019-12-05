@@ -35,10 +35,10 @@ void boot_tinyos_kernel()
 
   if(cpu_core_id==0) {
     /* Initialize the kenrel data structures */
+    initialize_filesys();
     initialize_processes();
     initialize_devices();
     initialize_files();
-    initialize_filesys();
     initialize_scheduler();
 
     /* The boot task is executed normally! */

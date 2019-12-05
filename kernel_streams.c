@@ -9,23 +9,22 @@
 #define MAX_FILES MAX_PROC
 
 FCB FT[MAX_FILES];
-rlnode FCB_freelist;
-
-
-void initialize_files()
-{
-  rlnode_init(&FCB_freelist,NULL);
-  for(int i=0;i<MAX_FILES;i++) {
-
-    FT[i].refcount = 0;
-    rlnode_init(& FT[i].freelist_node, &FT[i]);
-    rlist_push_back(&FCB_freelist, & FT[i].freelist_node);
-  }
-}
+//rlnode FCB_freelist;
+FCB* FCB_freelist;
 
 
 FCB* acquire_FCB()
 {
+	FCB* fcb = FCB_freelist;
+
+	if(fcb) {
+		FCB_freelist = fcb->streamobj;
+		fcb->refcount = 0;
+		fcb->streamobj = NULL;
+		fcb->streamfunc = NULL;
+	}
+	return fcb;
+#if 0
   if(! is_rlist_empty(& FCB_freelist)) {
     FCB* fcb = rlist_pop_front(& FCB_freelist)->fcb;
     fcb->refcount = 0;
@@ -33,12 +32,29 @@ FCB* acquire_FCB()
   }
   else
     return NULL;
+#endif
 }
 
 void release_FCB(FCB* fcb)
 {
-  rlist_push_back(& FCB_freelist, & fcb->freelist_node);
+	//rlist_push_back(& FCB_freelist, & fcb->freelist_node);
+	fcb->streamobj = FCB_freelist;
+	FCB_freelist = fcb;
 }
+
+void initialize_files()
+{
+  //rlnode_init(&FCB_freelist,NULL);
+	FCB_freelist = NULL;
+	for(int i=0;i<MAX_FILES;i++) {
+
+	FT[i].refcount = 0;
+	//rlnode_init(& FT[i].freelist_node, &FT[i]);
+	//rlist_push_back(&FCB_freelist, & FT[i].freelist_node);
+	release_FCB(&FT[i]);	
+  }
+}
+
 
 
 void FCB_incref(FCB* fcb)

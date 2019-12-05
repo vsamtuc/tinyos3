@@ -374,6 +374,7 @@ typedef struct resource_list_node * rlnode_ptr;
     Inode* inode; \
     Mount* mnt; \
     void* obj; \
+    const char* str; \
     rlnode_ptr node_ptr; \
     intptr_t num; \
     uintptr_t unum; \
@@ -1078,11 +1079,11 @@ static inline hash_value hash_combine(hash_value lhs, hash_value rhs)
 
 static inline hash_value hash_string(const char* str)
 {
-	hash_value h = 0;
+	/* This is from the Python string implementation */
+	hash_value h = (*str) << 7;
 	while(*str) {
-		h *= 53;
-		h += *str;
-		str++;
+		h *= 1000003;
+		h ^= *str++;
 	}
 	return h;
 }

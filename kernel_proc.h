@@ -59,7 +59,7 @@ typedef struct process_control_block {
   int argl;               /**< @brief The main thread's argument length */
   void* args;             /**< @brief The main thread's argument string */
 
-  volatile int sigkill;            /**< @brief Mark a process for termination */
+  volatile int sigkill;   /**< @brief Mark a process for termination */
 
   rlnode children_list;     /**< @brief List of children */
   rlnode exited_list;       /**< @brief List of exited children */
@@ -76,6 +76,9 @@ typedef struct process_control_block {
                              @c WaitChild() */
 
   FCB* FIDT[MAX_FILEID];  /**< @brief The fileid table of the process */
+
+  Inode* cur_dir;         /**< @brief Current file system directory */
+  Inode* root_dir;        /**< @brief Root directory for this process */
 
 } PCB;
 

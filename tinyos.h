@@ -473,6 +473,23 @@ Fid_t OpenNull();
  *******************************************/
 
 
+enum Open_flags
+{
+	/* One of these must be included */
+	OPEN_RDONLY = 001,
+	OPEN_WRONLY = 002,
+	OPEN_RDWR   = 003,
+
+	/* Open in append mode */
+	OPEN_APPEND = 012,	// Open in "append mode"
+
+	OPEN_CREATE = 100,	// Create if it does not exist
+	OPEN_EXCL   = 200,	// Ensure the file does not exist
+	OPEN_TRUNC  = 400	// Truncate if opened for writing
+};
+
+
+
 Fid_t Open(const char* pathname, int flags);
 
 
@@ -482,14 +499,50 @@ typedef uint64_t Dev_t;
 #define DEV_MAJOR(dev)  ((uint32_t) ((dev)>>32))
 #define DEV_MINOR(dev)  ((uint32_t) (dev))
 
+/**
+	@brief Types of File System Entity (FSE).
 
+	This enumeration lists the types of entities that are contained
+	in a file system. 
+
+	Note that this is just an indication of which API (system calls)
+	are applicable to an entity. Since we support virtual file systems,
+	the actual type of an entity can be any crazy thing. For example,
+	a file system exposing kernel entities may represent a  process as
+	a directory. Such correspondences are documented in the file system
+	driver.
+*/
+typedef enum {
+	FSE_DIR,
+	FSE_FILE,
+	FSE_DEV
+} Fse_type;
+
+
+/**
+	@brief Record of the status of a File System entity.
+
+	An object of this type can be filled using the \ref Stat()
+	system call, returning details of a particular File System
+	Entity.
+*/
 struct Stat {
-	Dev_t			dev;	/**< @brief Device id for device containing file */
-	uintptr_t		inode; 	/**< @brief I-node number */
-	unsigned int	linkno;	/**< @brief Number of hard links */
-	intptr_t		size;	/**< @brief Total size in bytes */
+	Dev_t 			st_dev;			/**< @brief Device id for device containing file */
+	uintptr_t 		st_ino;			/**< @brief I-node number */
+	Fse_type 		st_type;		/**< @brief File system entity type */
+	unsigned int	st_nlink;		/**< @brief Number of hard links */
+	Dev_t 			st_rdev;		/**< @brief Device id for a device entity */
+	uintptr_t 		st_size;		/**< @brief Total size in bytes */
+	uintptr_t 		st_blksize;		/**< @brief Block size for file system I/O */
+	uintptr_t 		st_blocks;		/**< @brief Number of blocks allocated */
 };
 
+
+/**
+	@brief Retrieve the status of a File System entity.
+
+	Return the status of the file system entity at \c pathname.
+*/
 int Stat(const char* pathname, struct Stat* statbuf);
 
 

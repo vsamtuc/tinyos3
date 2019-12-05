@@ -3,7 +3,8 @@
 
 #include "kernel_fs.h"
 #include "kernel_proc.h"
-
+#include "kernel_streams.h"
+#include "kernel_sys.h"
 
 /*=========================================================
 
@@ -139,25 +140,37 @@ static int inode_table_equal(rlnode* node, rlnode_key key)
 }
 
 
-/*
-	The root inode points to the base of the file system.
- */
-
-
-
-Inode* pin_inode(Inode_ref ino_ref)
+/* Look into the inode_table for existing inode */
+Inode* inode_if_pinned(Inode_ref ino_ref)
 {
-	/* Look into the inode_table for existing inode */
 	hash_value hval = inode_table_hash(&ino_ref);
 	rlnode* node = rdict_lookup(&inode_table, hval, &ino_ref, NULL, inode_table_equal);
 	if(node) {
 		/* Found it! */
 		Inode* ret = node->inode;
-		ret->pincount ++;
 		return ret;
+	} else {
+		return NULL;
 	}
+}
 
-	/* Not already used */
+
+/*
+	The root inode points to the base of the file system.
+ */
+
+Inode* pin_inode(Inode_ref ino_ref)
+{
+	Inode* inode;
+
+	/* Look into the inode_table for existing inode */
+	hash_value hval = inode_table_hash(&ino_ref);
+	rlnode* node = rdict_lookup(&inode_table, hval, &ino_ref, NULL, inode_table_equal);
+	if(node) {				/* Found it! */
+		inode = node->inode;
+		repin_inode(inode);
+		return inode;
+	}
 
 	/* Get the mount and file system from the reference */
 	Mount* mnt = ino_ref.mnt;
@@ -167,20 +180,23 @@ Inode* pin_inode(Inode_ref ino_ref)
 		Get a new Inode object and initialize it. This is currently done via malloc, but
 		we should really replace this with a pool, for speed.
 	 */
-	Inode* inode = (Inode*) xmalloc(sizeof(Inode));
+	inode = (Inode*) xmalloc(sizeof(Inode));
 	rlnode_init(&inode->inotab_node, inode);
 
 	/* Initialize reference */
 	inode->ino_ref = ino_ref;
-	mount_incref(mnt);
 
+	/* Fetch data from file system. If there is an error, clean up and return NULL */
+	if(fsys->PinInode(inode)==-1) {
+		free(inode);
+		return NULL;
+	}
+	
 	/* Add to inode table */
 	inode->pincount = 1;
-	rdict_insert(&inode_table, &inode->inotab_node, hval);
-
-	/* Fetch data from file system */
-	fsys->FetchInode(inode);
+	mount_incref(mnt);
 	assert(inode_table_equal(&inode->inotab_node, &ino_ref));
+	rdict_insert(&inode_table, &inode->inotab_node, hval);
 
 	return inode;
 }
@@ -191,39 +207,27 @@ void repin_inode(Inode* inode)
 	inode->pincount ++;
 }
 
-void unpin_inode(Inode* inode)
+int unpin_inode(Inode* inode)
 {
 	inode->pincount --;
-	if(inode->pincount != 0) return;
+	if(inode->pincount != 0) return 0;
+
 	/* Nobody is pinning the inode, so we may release the handle */
-	Mount* mnt = inode->ino_ref.mnt;
-	FSystem* fsys = mnt->fsys;
-
-	/* If the inode is dirty, flush it */
-	if(inode->dirty)
-		fsys->FlushInode(inode, 0);
-	assert(! inode->dirty);
-
 	/* Remove it from the inode table */
 	hash_value hval = inode_table_hash(&inode->ino_ref);
 	rdict_remove(&inode_table, &inode->inotab_node, hval);
 
 	/* Remove reference to mount */
-	mount_decref(mnt);
+	mount_decref(inode_mnt(inode));
+
+	/* Evict it */
+	int ret = inode_fsys(inode)->UnpinInode(inode);
 
 	/* Delete it */
 	free(inode);
 
+	return ret;
 }
-
-
-void inode_flush(Inode* inode)
-{
-	if(! inode->dirty) return;
-	FSystem* fsys = inode->ino_ref.mnt->fsys;
-	fsys->FlushInode(inode, 1);
-}
-
 
 
 /*=========================================================
@@ -287,8 +291,8 @@ Mount mount_table[MOUNT_MAX];
 Mount* mount_acquire()
 {
 	for(unsigned int i=0; i<MOUNT_MAX; i++) {
-		if(mount_table[i].refcount == 0) {
-			mount_table[i].refcount = 1;
+		if(mount_table[i].fsys == NULL) {
+			mount_table[i].refcount = 0;
 			return & mount_table[i];
 		}
 	}
@@ -309,6 +313,118 @@ void mount_decref(Mount* mnt)
 
 /*=========================================================
 
+	Directory operations
+
+  =========================================================*/
+
+
+Inode* dir_parent(Inode* dir)
+{
+	Mount* mnt = inode_mnt(dir);
+	Inode_id par_id;
+
+	if(inode_lookup(dir, "..", &par_id)==-1) {
+		/* Oh dear, we are deleted!! */
+		return NULL;
+	}
+
+	/* See if we are root */
+	if(par_id == dir->ino_ref.id) {
+		/* Yes, we are a root in our file system.
+		  Take the parent of our mount point */
+		if(mnt->mount_point == NULL) {
+			/* Oh dear, we are THE root */
+			repin_inode(dir);
+			return dir;
+		} 
+		return dir_parent(mnt->mount_point);
+	}
+
+	return pin_inode((Inode_ref){mnt, par_id});
+}
+
+
+Inode* dir_lookup(Inode* dir, const pathcomp_t name)
+{
+	/* Check the easy cases */
+	if(strcmp(name, ".")==0) {
+		repin_inode(dir);
+		return dir;
+	}
+	if(strcmp(name, "..")==0) 
+		return dir_parent(dir);
+
+	Inode_id id;
+
+	/* Do a lookup */
+	if(inode_lookup(dir, name, &id) == -1) return NULL;
+
+	/* Pin the next dir */
+	Inode* inode = pin_inode((Inode_ref){inode_mnt(dir), id});
+	if(inode==NULL) return NULL;
+	
+	/* Check to see if it has a mounted directory on it */
+	if(inode->mounted != NULL) {
+		Mount* mnt = inode->mounted;
+		unpin_inode(inode);
+		inode = pin_inode((Inode_ref){mnt, mnt->root_dir});
+		if(inode==NULL) return NULL;
+	}
+
+	return inode;
+}
+
+
+Inode* dir_allocate(Inode* dir, const pathcomp_t name, Fse_type type)
+{
+	Mount* mnt = inode_mnt(dir);
+	FSystem* fsys = mnt->fsys;
+	Inode_id new_id;
+
+	if(inode_lookup(dir, name, &new_id)==0) return NULL;
+	assert(sys_GetError()==ENOENT);
+
+	new_id = fsys->AllocateNode(mnt, type, NO_DEVICE);
+	if( inode_link(dir, name, new_id) == -1 ) {
+		// This should not have happened...
+		fsys->FreeNode(mnt, new_id);
+		return NULL;
+	}
+
+	return pin_inode((Inode_ref){mnt, new_id});
+}
+
+
+
+Inode* lookup_path(struct parsed_path* pp, unsigned int tail)
+{
+	Inode* inode=NULL;
+
+	/* Anchor the search */
+	if(pp->relpath) {
+		inode = CURPROC->cur_dir;  
+	} else {
+		inode = CURPROC->root_dir;
+	}
+
+	assert(inode != NULL);
+
+	/* Start the search */
+	repin_inode(inode);
+
+	for(unsigned int i=0; i+tail < pp->depth; i++) {
+		Inode* next = dir_lookup(inode, pp->component[i]);
+		unpin_inode(inode);
+		if(next==NULL) return NULL;
+		inode = next;
+	}
+
+	return inode;
+}
+
+
+/*=========================================================
+
 
 	VFS system calls
 
@@ -316,58 +432,107 @@ void mount_decref(Mount* mnt)
   =========================================================*/
 
 
-Inode* lookup_dirname(struct parsed_path* pp)
-{
-#if 0
-	Inode* prev=NULL;
-	Inode* last=NULL;
-	int ncomp = 0;
-
-	/* Anchor the search */
-	if(pp->relpath) {
-		last = root_inode;  /* TODO:  THIS IS WRONG !!! */
-	} else {
-		last = root_inode;
-	}
-
-	assert(last != NULL);
-
-	while(ncomp < pp->depth) {
-
-		if(last->type != FSE_DIR) {
-			set_errcode(ENOTDIR);
-			return NULL;
-		} 
-
-		Inode* next = 0;
-
-	}
-#endif
-	return NULL;
-}
-
-
 
 
 Fid_t sys_Open(const char* pathname, int flags)
 {
+	Fid_t fid;
+	FCB* fcb;
+
+	/* Try to reserve ids */
+	if(! FCB_reserve(1, &fid, &fcb)) {
+		return NOFILE;
+	}
+	/* RESOURCE: Now we have reserved fid/fcb pair */
+
 	/* Take the path */
 	struct parsed_path pp;
 	if(parse_path(&pp, pathname)==-1) {
+	    FCB_unreserve(1, &fid, &fcb);
 		set_errcode(ENAMETOOLONG);
-		return -1;
+		return NOFILE;
 	}
 
-	//Inode* dir = lookup_dirname(&pp);
+	Inode* dir = lookup_path(&pp, 1);
+	if(dir==NULL) {
+        FCB_unreserve(1, &fid, &fcb);		
+		return NOFILE;
+	}
 
+	/* RESOURCE: Now we have a pin on dir */
+	
+	/* Try looking up the file system entity */
+	Inode* file;
+	if(pp.depth == 0)
+		file = dir;
+	else 
+		file = dir_lookup(dir, pp.component[pp.depth-1]);
 
-	return NOFILE;
+	if(file == NULL) {
+		/* If no entity was found, look at the creation flags */
+		if(flags & OPEN_CREATE) {
+			/* Try to create a file by this name */
+			file = dir_allocate(dir, pp.component[pp.depth-1], FSE_FILE);
+			if(file==NULL) {
+				FCB_unreserve(1, &fid, &fcb);
+				unpin_inode(dir);
+				return NOFILE;
+			}
+		} else {
+			/* Creation was not specified, so report error */
+			FCB_unreserve(1, &fid, &fcb);
+			unpin_inode(dir);
+			set_errcode(ENOENT);
+			return NOFILE;
+		}
+	} else {
+		/* An entity was found but again look at the creation flags */
+		if((flags & OPEN_CREATE) && (flags & OPEN_EXCL)) {
+			FCB_unreserve(1, &fid, &fcb);
+			unpin_inode(dir);
+			unpin_inode(file);
+			set_errcode(EEXIST);
+			return NOFILE;			
+		}
+	}
+
+	/* RELEASE: We no longer need dir */
+	unpin_inode(dir);
+
+	/* RESOURCE: We now have an entity inode (file) */
+	int rc = inode_open(file, flags & 077, &fcb->streamobj, &fcb->streamfunc);
+
+	/* RELEASE: We no longer need file */
+	unpin_inode(file);
+
+	if(rc) {
+		/* Error in inode_open() */
+		FCB_unreserve(1, &fid, &fcb);
+		return NOFILE;					
+	}
+
+	/* Success! */
+	return fid;
 }
 
 
 int sys_Stat(const char* pathname, struct Stat* statbuf)
 {
-	return -1;
+	/* Parse the path */
+	struct parsed_path pp;
+	if(parse_path(&pp, pathname)==-1) {
+		set_errcode(ENAMETOOLONG);
+		return -1;
+	}
+	
+	/* Look it up */
+	Inode* inode = lookup_path(&pp, 0);
+	if(inode==NULL) return -1;
+
+	inode_fsys(inode)->Status(inode, statbuf, STAT_ALL);
+
+	unpin_inode(inode);
+	return 0;
 }
 
 
@@ -379,8 +544,6 @@ int sys_Stat(const char* pathname, struct Stat* statbuf)
 
   =========================================================*/
 
-/* The root of the file system */
-Inode* root_inode;
 
 /* Initialization of the file system module */
 void initialize_filesys()
@@ -394,11 +557,11 @@ void initialize_filesys()
 
 	/* Init inode_table and root_node */
 	rdict_init(&inode_table, MAX_PROC);
-	root_inode = NULL;
 
 	/* Mount the rootfs as the root filesystem */
 	FSystem* rootfs = get_fsys("rootfs");
-	Mount* root_mnt = rootfs->Mount(rootfs, NO_DEVICE, root_inode, 0, NULL);
+	Mount* root_mnt = mount_acquire();
+	rootfs->Mount(root_mnt, rootfs, NO_DEVICE, NULL, 0, NULL);
 	assert(root_mnt != NULL);
 }
 
@@ -406,9 +569,12 @@ void initialize_filesys()
 void finalize_filesys()
 {
 	/* Unmount rootfs */
-	Mount* root_mnt = root_inode->ino_ref.mnt;
-	FSystem* fsys = root_mnt->fsys;	
+	Mount* root_mnt = mount_table;
+	FSystem* fsys = root_mnt->fsys;
 	CHECK(fsys->Unmount(root_mnt));
+
+	assert(inode_table.size == 0);
+	rdict_destroy(&inode_table);
 }
 
 
