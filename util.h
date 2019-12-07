@@ -359,8 +359,8 @@ typedef struct thread_control_block TCB;	/**< @brief Forward declaration */
 typedef struct core_control_block CCB;		/**< @brief Forward declaration */
 typedef struct device_control_block DCB;	/**< @brief Forward declaration */
 typedef struct file_control_block FCB;		/**< @brief Forward declaration */
-typedef struct Inode Inode;					/**< @brief Forward declaration */
-typedef struct Mount Mount;					/**< @brief Forward declaration */
+typedef struct InodeHandle Inode;					/**< @brief Forward declaration */
+typedef struct FsMount FsMount;				/**< @brief Forward declaration */
 
 /** @brief A convenience typedef */
 typedef struct resource_list_node * rlnode_ptr;
@@ -372,7 +372,7 @@ typedef struct resource_list_node * rlnode_ptr;
     DCB* dcb; \
     FCB* fcb; \
     Inode* inode; \
-    Mount* mnt; \
+    FsMount* mnt; \
     void* obj; \
     const char* str; \
     rlnode_ptr node_ptr; \

@@ -56,8 +56,8 @@ int parse_path(struct parsed_path* path, const char* pathname);
 typedef uintptr_t Inode_id;
 #define NO_INODE  ((Inode_id)-1)
 
-typedef struct Inode Inode;
-typedef struct Mount Mount;
+typedef struct InodeHandle Inode;
+typedef struct FsMount FsMount;
 typedef struct FSystem_type FSystem;
 typedef struct dir_entry dir_entry;
 
@@ -72,13 +72,7 @@ typedef struct dir_entry dir_entry;
 #define STAT_BLKSZ	(1<<6)
 #define STAT_BLKNO	(1<<7)
 #define STAT_ALL	((1<<8)-1)
-
-
-typedef struct Inode_ref
-{
-	struct Mount* mnt;
-	Inode_id id;
-} Inode_ref;
+#define STAT_NAME	(1<<8)
 
 
 typedef struct fs_param 
@@ -108,15 +102,15 @@ struct FSystem_type
 	const char* name;
 
 	/* Mount a file system of this type. */
-	int (*Mount)(Mount* mnt, FSystem* this, Dev_t dev, Inode* mpoint, 
+	int (*Mount)(FsMount* mnt, FSystem* this, Dev_t dev, Inode* mpoint, 
 			unsigned int param_no, fs_param* param_vec);
 
 	/* Unmount a particular mount */
-	int (*Unmount)(Mount* mnt);
+	int (*Unmount)(FsMount* mnt);
 
 
-	/* Create inodes (except for directories) */
-	Inode_id (*AllocateNode)(Mount* mnt, Fse_type type, Dev_t dev);
+	/* Create inodes */
+	Inode_id (*AllocateNode)(FsMount* mnt, Fse_type type, Dev_t dev);
 
 	/**
 		@brief Free an i-node.
@@ -125,7 +119,7 @@ struct FSystem_type
 		Note: Maybe this should not be exported to the system?
 		Does any code outside of the fsys code ever call it?
 	   */
-	int (*FreeNode)(Mount* mnt, Inode_id id);
+	int (*FreeNode)(FsMount* mnt, Inode_id id);
 
 	/**
 		@brief Pin i-node data for a new handle.
@@ -195,10 +189,13 @@ struct FSystem_type
 		expensive. Therefore, the \c which flag designates that only some information
 		may be needed.
 
-		The constant \c STAT_ALL returns the full information, to the best of the
+		The constant \c STAT_ALL returns the full \c struct Stat information, to the best of the
 		file system's ability.
+
+		In addition, if the \c STAT_NAME flag is provided  (note: it is not included 
+		in \c STAT_ALL), then the 
 	 */
-	void (*Status)(Inode* this, struct Stat* status, int which);
+	void (*Status)(Inode* this, struct Stat* status, pathcomp_t name, int which);
 
 };
 
@@ -236,7 +233,7 @@ FSystem* get_fsys(const char* fsys_name);
 
 #define MOUNT_MAX 32
 
-struct Mount
+struct FsMount
 {
 	/* Counts users of this mount */
 	unsigned int refcount;
@@ -261,10 +258,10 @@ struct Mount
 };
 
 
-extern Mount mount_table[MOUNT_MAX];
-Mount* mount_acquire();
-void mount_incref(Mount* mnt);
-void mount_decref(Mount* mnt);
+extern FsMount mount_table[MOUNT_MAX];
+FsMount* mount_acquire();
+void mount_incref(FsMount* mnt);
+void mount_decref(FsMount* mnt);
 
 
 
@@ -304,14 +301,15 @@ void mount_decref(Mount* mnt);
 	\c Inode_ref, we use a hash table.
 
 */
-typedef struct Inode
+typedef struct InodeHandle
 {
 	unsigned int pincount;  /**< @brief Reference-counting uses to this inode handle */
-	Inode_ref ino_ref;		/**< @brief Inode reference */
+	FsMount* ino_mnt;		/**< @brief Inode filesystem */
+	Inode_id ino_id;		/**< @brief Inode number */
 	rlnode inotab_node;   	/**< @brief Used to add this to the inode table */
 
 	/** @brief Points to a mount whose mount point is this directory, or NULL */
-	struct Mount* mounted;
+	struct FsMount* mounted;
 
 	/** @brief This pointer is used by the mounted file system. */
 	void* fsinode;			
@@ -329,7 +327,7 @@ typedef struct Inode
 	The caller should call @ref unpin_inode when the handle no longer 
 	needed.
 */
-Inode* pin_inode(Inode_ref inoref);
+Inode* pin_inode(FsMount* mnt, Inode_id id);
 
 /**
 	@brief Add a pin to an already pinned i-node.
@@ -364,7 +362,7 @@ int unpin_inode(Inode* inode);
 	as it may be invalidated. To keep this handle, call @ref repin_inode()
 	after this call.
  */
-Inode* inode_if_pinned(Inode_ref inoref);
+Inode* inode_if_pinned(FsMount* mnt, Inode_id id);
 
 
 /* --------------------------------------------
@@ -374,10 +372,20 @@ Inode* inode_if_pinned(Inode_ref inoref);
 /**
 	@brief Return the mount of this inode handle
  */
-inline static Mount* inode_mnt(Inode* inode)
+inline static FsMount* inode_mnt(Inode* inode)
 {
-	return inode->ino_ref.mnt;
+	return inode->ino_mnt;
 }
+
+
+/**
+	@brief Return the mount of this inode handle
+ */
+inline static Inode_id inode_id(Inode* inode)
+{
+	return inode->ino_id;
+}
+
 
 /**
 	@brief Return the file system of this inode handle
@@ -429,6 +437,44 @@ inline static int inode_flush(Inode* inode)
 	return inode_fsys(inode)->FlushInode(inode);
 }
 
+
+/**
+	@brief Return the FSE type of an i-node
+ */
+Fse_type inode_type(Inode* inode);
+
+
+/**
+	@brief Return a pinned handle to the parent of dir
+
+	This method knows how to cross into and out of submounts.
+ */
+Inode* dir_parent(Inode* dir);
+
+/**
+	@brief Check whether a directory contains a name.
+  */
+int dir_name_exists(Inode* dir, const pathcomp_t name);
+
+/**
+	@brief Do a directory lookup.
+
+	This method knows how to cross into and out of submounts.
+ */
+Inode* dir_lookup(Inode* dir, const pathcomp_t name);
+
+
+/**
+	@brief Allocate a new i-node in a directory.
+
+	
+  */
+Inode* dir_allocate(Inode* dir, const pathcomp_t name, Fse_type type);
+
+/**
+	@brief Follow a pathname 
+  */
+Inode* lookup_pathname(const char* pathname, const char** last);
 
 
 /*----------------------------------

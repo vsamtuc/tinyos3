@@ -224,8 +224,8 @@ void process_init_resources(PCB* newproc, PCB* parent)
 		if(get_pid(newproc) == 1) {
 			/* This is init, we need to prepare resources that will be inherited. */
 
-			/* Make the current and root directories point at the system root */
-			newproc->root_dir = pin_inode((Inode_ref){ mount_table, mount_table->root_dir});
+			/* Make the current and root directories point at the mounted system root */
+			newproc->root_dir = pin_inode(mount_table, mount_table->root_dir);
 			newproc->cur_dir = newproc->root_dir;
 			repin_inode(newproc->cur_dir);
 		

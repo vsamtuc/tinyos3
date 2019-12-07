@@ -473,23 +473,90 @@ Fid_t OpenNull();
  *******************************************/
 
 
+/**
+	@brief Flags to be passed to @ref Open().
+
+	These flags fall in two categories:
+	- creation flags are \c OPEN_CREATE, \c OPEN_EXCL and \c OPEN_TRUNC
+	  and determine what happens at the beginning, when \c Open is called.
+	- status flags determine the type of subsequent I/O operations, once
+	  the stream is created
+ */
 enum Open_flags
 {
-	/* One of these must be included */
-	OPEN_RDONLY = 001,
-	OPEN_WRONLY = 002,
-	OPEN_RDWR   = 003,
+	/* Status flags */
+	OPEN_RDONLY = 001,	/**< @brief Open only for reading */
+	OPEN_WRONLY = 002,	/**< @brief Open only for writing */
+	OPEN_RDWR   = 003,	/**< @brief Open for both reading and writing */
+	OPEN_APPEND = 012,	/**< @brief Open in "append mode" */
 
-	/* Open in append mode */
-	OPEN_APPEND = 012,	// Open in "append mode"
-
-	OPEN_CREATE = 100,	// Create if it does not exist
-	OPEN_EXCL   = 200,	// Ensure the file does not exist
-	OPEN_TRUNC  = 400	// Truncate if opened for writing
+	/* Creation flags */
+	OPEN_CREATE = 100,	/**< @brief Create file if it does not exist */
+	OPEN_EXCL   = 200,	/**< @brief Ensure the file does not exist, fail if it does. */
+	OPEN_TRUNC  = 400	/**< @brief Truncate file (if opened for writing) */
 };
 
 
+/**
+	@brief Open a file system entity specified by a path name.
 
+	This call returns a file id representing a stream on the file system element
+	specified by \c pathname. The returned Fid can then be used for normal stream I/O,
+	in a mode specified at the time of creation by the \c flags parameter.
+
+	The stream returned by \c Open supports  operations depending on the type of underlying
+	file system element that was specified by \c pathname. The following rules apply.
+
+	- **Directories:** A directory can be opened only for reading. It is not allowed to
+	  create a directory via \c Open(). The stream returned by a directory is a sequence
+	  of 0-terminated strings, each string being the name of one member of the directory.
+	  Besides @ref Read(), the only other method callable on a directory stream is @ref Seek().
+
+	- **Devices** Opening a device returns a stream sending and receiving from some device, such
+	  as the serial device. The actual semantics of I/O operations depend onthe particular device.
+
+	- **Files** Files are the main method of storing and retrieving data in the file system. Potentially
+	  the full spectrum of I/O operations can be applied to a file. Note that some file system types
+	  restrict the operations allowed on a file. For example, some filesystems are read-only.
+
+	The flags parameter takes a bit-wise OR of of a number of flags, appearing in the
+	@ref Open_flags enumeration. There are two types of flags, 	__status__ flags and 
+	__creation__ flags.
+
+
+	Status flags determine the semantics of the I/O operations of the returned stream.
+	One of \c OPEN_RDONLY, \c OPEN_WRONLY and \c OPEN_RDWR must always be provided. 
+
+	An additional status flag is \c OPEN_APPEND, which sets the stream in __append mode__.
+	In this mode, every @ref Write() operation moves the position of the stream to the end
+	of the stream.
+
+	Creation flags determine the operations performed during the call to \c Open(). The
+	\c OPEN_CREATE flag denotes that if the \c pathname does not exist, a regular file is
+	created. 
+
+	The \c OPEN_EXCL flag indicates that the pathname is not expected to exist, and
+	should it exist, an error should be returned by \c Open.
+
+	Finally, the \c OPEN_TRUNC flag indicates that, if the pathname already exists, 
+	is a regular file and is opened so that writing is allowed, then the file will be 
+	truncated to length 0 at the time of opening. In all other cases, the flag is ignored.
+
+	@param pathname is the pathname to be opened
+	@param flags is a bit-wise OR of values of @ref enum Open_flags
+	@returns an fid of a new stream, or \c NOFILE in case of error. 
+	   Possible errors are:	   
+   - **@c EMFILE** The maximum number of per-process file descriptors has been reached.
+   - **@c ENFILE** The maximum number of system-wide files has been reached.
+   - **@c ENAMETOOLONG** The pathname exceeds the limits of the operating system.
+   - **@c ENOENT ** The pathname does not exist and creation was not requested.
+   - **@c EEXIST ** The pathname does exist and \c OPEN_EXCL|OPEN_CREATE was specified.
+   - **@c EISDIR ** The pathname is a directory and the flags was not equal to \c OPEN_RDONLY.
+   - **@c ENODEV ** The pathname is a device special file and the actual device it describes does not exist.
+   - **@c EROFS ** The filesystem is read-only and write access was requested.
+   - **@c ENOMEM ** The kernel memory limit has been exceeded.
+   - **@c ENOSPC ** The filesystem has no more roof for a new file
+ */
 Fid_t Open(const char* pathname, int flags);
 
 
@@ -544,6 +611,87 @@ struct Stat {
 	Return the status of the file system entity at \c pathname.
 */
 int Stat(const char* pathname, struct Stat* statbuf);
+
+/**
+	@brief Create a new link to an existing file.
+
+	Note that both paths must belong to the same mounted filesystem.
+	Also, \c pathname may not specify a directory. Adding links to a
+	directory is not allowed.
+
+	@param pathname the entity that is to be linked to a new path
+	@param newpath the new path name for the entity
+	@returns 0 on success, -1 on failure.
+ */
+int Link(const char* pathname, const char* newpath);
+
+
+/**
+	@brief Remove a link to a file and possibly delete it
+
+	Note that \c pathname should not point to a directory.
+
+	@param pathname the path to the link to be deleted
+ */
+int Unlink(const char* pathname);
+
+
+/**
+	@brief Create a directory.
+ */
+int MkDir(const char* pathname);
+
+
+/**
+	@brief Delete a directory, which must be empty.
+ */
+int RmDir(const char* pathname);
+
+
+/**
+	@brief Get the current working directory.
+
+	The absolute pathname of the current working directory is saved
+	into the provided buffer, which must be large enough. If it is
+	not, an \c ERANGE error is returned. The process should retry with a
+	larger buffer.
+
+	@param buffer where the pathname of the cwd will be stored
+	@param size the size of \c buffer
+	@returns 0 on sucess and -1 in case of error.
+	  Possible errors are:
+	  - **@c ERANGE**  The provided buffer is too small for the cwd.
+	  - **@c ENOENT**  The current working directory has been unlinked.
+ */
+int GetCwd(char* buffer, unsigned int size);
+
+
+
+/**
+	@brief Change the current working directory.
+
+	@param pathname the new working directory
+	@returns 0 on sucess and -1 in case of error.
+	  Possible errors are:
+	  - **@c ENOENT**  \c pathname does not exist.
+	  - **@c ENAMETOOLONG**  \c pathname is too long.
+	  - **@c ENOTDIR** Some component of \c pathname is not a directory.
+	  - **@c EIO**  	An I/O error occurred.
+ */
+int ChDir(const char* pathname);
+
+
+
+/**
+	@brief Mount a device onto the filesystem.
+ */
+int Mount(const char* device, const char* mount_point, const char* fstype, const char* params);
+
+/**
+	@brief Unmount the filesystem at a mount point.
+  */
+int Umount(const char* mount_point);
+
 
 
 

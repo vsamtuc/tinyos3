@@ -40,6 +40,14 @@ SYSCALL(OpenTerminal, Fid_t, (unsigned int termno), (termno))\
 SYSCALL(OpenNull, Fid_t, (), ())\
 SYSCALL(Open, Fid_t, (const char* pathname, int flags), (pathname, flags))\
 SYSCALL(Stat, int, (const char* pathname, struct Stat* statbuf), (pathname, statbuf))\
+SYSCALL(Link, int, (const char* pathname, const char* newpath), (pathname, newpath))\
+SYSCALL(Unlink, int, (const char* pathname), (pathname))\
+SYSCALL(MkDir, int, (const char* pathname), (pathname))\
+SYSCALL(RmDir, int, (const char* pathname), (pathname))\
+SYSCALL(ChDir, int, (const char* pathname), (pathname))\
+SYSCALL(GetCwd, int, (char* buffer, unsigned int size), (buffer, size))\
+SYSCALL(Mount, int, (const char* dev, const char* mpoint, const char* fstype, const char* params),(dev,mpoint,fstype,params))\
+SYSCALL(Umount, int, (const char* mpoint),(mpoint))\
 SYSCALL(Read,int,(Fid_t fd, char *buf, unsigned int size), (fd,buf,size))\
 SYSCALL(Write,int,(Fid_t fd, const char *buf, unsigned int size), (fd,buf,size))\
 SYSCALL(Close,int,(Fid_t fd),(fd))\

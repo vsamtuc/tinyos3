@@ -107,6 +107,8 @@ int parse_path(struct parsed_path* path, const char* pathname)
 
 
 
+
+
 /*=========================================================
 
 	Inode manipulation
@@ -121,29 +123,28 @@ int parse_path(struct parsed_path* path, const char* pathname)
  */
 static rdict inode_table;
 
-/* Hash function for inode_table */
-static hash_value inode_table_hash(Inode_ref* iref)
+/* This type is used as the key of the inode_table */
+struct Inode_ref
 {
-	uintptr_t lhs = (uintptr_t) iref->mnt;
-	uintptr_t rhs = iref->id;
-	return hash_combine(lhs, rhs);
-}
+	struct FsMount* mnt;
+	Inode_id id;
+};
+
 
 /* Equality function for inode_table. The key is assumed to be a pointer to Inode_ref. */
 static int inode_table_equal(rlnode* node, rlnode_key key)
 {
 	/* Get the ino_ref pointer from the key */
-	Inode_ref* keyiref = (Inode_ref*) key.obj;
-
-	Inode_ref* ino_ref = & node->inode->ino_ref;
-	return ino_ref->mnt == keyiref->mnt &&  ino_ref->id == keyiref->id;
+	struct Inode_ref* keyiref = key.obj;
+	return inode_mnt(node->inode)==keyiref->mnt && inode_id(node->inode) == keyiref->id;
 }
 
 
 /* Look into the inode_table for existing inode */
-Inode* inode_if_pinned(Inode_ref ino_ref)
+Inode* inode_if_pinned(FsMount* mnt, Inode_id id)
 {
-	hash_value hval = inode_table_hash(&ino_ref);
+	hash_value hval = hash_combine((hash_value)mnt, id);
+	struct Inode_ref ino_ref = {mnt, id};
 	rlnode* node = rdict_lookup(&inode_table, hval, &ino_ref, NULL, inode_table_equal);
 	if(node) {
 		/* Found it! */
@@ -159,12 +160,13 @@ Inode* inode_if_pinned(Inode_ref ino_ref)
 	The root inode points to the base of the file system.
  */
 
-Inode* pin_inode(Inode_ref ino_ref)
+Inode* pin_inode(FsMount* mnt, Inode_id id)
 {
 	Inode* inode;
 
 	/* Look into the inode_table for existing inode */
-	hash_value hval = inode_table_hash(&ino_ref);
+	hash_value hval = hash_combine((hash_value)mnt, id);
+	struct Inode_ref ino_ref = {mnt, id};
 	rlnode* node = rdict_lookup(&inode_table, hval, &ino_ref, NULL, inode_table_equal);
 	if(node) {				/* Found it! */
 		inode = node->inode;
@@ -172,8 +174,7 @@ Inode* pin_inode(Inode_ref ino_ref)
 		return inode;
 	}
 
-	/* Get the mount and file system from the reference */
-	Mount* mnt = ino_ref.mnt;
+	/* Get the file system */
 	FSystem* fsys = mnt->fsys;
 
 	/* 
@@ -184,7 +185,8 @@ Inode* pin_inode(Inode_ref ino_ref)
 	rlnode_init(&inode->inotab_node, inode);
 
 	/* Initialize reference */
-	inode->ino_ref = ino_ref;
+	inode->ino_mnt = mnt;
+	inode->ino_id = id;
 
 	/* Fetch data from file system. If there is an error, clean up and return NULL */
 	if(fsys->PinInode(inode)==-1) {
@@ -214,7 +216,7 @@ int unpin_inode(Inode* inode)
 
 	/* Nobody is pinning the inode, so we may release the handle */
 	/* Remove it from the inode table */
-	hash_value hval = inode_table_hash(&inode->ino_ref);
+	hash_value hval = hash_combine((hash_value) inode_mnt(inode), inode_id(inode));
 	rdict_remove(&inode_table, &inode->inotab_node, hval);
 
 	/* Remove reference to mount */
@@ -227,6 +229,15 @@ int unpin_inode(Inode* inode)
 	free(inode);
 
 	return ret;
+}
+
+
+
+Fse_type inode_type(Inode* inode)
+{
+	struct Stat s;
+	inode_fsys(inode)->Status(inode, &s, NULL, STAT_TYPE);
+	return s.st_type;
 }
 
 
@@ -280,15 +291,15 @@ FSystem* file_system_table[FSYS_MAX];
 
 /*=========================================================
 
-	Mount calls
+	FsMount calls
 
   =========================================================*/
 
 
 /* Initialize the root directory */
-Mount mount_table[MOUNT_MAX];
+FsMount mount_table[MOUNT_MAX];
 
-Mount* mount_acquire()
+FsMount* mount_acquire()
 {
 	for(unsigned int i=0; i<MOUNT_MAX; i++) {
 		if(mount_table[i].fsys == NULL) {
@@ -299,12 +310,12 @@ Mount* mount_acquire()
 	return NULL;
 }
 
-void mount_incref(Mount* mnt)
+void mount_incref(FsMount* mnt)
 {
 	mnt->refcount ++;
 }
 
-void mount_decref(Mount* mnt)
+void mount_decref(FsMount* mnt)
 {
 	mnt->refcount --;
 }
@@ -320,7 +331,7 @@ void mount_decref(Mount* mnt)
 
 Inode* dir_parent(Inode* dir)
 {
-	Mount* mnt = inode_mnt(dir);
+	FsMount* mnt = inode_mnt(dir);
 	Inode_id par_id;
 
 	if(inode_lookup(dir, "..", &par_id)==-1) {
@@ -329,7 +340,7 @@ Inode* dir_parent(Inode* dir)
 	}
 
 	/* See if we are root */
-	if(par_id == dir->ino_ref.id) {
+	if(par_id == inode_id(dir)) {
 		/* Yes, we are a root in our file system.
 		  Take the parent of our mount point */
 		if(mnt->mount_point == NULL) {
@@ -340,7 +351,15 @@ Inode* dir_parent(Inode* dir)
 		return dir_parent(mnt->mount_point);
 	}
 
-	return pin_inode((Inode_ref){mnt, par_id});
+	return pin_inode(mnt, par_id);
+}
+
+
+int dir_name_exists(Inode* dir, const pathcomp_t name)
+{
+	if(strcmp(name, ".")==0 || strcmp(name, "..")==0) return 1;
+	Inode_id id;
+	return inode_lookup(dir, name, &id) == 0;
 }
 
 
@@ -360,14 +379,14 @@ Inode* dir_lookup(Inode* dir, const pathcomp_t name)
 	if(inode_lookup(dir, name, &id) == -1) return NULL;
 
 	/* Pin the next dir */
-	Inode* inode = pin_inode((Inode_ref){inode_mnt(dir), id});
+	Inode* inode = pin_inode(inode_mnt(dir), id);
 	if(inode==NULL) return NULL;
 	
 	/* Check to see if it has a mounted directory on it */
 	if(inode->mounted != NULL) {
-		Mount* mnt = inode->mounted;
+		FsMount* mnt = inode->mounted;
 		unpin_inode(inode);
-		inode = pin_inode((Inode_ref){mnt, mnt->root_dir});
+		inode = pin_inode(mnt, mnt->root_dir);
 		if(inode==NULL) return NULL;
 	}
 
@@ -377,12 +396,11 @@ Inode* dir_lookup(Inode* dir, const pathcomp_t name)
 
 Inode* dir_allocate(Inode* dir, const pathcomp_t name, Fse_type type)
 {
-	Mount* mnt = inode_mnt(dir);
+	FsMount* mnt = inode_mnt(dir);
 	FSystem* fsys = mnt->fsys;
 	Inode_id new_id;
 
-	if(inode_lookup(dir, name, &new_id)==0) return NULL;
-	assert(sys_GetError()==ENOENT);
+	if(dir_name_exists(dir, name)) return NULL;
 
 	new_id = fsys->AllocateNode(mnt, type, NO_DEVICE);
 	if( inode_link(dir, name, new_id) == -1 ) {
@@ -391,7 +409,7 @@ Inode* dir_allocate(Inode* dir, const pathcomp_t name, Fse_type type)
 		return NULL;
 	}
 
-	return pin_inode((Inode_ref){mnt, new_id});
+	return pin_inode(mnt, new_id);
 }
 
 
@@ -423,6 +441,90 @@ Inode* lookup_path(struct parsed_path* pp, unsigned int tail)
 }
 
 
+Inode* lookup_pathname(const char* pathname, const char** last)
+{
+	int pathlen = strlen(pathname);
+	if(pathlen > MAX_PATHNAME) { set_errcode(ENAMETOOLONG); return NULL; }
+	if(pathlen==0) { set_errcode(ENOENT); return NULL; }
+
+	const char* base =  pathname;
+	const char* cur;
+	Inode* inode = NULL;
+
+	/* Two local helpers */
+	int advance() {
+		pathcomp_t comp;
+		memcpy(comp, base, (cur-base));
+		Inode* next = dir_lookup(inode, comp);
+		unpin_inode(inode);
+		inode = next;		
+		return next!=NULL; 
+	}
+
+	int length_is_ok() {
+		if( (cur-base)>MAX_NAME_LENGTH ) {
+			set_errcode(ENAMETOOLONG);
+			unpin_inode(inode);
+			return 0;
+		}
+		return 1;
+	}
+
+	/* Start with the first character */
+	if(*base == '/')  { inode = CURPROC->root_dir; base++; }
+	else { inode= CURPROC->cur_dir; }
+	repin_inode(inode);
+
+	/* Iterate over all but the last component */
+	for(cur = base; *base != '\0'; base=++cur) 
+	{
+		assert(cur==base);
+
+		/* Get the next component */
+		while(*cur != '\0' && *cur != '/') cur++;
+		if(cur==base) continue;
+
+		/* cur is at the end, break out to treat last component specially */
+		if(*cur=='\0') break;
+
+		/* We have a segment, check it */
+		if(! length_is_ok()) return NULL;
+
+		/* ok good size, look it up */
+		if(! advance()) return NULL;
+	}
+
+	/* (*base) is either 0 or some char */
+	assert(*base!='/');  
+
+	/* if last component is empty, pathname ended in '/' */
+	assert( (*base != '\0') || (*(base-1)=='/')  );
+
+
+	/* One last check */
+	if(! length_is_ok()) return NULL;
+
+	/* So, at the end either we have a final segment, 
+		or *base == '\0' */
+	if(last==NULL) {
+		if(*base!='\0') {
+			/* one last hop */
+			if(! advance()) return NULL;
+		}	
+	} else {
+		if(*base!='\0') 
+			*last = base;
+		else
+			*last = NULL;
+	}
+
+	return inode;
+ }
+
+
+
+
+
 /*=========================================================
 
 
@@ -432,6 +534,10 @@ Inode* lookup_path(struct parsed_path* pp, unsigned int tail)
   =========================================================*/
 
 
+/* The cleanup attribute greatly simplifies the implementation of system calls */
+
+void unpin_cleanup(Inode** inoptr) { if(*inoptr) unpin_inode(*inoptr); }
+#define AUTO_UNPIN  __attribute__((cleanup(unpin_cleanup)))
 
 
 Fid_t sys_Open(const char* pathname, int flags)
@@ -453,16 +559,14 @@ Fid_t sys_Open(const char* pathname, int flags)
 		return NOFILE;
 	}
 
-	Inode* dir = lookup_path(&pp, 1);
+	Inode* dir AUTO_UNPIN = lookup_path(&pp, 1);
 	if(dir==NULL) {
         FCB_unreserve(1, &fid, &fcb);		
 		return NOFILE;
 	}
 
-	/* RESOURCE: Now we have a pin on dir */
-	
 	/* Try looking up the file system entity */
-	Inode* file;
+	Inode* file AUTO_UNPIN = NULL;
 	if(pp.depth == 0)
 		file = dir;
 	else 
@@ -475,13 +579,11 @@ Fid_t sys_Open(const char* pathname, int flags)
 			file = dir_allocate(dir, pp.component[pp.depth-1], FSE_FILE);
 			if(file==NULL) {
 				FCB_unreserve(1, &fid, &fcb);
-				unpin_inode(dir);
 				return NOFILE;
 			}
 		} else {
 			/* Creation was not specified, so report error */
 			FCB_unreserve(1, &fid, &fcb);
-			unpin_inode(dir);
 			set_errcode(ENOENT);
 			return NOFILE;
 		}
@@ -489,23 +591,14 @@ Fid_t sys_Open(const char* pathname, int flags)
 		/* An entity was found but again look at the creation flags */
 		if((flags & OPEN_CREATE) && (flags & OPEN_EXCL)) {
 			FCB_unreserve(1, &fid, &fcb);
-			unpin_inode(dir);
-			unpin_inode(file);
 			set_errcode(EEXIST);
 			return NOFILE;			
 		}
 	}
 
-	/* RELEASE: We no longer need dir */
-	unpin_inode(dir);
-
-	/* RESOURCE: We now have an entity inode (file) */
 	int rc = inode_open(file, flags & 077, &fcb->streamobj, &fcb->streamfunc);
 
-	/* RELEASE: We no longer need file */
-	unpin_inode(file);
-
-	if(rc) {
+	if(rc==-1) {
 		/* Error in inode_open() */
 		FCB_unreserve(1, &fid, &fcb);
 		return NOFILE;					
@@ -516,23 +609,157 @@ Fid_t sys_Open(const char* pathname, int flags)
 }
 
 
+
 int sys_Stat(const char* pathname, struct Stat* statbuf)
+{	
+	/* Look it up */
+	Inode* inode AUTO_UNPIN = lookup_pathname(pathname, NULL);
+	if(inode==NULL) return -1;
+
+	inode_fsys(inode)->Status(inode, statbuf, NULL, STAT_ALL);
+	return 0;
+}
+
+
+
+
+int sys_Link(const char* pathname, const char* newpath)
 {
-	/* Parse the path */
-	struct parsed_path pp;
-	if(parse_path(&pp, pathname)==-1) {
-		set_errcode(ENAMETOOLONG);
+	/* Check new path */
+	const char* last;
+	Inode* newdir AUTO_UNPIN = lookup_pathname(newpath, &last);
+
+	if(newdir == NULL) return -1;
+	if(last==NULL || dir_name_exists(newdir, last)) { set_errcode(EEXIST); return -1; }
+
+	Inode* old AUTO_UNPIN = lookup_pathname(pathname, NULL);
+	if(old==NULL) return -1;
+
+	/* They must be in the same FS */
+	if(inode_mnt(old) != inode_mnt(newdir)) {
+		set_errcode(EXDEV);
+		return -1;
+	}
+
+	return inode_link(newdir, last, inode_id(old));
+}
+
+
+
+int sys_Unlink(const char* pathname)
+{
+	const char* last;
+	Inode* dir AUTO_UNPIN = lookup_pathname(pathname, &last);
+
+	if(dir==NULL) return -1;
+	if(last==NULL) { set_errcode(EISDIR); return -1; }
+
+	Inode* inode AUTO_UNPIN = dir_lookup(dir, last);
+
+	if(inode_type(inode)==FSE_DIR) {
+		set_errcode(EISDIR);
 		return -1;
 	}
 	
-	/* Look it up */
-	Inode* inode = lookup_path(&pp, 0);
-	if(inode==NULL) return -1;
+	return inode_unlink(dir, last);
+}
 
-	inode_fsys(inode)->Status(inode, statbuf, STAT_ALL);
 
-	unpin_inode(inode);
+int sys_MkDir(const char* pathname)
+{
+	const char* last;
+	Inode* dir AUTO_UNPIN = lookup_pathname(pathname, &last);
+
+	if(dir==NULL) return -1;
+	if(last==NULL || dir_name_exists(dir, last)) { set_errcode(EEXIST); return -1; }
+	if(inode_type(dir)!=FSE_DIR) { set_errcode(ENOTDIR); return -1; }
+
+	Inode* newdir AUTO_UNPIN = dir_allocate(dir, last, FSE_DIR);
+	return (newdir == NULL)?-1:0;
+}
+
+
+int sys_RmDir(const char* pathname)
+{
+	const char* last;
+	Inode* dir AUTO_UNPIN = lookup_pathname(pathname, &last);
+	if(dir==NULL) { return -1; }
+	if(last==NULL) { set_errcode(ENOENT); return -1; }
+	if(strcmp(last,".")==0) { set_errcode(EINVAL); return -1; }	
+	if(! dir_name_exists(dir,last)) { set_errcode(ENOENT); return -1; }
+
+	return inode_unlink(dir, last);
+}
+
+int sys_GetCwd(char* buffer, unsigned int size)
+{
+	Inode* curdir = CURPROC->cur_dir;
+	
+	char* buf = buffer;
+	unsigned int sz = size;
+
+	int bprintf(const char* str) {
+		unsigned int len = strlen(str);
+		if(len>=sz) {
+			set_errcode(ERANGE);
+			return -1;
+		} else {
+			strcpy(buf, str);
+			buf+=len;
+			sz -= len;
+			return 0;
+		}
+	}
+
+	int print_path_rec(Inode* dir, int level) {
+		/* Get your parent */
+		Inode* parent AUTO_UNPIN = dir_parent(dir);
+		if(parent==NULL) return -1;
+		if(parent == dir) {
+			/* We are the root */
+			return  (level == 0) ? bprintf("/") : 0;
+		} else {
+			/* We are just a normal dir */
+			int rc = print_path_rec(parent, level+1);
+			if(rc!=0) return rc;
+
+			pathcomp_t comp;
+			inode_fsys(dir)->Status(dir, NULL, comp, STAT_NAME);
+			if(rc!=0) return -1;
+
+			if(bprintf("/")!=0) return-1;
+			return bprintf(comp);
+		}
+	}
+
+	return print_path_rec(curdir, 0);
+}
+
+int sys_ChDir(const char* pathname)
+{
+	Inode* dir AUTO_UNPIN = lookup_pathname(pathname, NULL);
+	if(dir==NULL)  return -1;
+	if(inode_type(dir)!=FSE_DIR) {
+		set_errcode(ENOTDIR);
+		return -1;
+	}
+
+	if(CURPROC->cur_dir != dir) {
+		Inode* prevcd = CURPROC->cur_dir;
+		CURPROC->cur_dir = dir;
+		dir = prevcd;
+	}
 	return 0;
+}
+
+int sys_Mount(const char* device, const char* mount_point, const char* fstype, const char* params)
+{
+
+}
+
+int sys_Umount(const char* mount_point)
+{
+
 }
 
 
@@ -558,9 +785,9 @@ void initialize_filesys()
 	/* Init inode_table and root_node */
 	rdict_init(&inode_table, MAX_PROC);
 
-	/* Mount the rootfs as the root filesystem */
+	/* FsMount the rootfs as the root filesystem */
 	FSystem* rootfs = get_fsys("rootfs");
-	Mount* root_mnt = mount_acquire();
+	FsMount* root_mnt = mount_acquire();
 	rootfs->Mount(root_mnt, rootfs, NO_DEVICE, NULL, 0, NULL);
 	assert(root_mnt != NULL);
 }
@@ -569,7 +796,7 @@ void initialize_filesys()
 void finalize_filesys()
 {
 	/* Unmount rootfs */
-	Mount* root_mnt = mount_table;
+	FsMount* root_mnt = mount_table;
 	FSystem* fsys = root_mnt->fsys;
 	CHECK(fsys->Unmount(root_mnt));
 
