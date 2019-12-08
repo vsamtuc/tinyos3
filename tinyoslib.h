@@ -43,6 +43,18 @@ typedef int (*Program)(size_t argc, const char** argv);
   */
 int Execute(Program prog, size_t argc, const char** argv);
 
+/**
+	@brief Duplicate a file id to a new file id.
+
+	Return a new fid that points to the same file id as \c oldfid.
+	In case of error, \c NOFILE is returned and \c GetError() returns
+	the error code.
+
+	@param oldfid the file id to be duplicated
+	@returns the new file id, or NOFILE
+ */
+Fid_t Dup(Fid_t oldfid);
+
 
 /**
 	@brief Try to reclaim the arguments of a process.

@@ -13,6 +13,14 @@
 #include "bios.h"
 #include "util.h"
 
+
+void PError(const char* msg)
+{
+	char ebuf[64];
+	printf("%s: %s\n", msg, strerror_r(GetError(), ebuf, 64));
+}
+
+
 int Shell(size_t,const char**);
 int RunTerm(size_t,const char**);
 int ListPrograms(size_t,const char**);
@@ -32,12 +40,20 @@ int RemoteServer(size_t,const char**);
 int RemoteClient(size_t,const char**);
 int Echo(size_t,const char**);
 
+int util_mkdir(size_t, const char**);
+int util_rmdir(size_t, const char**);
+int util_ls(size_t, const char**);
+int util_stat(size_t, const char**);
+int util_ln(size_t, const char**);
+int util_rm(size_t, const char**);
+int util_cat(size_t, const char**);
+
 
 struct { const char * cmdname; Program prog; uint nargs; const char* help; } 
 COMMANDS[]  = 
 {
 	{"help", HelpMessage, 0, "A help message."},
-	{"ls", ListPrograms, 0, "List available programs programs."},
+	{"list", ListPrograms, 0, "List available programs programs."},
 	{"sysinfo", SystemInfo, 0, "Print some basic info about the current system."},
 	{"runterm", RunTerm, 2, "runterm <term> <prog>  <args...> : execute '<prog> <args...>' on terminal <term>."},
 	{"sh", Shell, 0, "Run a shell."},
@@ -55,6 +71,15 @@ COMMANDS[]  =
 	{"rcli", RemoteClient, 1, "Remote client: rcli <cmd> [<args...>]."},
 	{"echo", Echo, 0, "echo [<args...>], send the <args...> to stdout"},
 
+	/* Unix-like file system utilities */
+	{"mkdir", util_mkdir, 1, "Make a new directory"},
+	{"rmdir", util_rmdir, 1, "Remove a directory"},
+	{"ls", util_ls, 0, "Show the contents of a directory"},
+	{"stat", util_stat, 1, "Show the status of a file"},
+	{"ln", util_ln, 2, "ln <oldpath> <newpath>:  Add a hard link to a file"},
+	{"rm", util_rm, 1, "Unlink a file"},
+	{"cat", util_cat, 0, "Concatenate a list of files"},
+
 	{NULL, NULL, 0, NULL}
 };
 
@@ -66,7 +91,7 @@ int programs() {
 
 #define checkargs(argno) if(argc <= (argno)) {\
   printf("Insufficient arguments. %d expected, %zd given.\n", (argno), argc-1);\
-  return -1; }\
+  return 1; }\
 
 #define getint(n)  atoi(argv[n])
 
@@ -207,10 +232,15 @@ int HelpMessage(size_t argc, const char** argv)
 {
 	printf("This is a simple shell for tinyos.\n\
 \n\
-You can run some simple commands. Every command takes a\n\
-only **integer** arguments. The list of commands and the\n\
+You can run some simple commands. Every command takes \n\
+a number of arguments separated by spaces. The list of commands and the\n\
 number of arguments for each command is shown by\n\
-typing 'ls'. \n\n\
+typing 'list'. Each command executes in a new process.\n\n\
+You can also construct pipelines of commands, using '|' to\n\
+separate the pieces of a pipeline.\n\n\
+In addition, the shell supports some builtin commands. These\n\
+can be shown if you type '?' on the command line. Note that\n\
+builtin commands cannot form pipelines.\n\n\
 When you are tired of playing, type 'exit' to quit.\n\
 ");
 	return 0;
@@ -773,20 +803,168 @@ int RemoteClient(size_t argc, const char** argv)
 
 
 
+int util_mkdir(size_t argc, const char** argv)
+{
+	checkargs(1);
+	if(MkDir(argv[1])!=0) {
+		PError(argv[0]);
+		return 1;
+	}
+	return 0;
+}
+
+int util_rmdir(size_t argc, const char** argv)
+{
+	checkargs(1);
+	if(RmDir(argv[1])!=0) {
+		PError(argv[0]);
+		return 1;
+	}
+	return 0;
+}
+
+int util_ls(size_t argc, const char** argv)
+{
+	Fid_t fdir = Open(".", OPEN_RDONLY);
+	if(fdir==NOFILE) { PError(argv[0]); return 1; }
+
+	char c;
+	int rc;
+	while((rc=Read(fdir, &c, 1))==1) {
+		if(c==0) printf("\n");
+		else printf("%c",c);
+	}
+	if(rc==-1) { PError(argv[0]); return 1; }
+
+	return 0;
+}
+
+
+int util_stat(size_t argc, const char** argv)
+{
+	checkargs(1);
+
+	const char* file_type(Fse_type type) {
+		switch(type) {
+			case FSE_DIR: return "directory";
+			case FSE_FILE: return "regular file";
+			case FSE_DEV: return "device";
+			default: return "unknown type";
+		}
+	}
+
+
+	for(int i=1; i<argc; i++) {
+		struct Stat st;
+		if(Stat(argv[1], &st)!=0) {
+			PError(argv[0]);
+			continue;
+		}
+		printf("File: %s\n", argv[i]);
+		printf("Size: %-8lu\tBlocks: %-8lu\t\tIO Block: %-8lu\t%s\n",
+			st.st_size, st.st_blocks, st.st_blksize, file_type(st.st_type));
+		printf("Device: %3u/%-3u\tInode: %-21lu\tLinks: %-8u\n", 
+			DEV_MAJOR(st.st_dev), DEV_MINOR(st.st_dev),
+			st.st_ino, st.st_nlink);
+	}
+	return 0;	
+}
+
+int util_ln(size_t argc, const char** argv)
+{
+	checkargs(2);
+	if(Link(argv[1], argv[2])!=0) { PError(argv[0]); return 1; }
+	return 0;
+}
+
+int util_rm(size_t argc, const char** argv)
+{
+	checkargs(1);
+	if(Unlink(argv[1])!=0) { PError(argv[0]); return 1; }
+	return 0;
+}
+
+
+int util_cat(size_t argc, const char** argv)
+{
+	void output(Fid_t fid) {
+		char buffer[8192];
+		while(1) {
+			int bsize = Read(fid, buffer, 8192);
+			if(bsize==0) break;
+			if(bsize==-1) { PError(argv[0]); Exit(1); }
+
+			for(int pos=0; pos<bsize; ) {
+				int wb = Write(1, buffer+pos, bsize-pos);
+				if(wb==-1) { PError(argv[0]); Exit(1); }
+				pos += wb;
+			}
+		}
+	}
+
+	if(argc == 1) {
+		/* just redirect stdin to stdout */
+		output(0); return 0;
+	}
+
+	for(int a = 1; a < argc; a++) {
+		Fid_t fid = Open(argv[a], OPEN_RDONLY);
+		if(fid==NOFILE) { PError(argv[0]); Exit(1); }
+		output(fid);
+		Close(fid);
+	}
+	return 0;
+}
+
+
+
 /*************************************
 
 	A very simple shell for tinyos 
 
 ***************************************/
 
+/* Builtin commands */
+
+void builtin_help(size_t argc, const char** argv);
+
+void builtin_cd(size_t argc, const char** argv)
+{
+	if(ChDir(argv[1])!=0) { PError(argv[0]); }
+}
+
+struct {const char* name; void (*util)(size_t, const char**); uint nargs; const char* help; }
+BUILTIN[] = {
+	{"?", builtin_help, 0, "Print help for the builtin shell commands"},
+	{"cd", builtin_cd, 1, "Change current directory"},
+	{NULL,NULL,0,NULL}
+};
+
+void builtin_help(size_t argc, const char** argv)
+{
+	const char* sep = "---------------------------------------------------";
+	printf("The shell built-in commands\n%s\n", sep);
+	printf("no.  %-15s no.of.args   help \n", "Command");
+	printf("%s\n",sep);
+	for(int c=0; BUILTIN[c].name; c++) {
+		printf("%3d  %-20s %2d   %s\n", c, BUILTIN[c].name, BUILTIN[c].nargs, BUILTIN[c].help);
+	}
+}
+
 
 int process_builtin(int argc, const char** argv)
 {
-	if(strcmp(argv[0], "?")==0) {
-		printf("Type 'help' for help, 'exit' to quit.\n");
-		return 1;
+	int c;
+	for(c=0; BUILTIN[c].name!=NULL; c++) {
+		if(strcmp(argv[0], BUILTIN[c].name)==0) break;
 	}
-	return 0;
+	void (*util)(size_t, const char**) = BUILTIN[c].util;
+	if(util==NULL) return 0;
+	if(argc < BUILTIN[c].nargs+1)
+		printf("Insufficient arguments for %s:  %d expected, %zd given.\n", argv[0], BUILTIN[c].nargs, argc-1);
+	else
+		util(argc,argv); 
+	return 1; 
 }
 
 
@@ -818,13 +996,84 @@ int process_line(int argc, const char** argv)
 			Vargc[++frag] = 0;
 	frag++;
 
-	/* Check that no fragment is empty and each has a program */
+	/* Check that no fragment is empty, each has a program and any
+	   redirections are successful */
 	int comd[frag];
+
+	struct redir_descriptor {  const char* pathname;  int flags; };
+
+	/* These records will hold the redirections if any */
+	struct redir_descriptor input_redir = {NULL, 0};
+	struct redir_descriptor output_redir = {NULL, 0};
+
 	for(int i=0; i<frag; i++) {
+		/* 
+			Parse redirections
+			Note that a redirection is a pair of arguments like
+			> somepath  or < somepath or >> somepath. 
+
+			When we recognize such a pair, we remove them from the 
+			argument list.
+
+			Also, redirection of input is only allowed at the 1st 
+			component, and of output at the last.
+
+			We pass information about these redirections through
+			struct redir_description.
+		 */
+		for(int j=0; j<Vargc[i]; j++) {
+
+			int allowed_i;
+			const char* direction;
+			struct redir_descriptor* redir;
+
+			if(strcmp(Vargv[i][j], "<")==0) {
+				allowed_i = 0;
+				direction = "Input";
+				input_redir.flags = OPEN_RDONLY;
+				redir = &input_redir;
+			} else if(strcmp(Vargv[i][j], ">")==0) {
+				allowed_i = frag-1;
+				direction = "Output";
+				output_redir.flags = OPEN_WRONLY|OPEN_CREAT|OPEN_TRUNC;
+				redir = &output_redir;
+			} else if(strcmp(Vargv[i][j], ">>")==0) {
+				allowed_i = frag-1;
+				direction = "Output";
+				output_redir.flags = OPEN_WRONLY|OPEN_APPEND|OPEN_CREAT;
+				redir = &output_redir;
+			} else 
+				continue;
+
+			if(i!=allowed_i) { 
+				printf("%s redirection not allowed in fragment %d of the pipeline\n", direction, i+1); 
+				return 0; 
+			}
+
+			if(j+1>=Vargc[i]) {
+				printf("%s redirection missing file\n");
+				return 0; 					
+			} else 
+				redir->pathname = Vargv[i][j+1];
+			
+
+			/* ok, eat the two arguments */
+			for(int k=j+2; k<Vargc[i]; k++) {
+				Vargv[i][k-2] = Vargv[i][k];
+			}
+			Vargc[i] -= 2;
+
+			/* Loop again for the same j ! */
+			j -= 1;
+		}
+
+		/* Check that fragment is not empty (after redirections have been removed) */
 		if(Vargc[i]==0) {
 			printf("Error: a pipeline fragment was empty.\n");
 			return 0;
 		}
+
+		/* Check fragment's program (argv[0]) */
 		int c;
 		for(c=0; COMMANDS[c].cmdname; c++)
 			if(strcmp(COMMANDS[c].cmdname, Vargv[i][0])==0)
@@ -834,15 +1083,36 @@ int process_line(int argc, const char** argv)
 			return 0;
 		}
 		comd[i] = c;
+
 	}
 
+	/* Try to open the redirections, fail early if not possible */
+	Fid_t plin = (input_redir.pathname==NULL)? Dup(0) : Open(input_redir.pathname, input_redir.flags);
+	if(plin==NOFILE) {
+		assert(input_redir.pathname);
+		char errbuf[80];
+		printf("Could not open '%s' for input: %s\n", input_redir.pathname, strerror_r(GetError(), errbuf,80));
+		return 0;
+	}
+
+	Fid_t plout = (output_redir.pathname==NULL)? Dup(0) : Open(output_redir.pathname, output_redir.flags);
+	if(plin==NOFILE) {
+		assert(output_redir.pathname);
+		char errbuf[80];
+		printf("Could not open '%s' for output: %s\n", output_redir.pathname, strerror_r(GetError(), errbuf,80));
+		/* Remember to clean up! */
+		Close(plin);
+		return 0;
+	}	
+
+	/* Save these for the shell */
+	Fid_t savein = Dup(0), saveout=Dup(1);
+
+	/* Set the standard input of the pipeline */
+	Dup2(plin,0); Close(plin);
+
 	/* Construct pipeline */
-	int child[frag];
-	int savein, saveout;
-
-	savein = savefid(0);
-	saveout = savefid(1);
-
+	Pid_t child[frag];
 	pipe_t pipe;
 	for(int i=0; i<frag; i++) {
 		if(i<frag-1) {
@@ -852,8 +1122,8 @@ int process_line(int argc, const char** argv)
 			Close(pipe.write);
 		} else {
 			/* Last fragment, restore saved 1 */
-			Dup2(saveout, 1);
-			Close(saveout);				
+			Dup2(plout, 1);
+			Close(plout);
 		}
 
 		child[i] = Execute(COMMANDS[comd[i]].prog, Vargc[i], Vargv[i]);
@@ -863,9 +1133,9 @@ int process_line(int argc, const char** argv)
 			Dup2(pipe.read,0);
 			Close(pipe.read);
 		} else {
-			/* Last fragment, restore saved 1 */
-			Dup2(savein, 0);
-			Close(savein);
+			/* Last fragment, restore saved fids */
+			Dup2(savein, 0); Close(savein);
+			Dup2(saveout, 1); Close(saveout);
 		}
 	}
 
@@ -879,6 +1149,8 @@ int process_line(int argc, const char** argv)
 
 	return 1;
 }
+
+
 
 
 
@@ -902,7 +1174,9 @@ int Shell(size_t argc, const char** argv)
 		int argc;
 
 		/* Read the command line */
-		fprintf(fout, "%% "); 
+		char CWD[100];
+		if(GetCwd(CWD,100)!=0) { sprintf(CWD, "(error=%d)", GetError() ); }
+		fprintf(fout, "%s%% ", CWD); 
 		ssize_t rc;
 
 		again:

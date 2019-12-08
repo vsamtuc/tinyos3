@@ -120,7 +120,7 @@ static Inode_id rootfs_allocate_dir(FsMount* mnt)
 	struct rootfs_dir_inode* rinode = xmalloc(sizeof(struct rootfs_dir_inode));
 	rinode->type = FSE_DIR;
 	rinode->lnkcount = 1;
-	rinode->parent = 0;
+	rinode->parent = (Inode_id) rinode;
 	rinode->name[0] = 0;
 	rlnode_init(&rinode->dentry_list, NULL);
 	rdict_init(&rinode->dentry_dict, 64);
@@ -228,8 +228,9 @@ static int rootfs_unlink(Inode* this, const pathcomp_t name)
 	}
 
 	/* Do a dict lookup. */
+	hash_value name_hash = hash_string(name);
 	rlnode* dnode = rdict_lookup(&fsinode->dentry_dict, 
-			hash_string(name), name, NULL, dentry_equal);
+			name_hash, name, NULL, dentry_equal);
 	if(dnode == NULL) { set_errcode(ENOENT); return -1; }
 
 	struct dentry_node* dentry = dnode->obj;
@@ -255,11 +256,16 @@ static int rootfs_unlink(Inode* this, const pathcomp_t name)
 		einode->lnkcount --;
 	}
 
+	/* Remove the dentry */
+	rdict_remove(&fsinode->dentry_dict, dnode, name_hash);
+	rlist_remove(&dentry->lnode);
+	free(dentry);
+
 	/* 
 		In case the unlinked element is to be deleted, we need to wait for
 		it to be unpinned, else we should free it now.
 	*/
-	if(inode_if_pinned(inode_mnt(this), dentry->id)==NULL) {
+	if(einode->lnkcount==0 && inode_if_pinned(inode_mnt(this), dentry->id)==NULL) {
 		return rootfs_free_node(inode_mnt(this), dentry->id);
 	}	
 
@@ -642,7 +648,7 @@ static void rootfs_status(Inode* inode, struct Stat* st, pathcomp_t name, int wh
 	if(which==0) return;
 
 	if(which & STAT_RDEV) st->st_rdev = NO_DEVICE;
-	if(which & STAT_BLKSZ) st->st_ino = ROOTFS_BLKSIZE;
+	if(which & STAT_BLKSZ) st->st_blksize = ROOTFS_BLKSIZE;
 
 	switch(fsinode->type) {
 		case FSE_FILE:

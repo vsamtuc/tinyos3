@@ -455,6 +455,7 @@ Inode* lookup_pathname(const char* pathname, const char** last)
 	int advance() {
 		pathcomp_t comp;
 		memcpy(comp, base, (cur-base));
+		comp[cur-base] = 0;
 		Inode* next = dir_lookup(inode, comp);
 		unpin_inode(inode);
 		inode = next;		
@@ -574,7 +575,7 @@ Fid_t sys_Open(const char* pathname, int flags)
 
 	if(file == NULL) {
 		/* If no entity was found, look at the creation flags */
-		if(flags & OPEN_CREATE) {
+		if(flags & OPEN_CREAT) {
 			/* Try to create a file by this name */
 			file = dir_allocate(dir, pp.component[pp.depth-1], FSE_FILE);
 			if(file==NULL) {
@@ -589,7 +590,7 @@ Fid_t sys_Open(const char* pathname, int flags)
 		}
 	} else {
 		/* An entity was found but again look at the creation flags */
-		if((flags & OPEN_CREATE) && (flags & OPEN_EXCL)) {
+		if((flags & OPEN_CREAT) && (flags & OPEN_EXCL)) {
 			FCB_unreserve(1, &fid, &fcb);
 			set_errcode(EEXIST);
 			return NOFILE;			

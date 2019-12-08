@@ -491,7 +491,7 @@ enum Open_flags
 	OPEN_APPEND = 012,	/**< @brief Open in "append mode" */
 
 	/* Creation flags */
-	OPEN_CREATE = 100,	/**< @brief Create file if it does not exist */
+	OPEN_CREAT  = 100,	/**< @brief Create file if it does not exist */
 	OPEN_EXCL   = 200,	/**< @brief Ensure the file does not exist, fail if it does. */
 	OPEN_TRUNC  = 400	/**< @brief Truncate file (if opened for writing) */
 };

@@ -16,8 +16,12 @@
 BOOT_TEST(test_rootfs_is_root, "Test that the rootfs filesystem is mounted as root")
 {
 	FSystem* rootfs = get_fsys("rootfs");
+	ASSERT(rootfs!=NULL);
 
-	ASSERT(rootfs!=NULL);	
+	FsMount* mnt = & mount_table[0];
+
+	ASSERT(mnt->fsys == rootfs);
+	ASSERT(mnt->mount_point == NULL);
 
 	return 0;
 }
@@ -31,7 +35,6 @@ BOOT_TEST(test_pathcomp, "Test operations on pathcomp_t")
 	void change(pathcomp_t p) {
 		p[0] = 'H';
 	}
-
 	change(pcomp);
 
 	ASSERT(pcomp[0]=='H');

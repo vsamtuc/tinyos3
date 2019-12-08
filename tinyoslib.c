@@ -167,6 +167,21 @@ int Execute(Program prog, size_t argc, const char** argv)
 }
 
 
+Fid_t Dup(Fid_t oldfid)
+{
+	Fid_t newfid = OpenNull();
+	if(newfid!=NOFILE) {
+		if(Dup2(oldfid, newfid)==0) 
+			return newfid;
+		else {
+			Close(newfid);
+			return NOFILE;
+		}
+	} 
+	else return NOFILE;
+}
+
+
 
 void BarrierSync(barrier* bar, unsigned int n)
 {
