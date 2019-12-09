@@ -62,6 +62,12 @@ typedef uintptr_t Tid_t;
 #define NOTHREAD ((Tid_t)0)
 
 
+/**
+  @brief The type of an i-node ID.
+  */
+typedef uintptr_t inode_t;
+
+
 /*******************************************
  *      Error handling
  *******************************************/
@@ -473,6 +479,13 @@ Fid_t OpenNull();
  *******************************************/
 
 
+/** @brief Maximum length of a directory entry name */
+#define MAX_NAME_LENGTH 63
+
+/** @brief Maximum length of a pathname. */
+#define MAX_PATHNAME 512
+
+
 /**
 	@brief Flags to be passed to @ref Open().
 
@@ -586,6 +599,8 @@ typedef enum {
 } Fse_type;
 
 
+
+
 /**
 	@brief Record of the status of a File System entity.
 
@@ -595,7 +610,7 @@ typedef enum {
 */
 struct Stat {
 	Dev_t 			st_dev;			/**< @brief Device id for device containing file */
-	uintptr_t 		st_ino;			/**< @brief I-node number */
+	inode_t 		st_ino;			/**< @brief I-node number */
 	Fse_type 		st_type;		/**< @brief File system entity type */
 	unsigned int	st_nlink;		/**< @brief Number of hard links */
 	Dev_t 			st_rdev;		/**< @brief Device id for a device entity */

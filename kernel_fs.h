@@ -12,12 +12,6 @@
  *
  *----------------------------------*/
 
-/** @brief Maximum length of a directory entry name */
-#define MAX_NAME_LENGTH 63
-
-/** @brief Maximum length of a pathname. */
-#define MAX_PATHNAME 512
-
 typedef char pathcomp_t[MAX_NAME_LENGTH+1];
 
 
@@ -26,9 +20,6 @@ typedef char pathcomp_t[MAX_NAME_LENGTH+1];
  * Virtual File system declarations
  *
  *----------------------------------*/
-
-typedef uintptr_t Inode_id;
-#define NO_INODE  ((Inode_id)-1)
 
 typedef struct InodeHandle Inode;
 typedef struct FsMount FsMount;
@@ -71,9 +62,11 @@ struct FSystem_type
 	/* Unmount a particular mount */
 	int (*Unmount)(FsMount* mnt);
 
+	/* Return the root i-node. This must be a directory. */
+	int (*GetRoot)(inode_t* root);
 
 	/* Create inodes */
-	Inode_id (*AllocateNode)(FsMount* mnt, Fse_type type, Dev_t dev);
+	inode_t (*AllocateNode)(FsMount* mnt, Fse_type type, Dev_t dev);
 
 	/**
 		@brief Free an i-node.
@@ -82,7 +75,7 @@ struct FSystem_type
 		Note: Maybe this should not be exported to the system?
 		Does any code outside of the fsys code ever call it?
 	   */
-	int (*FreeNode)(FsMount* mnt, Inode_id id);
+	int (*FreeNode)(FsMount* mnt, inode_t id);
 
 	/**
 		@brief Pin i-node data for a new handle.
@@ -126,15 +119,15 @@ struct FSystem_type
 	/**
 		@brief Search a directory for a particular entry by name.
 
-		If found, and \c id is not NULL, store the \c Inode_id in it. Else, do not touch it.
+		If found, and \c id is not NULL, store the \c inode_t in it. Else, do not touch it.
 		Return 0 on success and -1 on failure.
 	 */
-	int (*Lookup)(Inode* this, const pathcomp_t name, Inode_id* id);
+	int (*Lookup)(Inode* this, const pathcomp_t name, inode_t* id);
 
 	/**
 		@brief Add a new entry to a directory.
 	 */
-	int (*Link)(Inode* this, const pathcomp_t name, Inode_id id);
+	int (*Link)(Inode* this, const pathcomp_t name, inode_t id);
 
 	/**
 		@brief Remove an entry from a directory
@@ -211,7 +204,7 @@ struct FsMount
 	Inode* mount_point;
 
 	/* Inode of our root directory */
-	Inode_id root_dir;
+	inode_t root_dir;
 
 	/* List of all submounts */
 	rlnode submount_list;
@@ -257,7 +250,7 @@ void mount_decref(FsMount* mnt);
 	be in-core.
 
 	The main representation of an inode is the Inode_ref, which is a pair 
-	of (Mount*, Inode_id). The call @ref get_inode() makes the inode "in-core", 
+	of (Mount*, inode_t). The call @ref get_inode() makes the inode "in-core", 
 	so that it can be read and modified.
 	
 	For consistency, it is important that there be **at most one Inode handle** 
@@ -269,7 +262,7 @@ typedef struct InodeHandle
 {
 	unsigned int pincount;  /**< @brief Reference-counting uses to this inode handle */
 	FsMount* ino_mnt;		/**< @brief Inode filesystem */
-	Inode_id ino_id;		/**< @brief Inode number */
+	inode_t ino_id;		/**< @brief Inode number */
 	rlnode inotab_node;   	/**< @brief Used to add this to the inode table */
 
 	/** @brief Points to a mount whose mount point is this directory, or NULL */
@@ -291,7 +284,7 @@ typedef struct InodeHandle
 	The caller should call @ref unpin_inode when the handle no longer 
 	needed.
 */
-Inode* pin_inode(FsMount* mnt, Inode_id id);
+Inode* pin_inode(FsMount* mnt, inode_t id);
 
 /**
 	@brief Add a pin to an already pinned i-node.
@@ -326,7 +319,7 @@ int unpin_inode(Inode* inode);
 	as it may be invalidated. To keep this handle, call @ref repin_inode()
 	after this call.
  */
-Inode* inode_if_pinned(FsMount* mnt, Inode_id id);
+Inode* inode_if_pinned(FsMount* mnt, inode_t id);
 
 
 /* --------------------------------------------
@@ -345,7 +338,7 @@ inline static FsMount* inode_mnt(Inode* inode)
 /**
 	@brief Return the mount of this inode handle
  */
-inline static Inode_id inode_id(Inode* inode)
+inline static inode_t inode_id(Inode* inode)
 {
 	return inode->ino_id;
 }
@@ -371,7 +364,7 @@ inline static int inode_open(Inode* inode, int flags, void** obj, file_ops** ops
 /**
 	@brief Look up a name in a directory
  */
-inline static int inode_lookup(Inode* dir_inode, const pathcomp_t name, Inode_id* id)
+inline static int inode_lookup(Inode* dir_inode, const pathcomp_t name, inode_t* id)
 {
 	return inode_fsys(dir_inode)->Lookup(dir_inode, name, id);
 }
@@ -379,7 +372,7 @@ inline static int inode_lookup(Inode* dir_inode, const pathcomp_t name, Inode_id
 /**
 	@brief Add a link to a file system element from a directory
  */
-inline static int inode_link(Inode* dir_inode, const pathcomp_t name, Inode_id inode)
+inline static int inode_link(Inode* dir_inode, const pathcomp_t name, inode_t inode)
 {
 	return inode_fsys(dir_inode)->Link(dir_inode, name, inode);
 }

@@ -49,7 +49,7 @@ static int rootfs_pin_inode(Inode* inode)
 
 
 /* Forward declaration */
-static int rootfs_free_node(FsMount* mnt, Inode_id id);
+static int rootfs_free_node(FsMount* mnt, inode_t id);
 
 
 static int rootfs_unpin_inode(Inode* inode)
@@ -86,7 +86,7 @@ struct dentry_node
 {
 	/* The directory entry */
 	pathcomp_t name;
-	Inode_id id;
+	inode_t id;
 
 	/* list and dict nodes */
 	rlnode lnode, dnode;
@@ -95,7 +95,7 @@ struct dentry_node
 struct rootfs_dir_inode
 {
 	ROOTFS_INODE_BASE;
-	Inode_id parent;		/* id of parent */
+	inode_t parent;		/* id of parent */
 	pathcomp_t name;
 	rlnode dentry_list;		/* entries */
 	rdict dentry_dict;
@@ -115,16 +115,16 @@ void rootfs_dir_name(struct rootfs_dir_inode* inode, pathcomp_t name)
 }
 
 
-static Inode_id rootfs_allocate_dir(FsMount* mnt)
+static inode_t rootfs_allocate_dir(FsMount* mnt)
 {
 	struct rootfs_dir_inode* rinode = xmalloc(sizeof(struct rootfs_dir_inode));
 	rinode->type = FSE_DIR;
 	rinode->lnkcount = 1;
-	rinode->parent = (Inode_id) rinode;
+	rinode->parent = (inode_t) rinode;
 	rinode->name[0] = 0;
 	rlnode_init(&rinode->dentry_list, NULL);
 	rdict_init(&rinode->dentry_dict, 64);
-	return (Inode_id) rinode;
+	return (inode_t) rinode;
 }
 
 static int rootfs_free_dir(struct rootfs_dir_inode* rinode)
@@ -147,7 +147,7 @@ static int dentry_equal(rlnode* dnode, rlnode_key key)
 }
 
 
-static int rootfs_lookup(Inode* this, const pathcomp_t name, Inode_id* id)
+static int rootfs_lookup(Inode* this, const pathcomp_t name, inode_t* id)
 {
 	assert(id!=NULL);
 
@@ -166,7 +166,7 @@ static int rootfs_lookup(Inode* this, const pathcomp_t name, Inode_id* id)
 
 
 
-static int rootfs_link(Inode* this, const pathcomp_t name, Inode_id id)
+static int rootfs_link(Inode* this, const pathcomp_t name, inode_t id)
 {
 	struct rootfs_dir_inode* fsinode = this->fsinode;
 	if(fsinode->type != FSE_DIR) { set_errcode(ENOTDIR); return -1; }
@@ -402,7 +402,7 @@ void rootfs_status_file(struct rootfs_file_inode* inode, struct Stat* st, int wh
 }
 
 
-static Inode_id rootfs_allocate_file(FsMount* mnt)
+static inode_t rootfs_allocate_file(FsMount* mnt)
 {
 	struct rootfs_file_inode* rinode = xmalloc(sizeof(struct rootfs_file_inode));
 	rinode->type = FSE_FILE;
@@ -413,7 +413,7 @@ static Inode_id rootfs_allocate_file(FsMount* mnt)
 	for(int i=0; i<ROOTFS_MAX_BLOCKS; i++)
 		rinode->blocks[i] = NULL;
 
-	return (Inode_id) rinode;
+	return (inode_t) rinode;
 }
 
 static int rootfs_free_file(struct rootfs_file_inode* rinode)
@@ -666,7 +666,7 @@ static void rootfs_status(Inode* inode, struct Stat* st, pathcomp_t name, int wh
 }
 
 
-static Inode_id rootfs_allocate_node(FsMount* this, Fse_type type, Dev_t dev)
+static inode_t rootfs_allocate_node(FsMount* this, Fse_type type, Dev_t dev)
 {
 	switch(type) {
 		case FSE_FILE:
@@ -678,7 +678,7 @@ static Inode_id rootfs_allocate_node(FsMount* this, Fse_type type, Dev_t dev)
 	};
 }
 
-static int rootfs_free_node(FsMount* mnt, Inode_id id)
+static int rootfs_free_node(FsMount* mnt, inode_t id)
 {
 	struct rootfs_base_inode* ino = (void*) id;
 	switch(ino->type) {
@@ -753,7 +753,7 @@ static int rootfs_mount(FsMount* mnt, FSystem* this, Dev_t dev, Inode* mpoint, u
 	return 0;
 }
 
-static void rootfs_purge(FsMount* mnt, Inode_id id)
+static void rootfs_purge(FsMount* mnt, inode_t id)
 {
 	struct rootfs_base_inode* inode = (void*)id;
 	if(inode->type == FSE_DIR) {

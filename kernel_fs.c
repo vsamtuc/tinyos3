@@ -24,7 +24,7 @@ static rdict inode_table;
 struct Inode_ref
 {
 	struct FsMount* mnt;
-	Inode_id id;
+	inode_t id;
 };
 
 
@@ -38,7 +38,7 @@ static int inode_table_equal(rlnode* node, rlnode_key key)
 
 
 /* Look into the inode_table for existing inode */
-Inode* inode_if_pinned(FsMount* mnt, Inode_id id)
+Inode* inode_if_pinned(FsMount* mnt, inode_t id)
 {
 	hash_value hval = hash_combine((hash_value)mnt, id);
 	struct Inode_ref ino_ref = {mnt, id};
@@ -57,7 +57,7 @@ Inode* inode_if_pinned(FsMount* mnt, Inode_id id)
 	The root inode points to the base of the file system.
  */
 
-Inode* pin_inode(FsMount* mnt, Inode_id id)
+Inode* pin_inode(FsMount* mnt, inode_t id)
 {
 	Inode* inode;
 
@@ -230,7 +230,7 @@ void mount_decref(FsMount* mnt)
 Inode* dir_parent(Inode* dir)
 {
 	FsMount* mnt = inode_mnt(dir);
-	Inode_id par_id;
+	inode_t par_id;
 
 	if(inode_lookup(dir, "..", &par_id)==-1) {
 		/* Oh dear, we are deleted!! */
@@ -256,7 +256,7 @@ Inode* dir_parent(Inode* dir)
 int dir_name_exists(Inode* dir, const pathcomp_t name)
 {
 	if(strcmp(name, ".")==0 || strcmp(name, "..")==0) return 1;
-	Inode_id id;
+	inode_t id;
 	return inode_lookup(dir, name, &id) == 0;
 }
 
@@ -271,7 +271,7 @@ Inode* dir_lookup(Inode* dir, const pathcomp_t name)
 	if(strcmp(name, "..")==0) 
 		return dir_parent(dir);
 
-	Inode_id id;
+	inode_t id;
 
 	/* Do a lookup */
 	if(inode_lookup(dir, name, &id) == -1) return NULL;
@@ -296,7 +296,7 @@ Inode* dir_allocate(Inode* dir, const pathcomp_t name, Fse_type type)
 {
 	FsMount* mnt = inode_mnt(dir);
 	FSystem* fsys = mnt->fsys;
-	Inode_id new_id;
+	inode_t new_id;
 
 	if(dir_name_exists(dir, name)) return NULL;
 
