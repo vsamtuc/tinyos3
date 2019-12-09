@@ -1,6 +1,9 @@
 
 #include "kernel_streams.h"
+#include "kernel_proc.h"
 #include "tinyoslib.h"
+
+#include <unistd.h>
 
 /*
 	Here, we implement two pseudo-streams
@@ -11,31 +14,27 @@
 
 extern FILE *saved_in, *saved_out;
 
+
 static int stdio_read(void* __this, char *buf, unsigned int size)
 {
 	size_t ret;
-
 	while(1) {
-		ret = fread_unlocked(buf, 1, size, saved_in);
-
-		if(ferror_unlocked(saved_in)) {			
-			//assert(errno==EINTR);
-			if(errno!=EINTR) {
-				char buf[101];
-				fprintf(stderr, "error: %s\n",strerror_r(errno, buf, 100));				
-			}
-			clearerr_unlocked(saved_in);
-		} else {
-			break;
-		}
+		ret = read(0, buf, size);
+		if(ret==-1 && errno==EINTR) continue; else break;
 	}
+	if(ret==-1) { set_errcode(errno); }
 	return ret;
 }
 
-
-static int stdio_write(void* __this, const char* buf, unsigned int size)
+static int stdio_write(void* __this, const char *buf, unsigned int size)
 {
-	return fwrite_unlocked(buf, 1, size, saved_out);
+	size_t ret;
+	while(1) {
+		ret = write(0, buf, size);
+		if(ret==-1 && errno==EINTR) continue; else break;
+	}
+	if(ret==-1) { set_errcode(errno); }
+	return ret;
 }
 
 static int stdio_close(void* this) { return 0; }

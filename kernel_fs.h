@@ -15,36 +15,10 @@
 /** @brief Maximum length of a directory entry name */
 #define MAX_NAME_LENGTH 63
 
-/** @brief Maximum number of components in a path */
-#define MAX_PATH_DEPTH   16
-
 /** @brief Maximum length of a pathname. */
 #define MAX_PATHNAME 512
 
 typedef char pathcomp_t[MAX_NAME_LENGTH+1];
-
-struct parsed_path
-{
-	int relpath;
-	int depth;
-	pathcomp_t component[MAX_PATH_DEPTH];
-};
-
-
-/**
-	@brief Construct a path string out of a parsed path.
-
-	@return string length of dest
-  */
-int parsed_path_str(struct parsed_path* pp, char* dest);
-
-
-/** 
-	@brief Parse a pathname into a struct.
-
-	Returns 0 on success, -1 on error
-  */
-int parse_path(struct parsed_path* path, const char* pathname);
 
 
 /*----------------------------------
@@ -75,17 +49,6 @@ typedef struct dir_entry dir_entry;
 #define STAT_NAME	(1<<8)
 
 
-typedef struct fs_param 
-{
-	const char* param_name;
-	enum { FS_PARAM_INT, FS_PARAM_STRING } param_type;
-	union {
-		intptr_t param_int;
-		const char* param_string;
-	};
-} fs_param;
-
-
 /**
 	@brief A filesystem driver.
 
@@ -103,7 +66,7 @@ struct FSystem_type
 
 	/* Mount a file system of this type. */
 	int (*Mount)(FsMount* mnt, FSystem* this, Dev_t dev, Inode* mpoint, 
-			unsigned int param_no, fs_param* param_vec);
+			unsigned int param_no, mount_param* param_vec);
 
 	/* Unmount a particular mount */
 	int (*Unmount)(FsMount* mnt);
@@ -245,7 +208,7 @@ struct FsMount
 	Dev_t device;
 
 	/* Inode on top of which we mounted. This is NULL for the root mount only. */
-	Inode* mount_point;			
+	Inode* mount_point;
 
 	/* Inode of our root directory */
 	Inode_id root_dir;
@@ -254,7 +217,8 @@ struct FsMount
 	rlnode submount_list;
 	rlnode submount_node;  /* Intrusive node */
 
-	void* fsdata;	/* This is understood by tbe file system */
+	/* This is data returned by the file system for this mount */
+	void* fsdata;
 };
 
 

@@ -8,109 +8,6 @@
 
 /*=========================================================
 
-	Path manipulation
-
-  =========================================================*/
-
-
-#define PATHSEP '/'
-
-/* print a parsed path to dest */
-int parsed_path_str(struct parsed_path* path, char* dest)
-{
-	char* init_dest = dest;
-	if(!path->relpath) { *dest=PATHSEP;  dest++; }
-
-	assert(path->depth>0 || (path->depth==0 && !path->relpath ));
-	assert(path->depth <= MAX_PATH_DEPTH);
-
-	for(int i=0; i<path->depth; i++) {
-		if(i>0) { *dest=PATHSEP;  dest++; }
-		char* d = memccpy(dest, path->component[i], 0, MAX_NAME_LENGTH+1);
-		assert(d && d>dest+1);
-		dest = d-1;
-	}
-
-	*dest = '\0';
-	return dest-init_dest;
-}
-
-
-int parse_path(struct parsed_path* path, const char* pathname)
-{
-	assert(pathname);
-	assert(path);
-
-	/* First determine the length. If 0 or greater than MAX_PATHNAME, return -1 */
-	unsigned int pnlen = 0;
-	for(pnlen=0; pnlen<=MAX_PATHNAME; pnlen++) 
-		if(pathname[pnlen]=='\0') break;
-
-	if(pnlen==0 || pnlen>MAX_PATHNAME)
-		return -1;
-
-	const char* fromp = pathname;
-	const char* endp = pathname+pnlen;
-	path->depth = 0;
-
-	/* Check if this is a root */
-	if(*fromp == PATHSEP) {
-		path->relpath = 0;
-		fromp++;
-	} else {
-		path->relpath = 1;
-	}
-
-	/* parse components, but mind the length of each */
-	int cclen = 0;
-	while(fromp != endp) {
-		/* If we find a '/' ... */
-		if(*fromp == PATHSEP) {
-			/* Terminate current component, if not empty. This
-			   allows for consequtive '/' in a pathname to be ignored */
-			if(cclen>0) {
-				assert(path->depth < MAX_PATH_DEPTH);
-				assert(cclen <= MAX_NAME_LENGTH);
-				path->component[path->depth][cclen] = '\0';
-				path->depth ++;
-				cclen = 0;
-			}
-		} else {
-			/* We have an extra char in the current component */
-			if(cclen == MAX_NAME_LENGTH || path->depth>= MAX_PATH_DEPTH)
-				return -1;
-			path->component[path->depth][cclen] = *fromp;
-			cclen ++;
-		}
-
-		// take next char
-		fromp++;
-	}
-
-	/* Close the last name in the appropriate manner */
-	if(cclen>0) {
-		assert(path->depth < MAX_PATH_DEPTH);
-		assert(cclen <= MAX_NAME_LENGTH);
-		path->component[path->depth][cclen] = '\0';
-		path->depth ++;
-	} else if(path->depth > 0) {
-		/* last character was a '/', so add another component as '.' */
-		if(path->depth >= MAX_PATH_DEPTH)
-			return -1;
-		path->component[path->depth][0] = '.';
-		path->component[path->depth][1] = '\0';
-		path->depth ++;
-	}
-
-	return 0;
-}
-
-
-
-
-
-/*=========================================================
-
 	Inode manipulation
 
   =========================================================*/
@@ -187,6 +84,7 @@ Inode* pin_inode(FsMount* mnt, Inode_id id)
 	/* Initialize reference */
 	inode->ino_mnt = mnt;
 	inode->ino_id = id;
+	inode->mounted = NULL;
 
 	/* Fetch data from file system. If there is an error, clean up and return NULL */
 	if(fsys->PinInode(inode)==-1) {
@@ -414,31 +312,14 @@ Inode* dir_allocate(Inode* dir, const pathcomp_t name, Fse_type type)
 
 
 
-Inode* lookup_path(struct parsed_path* pp, unsigned int tail)
-{
-	Inode* inode=NULL;
+/*=========================================================
 
-	/* Anchor the search */
-	if(pp->relpath) {
-		inode = CURPROC->cur_dir;  
-	} else {
-		inode = CURPROC->root_dir;
-	}
+	Path manipulation
 
-	assert(inode != NULL);
+  =========================================================*/
 
-	/* Start the search */
-	repin_inode(inode);
 
-	for(unsigned int i=0; i+tail < pp->depth; i++) {
-		Inode* next = dir_lookup(inode, pp->component[i]);
-		unpin_inode(inode);
-		if(next==NULL) return NULL;
-		inode = next;
-	}
-
-	return inode;
-}
+#define PATHSEP '/'
 
 
 Inode* lookup_pathname(const char* pathname, const char** last)
@@ -501,7 +382,6 @@ Inode* lookup_pathname(const char* pathname, const char** last)
 	/* if last component is empty, pathname ended in '/' */
 	assert( (*base != '\0') || (*(base-1)=='/')  );
 
-
 	/* One last check */
 	if(! length_is_ok()) return NULL;
 
@@ -521,8 +401,6 @@ Inode* lookup_pathname(const char* pathname, const char** last)
 
 	return inode;
  }
-
-
 
 
 
@@ -553,31 +431,21 @@ Fid_t sys_Open(const char* pathname, int flags)
 	/* RESOURCE: Now we have reserved fid/fcb pair */
 
 	/* Take the path */
-	struct parsed_path pp;
-	if(parse_path(&pp, pathname)==-1) {
-	    FCB_unreserve(1, &fid, &fcb);
-		set_errcode(ENAMETOOLONG);
-		return NOFILE;
-	}
-
-	Inode* dir AUTO_UNPIN = lookup_path(&pp, 1);
+	const char* last;
+	Inode* dir AUTO_UNPIN = lookup_pathname(pathname, &last);
 	if(dir==NULL) {
         FCB_unreserve(1, &fid, &fcb);		
 		return NOFILE;
 	}
 
 	/* Try looking up the file system entity */
-	Inode* file AUTO_UNPIN = NULL;
-	if(pp.depth == 0)
-		file = dir;
-	else 
-		file = dir_lookup(dir, pp.component[pp.depth-1]);
+	Inode* file AUTO_UNPIN = dir_lookup(dir, last);
 
 	if(file == NULL) {
 		/* If no entity was found, look at the creation flags */
 		if(flags & OPEN_CREAT) {
 			/* Try to create a file by this name */
-			file = dir_allocate(dir, pp.component[pp.depth-1], FSE_FILE);
+			file = dir_allocate(dir, last, FSE_FILE);
 			if(file==NULL) {
 				FCB_unreserve(1, &fid, &fcb);
 				return NOFILE;
@@ -753,14 +621,78 @@ int sys_ChDir(const char* pathname)
 	return 0;
 }
 
-int sys_Mount(const char* device, const char* mount_point, const char* fstype, const char* params)
+int sys_Mount(Dev_t device, const char* mount_point, const char* fstype, unsigned int paramc, mount_param* paramv)
 {
+	/* Find the file system */
+	FSystem* fsys = get_fsys(fstype);
+	if(fsys==NULL) { set_errcode(ENODEV); return -1; }
 
+	/* Get the mount record */
+	FsMount* mnt = mount_acquire();
+	if(mnt==NULL) return -1;
+
+	/* Resolve mount point */
+	Inode* mpoint AUTO_UNPIN = NULL;
+	if(mount_point != NULL) {
+		mpoint = lookup_pathname(mount_point, NULL);
+		if(mpoint==NULL) return -1;
+		if(mpoint->pincount != 1) { set_errcode(EBUSY); return -1; }
+	} 
+	else 
+	{
+		/* If mpoint is NULL, we must be the root mount */
+		if(mnt != mount_table) {
+			set_errcode(EBUSY);
+			return -1;
+		}
+	}
+
+	/* TODO: check that the device is not busy */
+
+	int rc = fsys->Mount(mnt, fsys, device, mpoint, paramc, paramv);
+	if(rc==-1) return -1;
+
+	return 0;
 }
 
 int sys_Umount(const char* mount_point)
 {
+	FsMount* mnt;
 
+	/* Special case: this must be the root mount */
+	if(mount_point==NULL) {
+		mnt = mount_table;
+	} else {
+		/* Look up the mount point */
+		Inode* mpoint AUTO_UNPIN = lookup_pathname(mount_point, NULL);
+		if(mpoint==NULL) return -1;
+
+		if(inode_mnt(mpoint)->root_dir != inode_id(mpoint)) {
+			set_errcode(EINVAL);    /* This is not a mount point */
+			return -1;
+		}
+
+		mnt = inode_mnt(mpoint);
+	}
+
+    /* See if we are busy */
+    if(mnt->refcount != 0) {
+        set_errcode(EBUSY);
+        return -1;
+    }
+
+    /* Ok, let's unmount */
+
+    /* Detach from the filesystem */
+    if(mnt->mount_point!=NULL) {
+        mnt->mount_point->mounted = NULL;
+        rlist_remove(& mnt->submount_node);
+    } 
+
+    int rc = mnt->fsys->Unmount(mnt);
+
+    mnt->fsys = NULL;
+    return rc;
 }
 
 
@@ -787,19 +719,18 @@ void initialize_filesys()
 	rdict_init(&inode_table, MAX_PROC);
 
 	/* FsMount the rootfs as the root filesystem */
-	FSystem* rootfs = get_fsys("rootfs");
-	FsMount* root_mnt = mount_acquire();
-	rootfs->Mount(root_mnt, rootfs, NO_DEVICE, NULL, 0, NULL);
-	assert(root_mnt != NULL);
+	int rc = sys_Mount(NO_DEVICE, NULL, "rootfs", 0, NULL);
+	assert(rc==0);
+	if(rc!=0) abort();
 }
 
 
 void finalize_filesys()
 {
 	/* Unmount rootfs */
-	FsMount* root_mnt = mount_table;
-	FSystem* fsys = root_mnt->fsys;
-	CHECK(fsys->Unmount(root_mnt));
+	int rc = sys_Umount(NULL);
+	assert(rc==0);
+	if(rc!=0) abort();
 
 	assert(inode_table.size == 0);
 	rdict_destroy(&inode_table);

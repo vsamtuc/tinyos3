@@ -46,7 +46,7 @@ SYSCALL(MkDir, int, (const char* pathname), (pathname))\
 SYSCALL(RmDir, int, (const char* pathname), (pathname))\
 SYSCALL(ChDir, int, (const char* pathname), (pathname))\
 SYSCALL(GetCwd, int, (char* buffer, unsigned int size), (buffer, size))\
-SYSCALL(Mount, int, (const char* dev, const char* mpoint, const char* fstype, const char* params),(dev,mpoint,fstype,params))\
+SYSCALL(Mount, int, (Dev_t dev, const char* mpoint, const char* fstype, unsigned int paramc, mount_param* paramv),(dev,mpoint,fstype,paramc, paramv))\
 SYSCALL(Umount, int, (const char* mpoint),(mpoint))\
 SYSCALL(Read,int,(Fid_t fd, char *buf, unsigned int size), (fd,buf,size))\
 SYSCALL(Write,int,(Fid_t fd, const char *buf, unsigned int size), (fd,buf,size))\

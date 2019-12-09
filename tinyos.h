@@ -681,11 +681,17 @@ int GetCwd(char* buffer, unsigned int size);
 int ChDir(const char* pathname);
 
 
+typedef struct mount_param 
+{
+	const char* param_name;
+	const char* param_string;
+} mount_param;
+
 
 /**
 	@brief Mount a device onto the filesystem.
  */
-int Mount(const char* device, const char* mount_point, const char* fstype, const char* params);
+int Mount(Dev_t device, const char* mount_point, const char* fstype, unsigned int paramc, mount_param* paramv);
 
 /**
 	@brief Unmount the filesystem at a mount point.

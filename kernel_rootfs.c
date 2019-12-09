@@ -710,7 +710,7 @@ static int rootfs_open(Inode* inode, int flags, void** obj, file_ops** ops)
 
 
 
-static int rootfs_mount(FsMount* mnt, FSystem* this, Dev_t dev, Inode* mpoint, unsigned int pc, fs_param* pv)
+static int rootfs_mount(FsMount* mnt, FSystem* this, Dev_t dev, Inode* mpoint, unsigned int pc, mount_param* pv)
 {
 	/* The only purpose of this file system is to create the mount point and inode
 	   for the system root. Therefore, there is no mountpoint to speak of, nor is
@@ -776,6 +776,7 @@ static void rootfs_purge(FsMount* mnt, Inode_id id)
 		}
 		dir->lnkcount = 0;
 	}
+	inode->lnkcount = 0;
 	rootfs_free_node(mnt, id);
 }
 

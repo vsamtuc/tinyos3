@@ -26,9 +26,14 @@
 	Basic idea:
 	- Each core is simulated by a pthread
 	- One POSIX timer per core thread
-	- Core threads mask all signals except for USR1.
+	- Core threads mask all signals except for SIGUSR1. 
 	- The PIC thread receives all signals and dispatches them to
-	the right core thread by raising SIGUSR1.
+		the right core thread by raising SIGUSR1.
+
+	- The PIC thread uses signalfd to read its own signals. Currently,
+	  the following signals are used: 
+	  * SIGALRM, raised by timers, and 
+	  * SIGUSR1, 
 
  */
 
@@ -59,9 +64,6 @@ typedef struct core
 	int irq_delivered[maximum_interrupt_no];
 } Core;
 
-
-/* Per-core thread-local Core */
-static pthread_key_t Core_key;
 
 /* Used to store the set of core threads' signal mask */
 static sigset_t core_signal_set;
@@ -124,8 +126,6 @@ static unsigned long PIC_loops, PIC_usr1_drained, PIC_usr1_queued;
 static pthread_once_t init_control = PTHREAD_ONCE_INIT;
 static void initialize()
 {
-	/* Create the thread-local var for core no. */
-	CHECKRC(pthread_key_create(&Core_key, NULL));
 
 	USR1_sigaction.sa_sigaction = sigusr1_handler;
 	USR1_sigaction.sa_flags = SA_SIGINFO;
@@ -196,7 +196,7 @@ static void* bootfunc_wrapper(void* _core)
 	core->int_disabled = 0;
 
 	/* establish the thread-local id */
-	CHECKRC(pthread_setspecific(Core_key, core));
+	//CHECKRC(pthread_setspecific(Core_key, core));
 	cpu_core_id = core->id;
 
 	/* Set core signal mask */
@@ -479,19 +479,29 @@ static int check_terminal(terminal* term)
 
 
 /* Helper for PIC_daemon */
-static void pic_drain_sigusr1(int sigusr1fd)
+static inline unsigned int pic_drain_signalfd(int sigfd)
 {
+	unsigned int count=0;
 	struct signalfd_siginfo sfdinfo;
 	while(1) {
-		int rc = read(sigusr1fd, &sfdinfo, sizeof(sfdinfo));
+		int rc = read(sigfd, &sfdinfo, sizeof(sfdinfo));
 		if(rc==-1) {
 			assert(errno==EAGAIN || errno==EWOULDBLOCK);
 			break;
 		}
 		assert(rc==sizeof(sfdinfo));
-		__atomic_fetch_add(&PIC_usr1_drained,1,__ATOMIC_RELAXED);
-	}				
+		count++;
+	}
+	return count;
 }
+
+
+static void pic_drain_sigusr1(int sigusr1fd)
+{
+	unsigned int c = pic_drain_signalfd(sigusr1fd);
+	__atomic_fetch_add(&PIC_usr1_drained,c,__ATOMIC_RELAXED);
+}
+
 
 
 /*
@@ -507,9 +517,6 @@ static void pic_drain_sigusr1(int sigusr1fd)
 static void PIC_daemon(uint serialno)
 {
 	nterm = serialno;
-
-	/* establish the thread-local id */
-	CHECKRC(pthread_setspecific(Core_key, NULL));
 
 	/* Change the thread name */
 	char oldname[16];
@@ -616,8 +623,9 @@ static void PIC_daemon(uint serialno)
 
 	/* Close signal fds */
 	pic_drain_sigusr1(sigusr1fd);
-	CHECK(close(sigalrmfd));
 	CHECK(close(sigusr1fd));
+	pic_drain_signalfd(sigalrmfd);
+	CHECK(close(sigalrmfd));
 
 	/* Restore sigmask */
 	CHECKRC(pthread_sigmask(SIG_SETMASK, &saved_mask, NULL));
