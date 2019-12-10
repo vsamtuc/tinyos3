@@ -713,7 +713,25 @@ int Mount(Dev_t device, const char* mount_point, const char* fstype, unsigned in
   */
 int Umount(const char* mount_point);
 
+/**
+	@brief Structure containing information about a mounted file system.
+ */
+struct StatFs
+{
+	Dev_t 			fs_dev;			/**< @brief Device storing file system */
+	inode_t 		fs_root;		/**< @brief Root i-node */
+	const char*		fs_fsys;		/**< @brief File system type */
+	uintptr_t 		fs_blocks;		/**< @brief Total number of blocks */
+	uintptr_t		fs_bused;		/**< @brief Number of used blocks */
+	uintptr_t		fs_files;		/**< @brief Total number of files */
+	uintptr_t		fs_fused;		/**< @brief Number of files used */
+};
 
+
+/**
+	@brief Get status of file system
+ */
+int StatFs(const char* mount_point, struct StatFs* statfs);
 
 
 /*******************************************

@@ -26,6 +26,17 @@ typedef struct FsMount FsMount;
 typedef struct FSystem_type FSystem;
 typedef struct dir_entry dir_entry;
 
+/* These two types are just placeholders for actual void pointers */
+#if !defined(INODE)
+struct GENERIC_INODE { void* ptr; };
+#define INODE  struct GENERIC_INODE
+#endif
+
+#if !defined(MOUNT)
+struct GENERIC_MOUNT { void* ptr; } MOUNT;
+#define MOUNT struct GENERIC_MOUNT
+#endif
+
 
 /* A bunch of flags for the fields of interest in a call to Status */
 #define STAT_DEV	(1<<0)
@@ -56,17 +67,31 @@ struct FSystem_type
 	const char* name;
 
 	/* Mount a file system of this type. */
-	int (*Mount)(FsMount* mnt, FSystem* this, Dev_t dev, Inode* mpoint, 
-			unsigned int param_no, mount_param* param_vec);
+	int (*Mount)(MOUNT* mnt, FSystem* this, Dev_t dev, 
+				unsigned int param_no, mount_param* param_vec);
+
 
 	/* Unmount a particular mount */
-	int (*Unmount)(FsMount* mnt);
+	int (*Unmount)(MOUNT mnt);
 
-	/* Return the root i-node. This must be a directory. */
-	int (*GetRoot)(inode_t* root);
+
+	/**
+		@brief Return the status of the file system. 
+
+		Returns information about a mounted file system. In
+		particular, this call returns the \c inode_t  of the
+		file system root.
+
+		@param mnt the mounted file system
+		@param statfs buffer to fill in the required information.
+		@return 0 on success, -1 on failure
+	 */
+	void (*StatFs)(MOUNT mnt, struct StatFs* statfs);
+
 
 	/* Create inodes */
-	inode_t (*AllocateNode)(FsMount* mnt, Fse_type type, Dev_t dev);
+	inode_t (*AllocateNode)(MOUNT mnt, Fse_type type, Dev_t dev);
+
 
 	/**
 		@brief Free an i-node.
@@ -75,7 +100,7 @@ struct FSystem_type
 		Note: Maybe this should not be exported to the system?
 		Does any code outside of the fsys code ever call it?
 	   */
-	int (*FreeNode)(FsMount* mnt, inode_t id);
+	int (*FreeNode)(MOUNT mnt, inode_t id);
 
 	/**
 		@brief Pin i-node data for a new handle.
@@ -211,7 +236,7 @@ struct FsMount
 	rlnode submount_node;  /* Intrusive node */
 
 	/* This is data returned by the file system for this mount */
-	void* fsdata;
+	MOUNT fsmount;
 };
 
 

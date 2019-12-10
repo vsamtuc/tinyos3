@@ -1,4 +1,10 @@
 
+struct rootfs_mount;
+typedef struct rootfs_mount* rootfs_mount_p;
+
+#define MOUNT rootfs_mount_p
+
+
 #include "kernel_fs.h"
 #include "kernel_proc.h"
 
@@ -28,6 +34,15 @@ extern file_ops ROOTFS_FILE;
 	Rootfs off-core inode base. These attributes
 	are at the beginning of every inode.
 */
+struct rootfs_mount
+{
+	uintptr_t avail_blocks;
+	uintptr_t used_blocks;
+	uintptr_t num_inodes;
+
+	inode_t root_dir;
+};
+
 
 #define ROOTFS_INODE_BASE  \
 struct { \
@@ -49,7 +64,7 @@ static int rootfs_pin_inode(Inode* inode)
 
 
 /* Forward declaration */
-static int rootfs_free_node(FsMount* mnt, inode_t id);
+static int rootfs_free_node(MOUNT mnt, inode_t id);
 
 
 static int rootfs_unpin_inode(Inode* inode)
@@ -59,7 +74,7 @@ static int rootfs_unpin_inode(Inode* inode)
 	inode->fsinode = NULL;
 
 	if(fsinode->lnkcount == 0)
-		return rootfs_free_node(inode_mnt(inode), inode_id(inode));
+		return rootfs_free_node(inode_mnt(inode)->fsmount, inode_id(inode));
 
 	return 0;
 }
@@ -115,7 +130,7 @@ void rootfs_dir_name(struct rootfs_dir_inode* inode, pathcomp_t name)
 }
 
 
-static inode_t rootfs_allocate_dir(FsMount* mnt)
+static inode_t rootfs_allocate_dir(MOUNT mnt)
 {
 	struct rootfs_dir_inode* rinode = xmalloc(sizeof(struct rootfs_dir_inode));
 	rinode->type = FSE_DIR;
@@ -266,7 +281,7 @@ static int rootfs_unlink(Inode* this, const pathcomp_t name)
 		it to be unpinned, else we should free it now.
 	*/
 	if(einode->lnkcount==0 && inode_if_pinned(inode_mnt(this), dentry->id)==NULL) {
-		return rootfs_free_node(inode_mnt(this), dentry->id);
+		return rootfs_free_node(inode_mnt(this)->fsmount, dentry->id);
 	}	
 
 	return 0;
@@ -402,7 +417,7 @@ void rootfs_status_file(struct rootfs_file_inode* inode, struct Stat* st, int wh
 }
 
 
-static inode_t rootfs_allocate_file(FsMount* mnt)
+static inode_t rootfs_allocate_file(MOUNT mnt)
 {
 	struct rootfs_file_inode* rinode = xmalloc(sizeof(struct rootfs_file_inode));
 	rinode->type = FSE_FILE;
@@ -666,7 +681,7 @@ static void rootfs_status(Inode* inode, struct Stat* st, pathcomp_t name, int wh
 }
 
 
-static inode_t rootfs_allocate_node(FsMount* this, Fse_type type, Dev_t dev)
+static inode_t rootfs_allocate_node(MOUNT this, Fse_type type, Dev_t dev)
 {
 	switch(type) {
 		case FSE_FILE:
@@ -678,7 +693,7 @@ static inode_t rootfs_allocate_node(FsMount* this, Fse_type type, Dev_t dev)
 	};
 }
 
-static int rootfs_free_node(FsMount* mnt, inode_t id)
+static int rootfs_free_node(MOUNT mnt, inode_t id)
 {
 	struct rootfs_base_inode* ino = (void*) id;
 	switch(ino->type) {
@@ -710,50 +725,47 @@ static int rootfs_open(Inode* inode, int flags, void** obj, file_ops** ops)
 
 
 
-static int rootfs_mount(FsMount* mnt, FSystem* this, Dev_t dev, Inode* mpoint, unsigned int pc, mount_param* pv)
+static int rootfs_mount(MOUNT* mntp, FSystem* this, Dev_t dev, unsigned int pc, mount_param* pv)
 {
 	/* The only purpose of this file system is to create the mount point and inode
 	   for the system root. Therefore, there is no mountpoint to speak of, nor is
 	   there an associated device */
 
-	if(mpoint==NULL && mnt!=mount_table) {
-		set_errcode(ENOENT);
-		return -1;
-	}
 	if(dev!=NO_DEVICE) {
 		set_errcode(ENXIO);
 		return -1;
 	}
 
-	/* Init the fsys */
-	mnt->fsys = this;
+	/* Allocate */
+	MOUNT mnt = xmalloc(sizeof(struct rootfs_mount));
+
+	mnt->avail_blocks = 0;
+	mnt->used_blocks = 0;
+	mnt->num_inodes = 1;
 
 	/* Make the root node */
 	mnt->root_dir = rootfs_allocate_dir(mnt);
 
-	/* Set the fsdata field on the mount */
-	mnt->fsdata = NULL;
-	mnt->refcount = 0;
+	/* Set the return value */
+	*mntp = mnt;
 
-	/* Take care of the mountpoint */
-	mnt->mount_point = mpoint;
-
-	if(mpoint != NULL) {
-
-		/* Hold it for the lifetime of this mount */
-		repin_inode(mpoint);
-
-		/* Update its `mount` field, so that lookups are redirected */
-		mpoint->mounted = mnt;
-
-		/* Add thyself as a submount to the mount of the mount point */
-		rlist_push_front(& inode_mnt(mnt->mount_point)->submount_list, & mnt->submount_node);
-	} 
-
+	/* Success */
 	return 0;
 }
 
-static void rootfs_purge(FsMount* mnt, inode_t id)
+
+static void rootfs_statfs(MOUNT mnt, struct StatFs* sfs)
+{
+	sfs->fs_dev = NO_DEVICE;
+	sfs->fs_root = mnt->root_dir;
+	sfs->fs_fsys = ROOT_FSYS.name;
+	sfs->fs_blocks = mnt->avail_blocks;
+	sfs->fs_bused = mnt->used_blocks;
+	sfs->fs_files = mnt->num_inodes;
+	sfs->fs_fused = mnt->num_inodes;
+}
+
+static void rootfs_purge(MOUNT mnt, inode_t id)
 {
 	struct rootfs_base_inode* inode = (void*)id;
 	if(inode->type == FSE_DIR) {
@@ -780,31 +792,11 @@ static void rootfs_purge(FsMount* mnt, inode_t id)
 	rootfs_free_node(mnt, id);
 }
 
-static int rootfs_unmount(FsMount* mnt)
+static int rootfs_unmount(MOUNT mnt)
 {
-	/* Check if we have submounts */
-	if(!is_rlist_empty(&mnt->submount_list)) {
-		set_errcode(EBUSY);
-		return -1;		
-	}
-
-	/* See if we are busy */
-	if(mnt->refcount != 0) {
-		set_errcode(EBUSY);
-		return -1;
-	}
-
-	/* Detach from the filesystem */
-	if(mnt->mount_point!=NULL) {
-		mnt->mount_point->mounted = NULL;
-
-		rlist_remove(& mnt->submount_node);
-	} 
-
 	/* Recursively delete data */
 	rootfs_purge(mnt, mnt->root_dir);
-
-	mnt->fsys = NULL;
+	free(mnt);
 	return 0;
 }
 
@@ -836,9 +828,9 @@ FSystem ROOT_FSYS = {
 	.Lookup = rootfs_lookup,
 	.Link = rootfs_link,
 	.Unlink = rootfs_unlink,
-	.Status = rootfs_status
+	.Status = rootfs_status,
+	.StatFs = rootfs_statfs
 };
-
 
 
 REGISTER_FSYS(ROOT_FSYS)

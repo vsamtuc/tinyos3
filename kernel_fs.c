@@ -300,10 +300,10 @@ Inode* dir_allocate(Inode* dir, const pathcomp_t name, Fse_type type)
 
 	if(dir_name_exists(dir, name)) return NULL;
 
-	new_id = fsys->AllocateNode(mnt, type, NO_DEVICE);
+	new_id = fsys->AllocateNode(mnt->fsmount, type, NO_DEVICE);
 	if( inode_link(dir, name, new_id) == -1 ) {
 		// This should not have happened...
-		fsys->FreeNode(mnt, new_id);
+		fsys->FreeNode(mnt->fsmount, new_id);
 		return NULL;
 	}
 
@@ -642,17 +642,29 @@ int sys_Mount(Dev_t device, const char* mount_point, const char* fstype, unsigne
 	{
 		/* If mpoint is NULL, we must be the root mount */
 		if(mnt != mount_table) {
-			set_errcode(EBUSY);
+			set_errcode(ENOENT);
 			return -1;
 		}
 	}
 
 	/* TODO: check that the device is not busy */
 
-	int rc = fsys->Mount(mnt, fsys, device, mpoint, paramc, paramv);
-	if(rc==-1) return -1;
+	int rc = fsys->Mount(& mnt->fsmount, fsys, device, paramc, paramv);
+	if(rc==0) {
+		if(mpoint) {
+			repin_inode(mpoint);
+			mpoint->mounted = mnt;
+		}
+		
+		struct StatFs sfs;
+		fsys->StatFs(mnt->fsmount, &sfs);
+		mnt->root_dir = sfs.fs_root;
 
-	return 0;
+		/* This assignment makes the FsMount object reserved! */
+		mnt->fsys = fsys;
+	}
+
+	return rc;
 }
 
 int sys_Umount(const char* mount_point)
@@ -682,6 +694,8 @@ int sys_Umount(const char* mount_point)
     }
 
     /* Ok, let's unmount */
+    int rc = mnt->fsys->Unmount(mnt->fsmount);
+    if(rc==-1) return -1;
 
     /* Detach from the filesystem */
     if(mnt->mount_point!=NULL) {
@@ -689,10 +703,23 @@ int sys_Umount(const char* mount_point)
         rlist_remove(& mnt->submount_node);
     } 
 
-    int rc = mnt->fsys->Unmount(mnt);
-
+    /* Make mount object unreserved */
     mnt->fsys = NULL;
     return rc;
+}
+
+
+int sys_StatFs(const char* pathname, struct StatFs* statfs)
+{
+	if(statfs == NULL) return set_errcode(EFAULT), -1;
+	Inode* inode AUTO_UNPIN = lookup_pathname(pathname, NULL);
+	if(inode==NULL) return -1;
+
+	FsMount* mnt = inode_mnt(inode);
+	FSystem* fsys = mnt->fsys;
+
+	fsys->StatFs(mnt->fsmount, statfs);
+	return 0;
 }
 
 
