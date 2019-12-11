@@ -189,10 +189,9 @@ void BarrierSync(barrier* bar, unsigned int n)
 	Mutex_Lock(& bar->mx);
 
 	int epoch = bar->epoch;
-	assert(bar->count < n);
 
 	bar->count ++;
-	if(bar->count == n) {
+	if(bar->count >= n) {
 		bar->epoch ++;
 		bar->count = 0;
 		Cond_Broadcast(&bar->cv);
@@ -205,3 +204,29 @@ void BarrierSync(barrier* bar, unsigned int n)
 }
 
 
+int ReadDir(int dirfd, char* buffer, unsigned int size)
+{
+	char nbuf[3];
+
+	for(int i=0; i<2; ) {
+		int rc = Read(dirfd, nbuf+i, 2-i);
+		if(rc==0) return 0;
+		if(rc==-1) return -1;
+		i+=rc;
+	}
+	nbuf[2] = '\0';
+
+	int len = strtol(nbuf, NULL, 16)+1;
+	if(len>size) {
+		Seek(dirfd, -2, SEEK_END);
+		return -1;
+	}
+
+	for(int i=0; i<len; ) {
+		int rc = Read(dirfd, buffer+i, len-i);
+		if(rc==0) return 0;
+		if(rc==-1) return -1;
+		i+=rc;
+	}
+	return len;
+}

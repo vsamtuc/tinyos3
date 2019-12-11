@@ -1398,25 +1398,18 @@ TEST_SUITE(pipe_tests,
 
 void connect_sockets(Fid_t sock1, Fid_t lsock, Fid_t* sock2, port_t port)
 {
-	int accept_thread(int argl, void* args) {
-		*sock2 = Accept(lsock);
-		ASSERT(*sock2 != NOFILE);
-		return 0;
-	}
-	int connect_thread(int argl, void* args) {
+	int do_connect(int argl, void* args) {
 		ASSERT(Connect(sock1, port, 1000)==0);
 		return 0;
 	}
 
-	Tid_t t1,t2;
-	t1 = CreateThread(accept_thread, 0, NULL);
-	t2 = CreateThread(connect_thread, 0, NULL);
-	ASSERT(t1!=NOTHREAD);
-	ASSERT(t2!=NOTHREAD);
-	ASSERT(ThreadJoin(t1, NULL)==0);
-	ASSERT(ThreadJoin(t2, NULL)==0);
-
+	Pid_t pid = Spawn(do_connect, 0, NULL);
+	ASSERT(pid!=NOPROC);
+	*sock2 = Accept(lsock);
+	ASSERT(*sock2 != NOFILE);
+	ASSERT(WaitChild(pid, NULL)==pid);
 }
+
 void check_transfer(Fid_t from, Fid_t to)
 {
 	char buffer[12] = {[0]=0};
@@ -1635,13 +1628,13 @@ BOOT_TEST(test_accept_unblocks_on_close,
 		ASSERT(Accept(lsock)==NOFILE);
 		return 0;
 	}
-	Tid_t t = CreateThread(accept_connection, 0, NULL);
+	Pid_t pid = Spawn(accept_connection, 0, NULL);
 
 	/* Here, we just wait some time, (of course, this is technically a race condition :-( */
 	fibo(30);
 	Close(lsock);
 
-	ThreadJoin(t,NULL);
+	WaitChild(pid,NULL);
 	return 0;
 }
 

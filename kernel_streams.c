@@ -149,6 +149,21 @@ FCB* get_fcb(Fid_t fid)
   return CURPROC->FIDT[fid];
 }
 
+intptr_t sys_Seek(Fid_t fd, intptr_t offset, int whence)
+{
+	/* Get the fields from the stream */
+	FCB* fcb = get_fcb(fd);
+	if(!fcb) { set_errcode(EBADF); return -1; }
+
+	intptr_t (*seekfunc)(void*, intptr_t, int) = fcb->streamfunc->Seek;
+	if(seekfunc) {
+		return fcb->streamfunc->Seek(fcb->streamobj, offset, whence);
+	} else {
+		set_errcode(ESPIPE);
+		return -1;
+	}
+}
+
 
 int sys_Read(Fid_t fd, char *buf, unsigned int size)
 {

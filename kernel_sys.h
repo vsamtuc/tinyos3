@@ -39,6 +39,7 @@ SYSCALL(GetTerminalDevices, unsigned int, (), ())\
 SYSCALL(OpenTerminal, Fid_t, (unsigned int termno), (termno))\
 SYSCALL(OpenNull, Fid_t, (), ())\
 SYSCALL(Open, Fid_t, (const char* pathname, int flags), (pathname, flags))\
+SYSCALL(Seek, intptr_t, (int fid, intptr_t offset, int whence), (fid, offset, whence))\
 SYSCALL(Stat, int, (const char* pathname, struct Stat* statbuf), (pathname, statbuf))\
 SYSCALL(Link, int, (const char* pathname, const char* newpath), (pathname, newpath))\
 SYSCALL(Unlink, int, (const char* pathname), (pathname))\

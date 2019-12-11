@@ -319,12 +319,12 @@ static int rootfs_open_dir(Inode* inode, int flags, void** obj, file_ops** ops)
 	/* Build the stream contents */
 	FILE* mfile = open_memstream(& s->buffer, & s->buflen);
 	if(rinode->lnkcount!=0) {
-		fprintf(mfile, ".%c", 0);   /* My self */
-		fprintf(mfile, "..%c", 0);  /* My parent */
+		fprintf(mfile, "%02x.%c", 1, 0);   /* My self */
+		fprintf(mfile, "%02x..%c", 2, 0);  /* My parent */
 		/* Everything else */
 		for(rlnode* dnode=rinode->dentry_list.next; dnode!=&rinode->dentry_list; dnode=dnode->next) {
 			struct dentry_node* dn = dnode->obj;
-			fprintf(mfile, "%s%c", dn->name,0);
+			fprintf(mfile, "%02x%s%c", (unsigned int)strlen(dn->name), dn->name, 0);
 		}
 	}
 	fclose(mfile);

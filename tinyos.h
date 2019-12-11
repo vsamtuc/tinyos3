@@ -573,6 +573,24 @@ enum Open_flags
 Fid_t Open(const char* pathname, int flags);
 
 
+/**
+	@brief Move the current position of a seekable stream.
+
+	@param fid the stream whose current position is changed
+	@param offset the new position relative to the origin determined
+	  by \c whence
+	@param whence the origin from which the new position is calculated
+	  The admissible values are:
+	  - 0 means from the start of the stream
+	  - 1 means from the current position
+	  - 2 means from the end of the stream
+	@return the new stream position measured from the start of the stream
+	   On error, -1 is returned and GetError() returns the error code.
+ */
+intptr_t Seek(int fid, intptr_t offset, int whence);
+
+
+
 typedef uint64_t Dev_t;
 
 #define NO_DEVICE ((Dev_t) -1)

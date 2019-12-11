@@ -85,17 +85,71 @@ Fid_t Dup(Fid_t oldfid);
 int ParseProcInfo(procinfo* pinfo, Program* prog, int argc, const char** argv );
 
 
+/**
+	@brief A synchronization barrier.
 
+	This object implements barrier synchronization between a collection of threads.
+	Instances are declared by code like this:
+	\code
+	barrier b = BARRIER_INIT;
+	\endcode
+
+	@see BarrierSync
+  */
 typedef struct barrier {
-	Mutex mx;
-	CondVar cv;
-	unsigned int count, epoch;
+	Mutex mx;						/**< @brief A mutex */
+	CondVar cv;						/**< @brief A condition variable */
+	unsigned int count;				/**< @brief Barrier state */
+	unsigned int epoch;				/**< @brief Barrie state */
 } barrier;
 
+/**< @brief Initializer for @ref barrier objects */
 #define BARRIER_INIT  ((barrier){ MUTEX_INIT, COND_INIT, 0, 0})
 
+/**
+	@brief Synchronize with a set of threads.
 
+	Assume that a set of \c N processes or threads wants to synchronize
+	by assuring that all \c N processes have reached a certain point
+	in their execution. This can be done by having each process call
+	\code
+	BarrierSync(br, N);
+	\endocde
+	where \c br is a pointer to a \c barrier.
+
+	The exact semantics of this call are as follows: the \c barrier
+	has an internal counter which is initialized to \c 0. 
+	When a thread calls \c BarrierSync(bar,n) the counter is first incremented.
+	If the counter is equal or larger than \c n, then the barrier resets.
+	That is, all waiting threads are unblocked and the counter is reset to 0. 
+	Else, the current caller is blocked.
+
+	Once reset, the barrier can be used again.
+
+	@param bar pointer to the \c barrier object to use
+	@param n  the threshold for the current set of threads
+ */
 void BarrierSync(barrier* bar, unsigned int n);
+
+
+/**
+	@brief Read the next entry from a directory stream
+
+	This call will return the next name from a directory stream
+	into \c buffer. The size of \c buffer should be at least
+	\c MAX_NAME_LENGTH+1. If it is smaller, then the call may
+	still succeed, if the next name happens to fit in the space
+	provided. If the next name does not fit, -1 is returned. The
+	call should be repeated with a larger buffer.
+
+	@param dirfid the fid of a directory
+	@param buffer will contain the next directory name
+	@param size  the size of the buffer
+	@return the number of bytes returned, or 0 for the end of stream,
+	    or -1 in the case of error.
+ */
+int ReadDir(int dirfid, char* buffer, unsigned int size);
+
 
 
 #endif

@@ -825,16 +825,24 @@ int util_rmdir(size_t argc, const char** argv)
 
 int util_ls(size_t argc, const char** argv)
 {
+
 	Fid_t fdir = Open(".", OPEN_RDONLY);
 	if(fdir==NOFILE) { PError(argv[0]); return 1; }
 
-	char c;
+	char name[MAX_NAME_LENGTH+1];
 	int rc;
-	while((rc=Read(fdir, &c, 1))==1) {
-		if(c==0) printf("\n");
-		else printf("%c",c);
+	while( (rc=ReadDir(fdir, name, MAX_NAME_LENGTH+1)) > 0)
+	{
+		struct Stat st;
+		Stat(name, &st);
+		char T='?';
+		switch(st.st_type) { 
+			case FSE_DIR: T='d'; break;
+			case FSE_FILE: T='-'; break;
+			case FSE_DEV: T='c'; break;
+		}
+		printf("%2crw-rw-r-- %3d %8zu %s\n", T, st.st_nlink, st.st_size, name);
 	}
-	if(rc==-1) { PError(argv[0]); return 1; }
 
 	return 0;
 }
