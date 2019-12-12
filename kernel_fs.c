@@ -42,7 +42,7 @@ Inode* inode_if_pinned(FsMount* mnt, inode_t id)
 {
 	hash_value hval = hash_combine((hash_value)mnt, id);
 	struct Inode_ref ino_ref = {mnt, id};
-	rlnode* node = rdict_lookup(&inode_table, hval, &ino_ref, NULL, inode_table_equal);
+	rlnode* node = rdict_lookup(&inode_table, hval, &ino_ref, inode_table_equal);
 	if(node) {
 		/* Found it! */
 		Inode* ret = node->inode;
@@ -64,7 +64,7 @@ Inode* pin_inode(FsMount* mnt, inode_t id)
 	/* Look into the inode_table for existing inode */
 	hash_value hval = hash_combine((hash_value)mnt, id);
 	struct Inode_ref ino_ref = {mnt, id};
-	rlnode* node = rdict_lookup(&inode_table, hval, &ino_ref, NULL, inode_table_equal);
+	rlnode* node = rdict_lookup(&inode_table, hval, &ino_ref, inode_table_equal);
 	if(node) {				/* Found it! */
 		inode = node->inode;
 		repin_inode(inode);
@@ -79,7 +79,7 @@ Inode* pin_inode(FsMount* mnt, inode_t id)
 		we should really replace this with a pool, for speed.
 	 */
 	inode = (Inode*) xmalloc(sizeof(Inode));
-	rlnode_init(&inode->inotab_node, inode);
+	rdict_node_init(&inode->inotab_node, inode, hval);
 
 	/* Initialize reference */
 	inode->ino_mnt = mnt;
@@ -96,7 +96,7 @@ Inode* pin_inode(FsMount* mnt, inode_t id)
 	inode->pincount = 1;
 	mount_incref(mnt);
 	assert(inode_table_equal(&inode->inotab_node, &ino_ref));
-	rdict_insert(&inode_table, &inode->inotab_node, hval);
+	rdict_insert(&inode_table, &inode->inotab_node);
 
 	return inode;
 }
@@ -114,8 +114,7 @@ int unpin_inode(Inode* inode)
 
 	/* Nobody is pinning the inode, so we may release the handle */
 	/* Remove it from the inode table */
-	hash_value hval = hash_combine((hash_value) inode_mnt(inode), inode_id(inode));
-	rdict_remove(&inode_table, &inode->inotab_node, hval);
+	rdict_remove(&inode_table, &inode->inotab_node);
 
 	/* Remove reference to mount */
 	mount_decref(inode_mnt(inode));
@@ -655,7 +654,7 @@ int sys_Mount(Dev_t device, const char* mount_point, const char* fstype, unsigne
 			repin_inode(mpoint);
 			mpoint->mounted = mnt;
 		}
-		
+
 		struct StatFs sfs;
 		fsys->StatFs(mnt->fsmount, &sfs);
 		mnt->root_dir = sfs.fs_root;

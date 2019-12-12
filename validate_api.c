@@ -1818,7 +1818,7 @@ BOOT_TEST(test_socket_multi_producer,
 
 
 
-BOOT_TEST(test_shudown_read,
+BOOT_TEST(test_shutdown_read,
 	"Test that ShutDown with SHUTDOWN_READ blocks Write"
 	)
 {
@@ -1853,7 +1853,7 @@ BOOT_TEST(test_shudown_read,
 }
 
 
-BOOT_TEST(test_shudown_write,
+BOOT_TEST(test_shutdown_write,
 	"Test that ShutDown with SHUTDOWN_WRITE first exhausts buffers and then causes Read to return 0"
 	)
 {
@@ -1929,8 +1929,8 @@ TEST_SUITE(socket_tests,
 	&test_socket_single_producer,
 	&test_socket_multi_producer,
 
-	&test_shudown_read,
-	&test_shudown_write,
+	&test_shutdown_read,
+	&test_shutdown_write,
 
 	NULL
 };

@@ -12,7 +12,11 @@
 #include <assert.h>
 
 
-/* Unit tests for the resource lists */
+/*****************************************************
+ *
+ *  Tests for rlist
+ *
+ ******************************************************/
 
 
 /* Make a list with dynamically allocated nodes, each node containing
@@ -266,9 +270,13 @@ TEST_SUITE(rlist_tests,
 };
 
 
-/*
- *  rheap testing
- */
+
+/*****************************************************
+ *
+ *  Tests for rheap
+ *
+ ******************************************************/
+
 
 static inline int num_less(rlnode* a, rlnode* b) 
 {
@@ -404,8 +412,37 @@ TEST_SUITE(rheap_tests,
 };
 
 
+/*****************************************************
+ *
+ *  Tests for exceptions
+ *
+ ******************************************************/
 
 
+
+BARE_TEST(test_dict_init, "Initialization of rdict")
+{
+	
+}
+
+
+
+
+
+
+
+TEST_SUITE(rdict_tests, "Tests for the hashing data structure rdict")
+{
+	&test_dict_init,
+	NULL
+};
+
+
+/*****************************************************
+ *
+ *  Tests for packing and unpacking
+ *
+ ******************************************************/
 
 
 
@@ -614,15 +651,15 @@ void report_time(struct timespec* t1, struct timespec* t2, int n)
 {
 	double T1 = t1->tv_nsec + t1->tv_sec*1E9;
 	double T2 = t2->tv_nsec + t2->tv_sec*1E9;
-	MSG("Performance: %f nsec/loop\n", (T2-T1)/n);
+	MSG("Performance: %f nsec\n", (T2-T1)/n);
 }
 
 void compute_func(int m)
 {
 	RAISE_ERROR;
 }
-BARE_TEST(test_exc_inloop,
-	"Test the performance of exceptions in a loop"
+BARE_TEST(test_exc_inloop1, 
+	"Test the performance of exceptions in a loop.\n" 
 	)
 {
 	long long int sum = 0l, sum2=0l;
@@ -642,8 +679,12 @@ BARE_TEST(test_exc_inloop,
 		}
 	}
 	clock_gettime(CLOCK_REALTIME, &tend);
+	MSG("Timing the cost of setting up a TRY block and raising an exception\n");
 	report_time(&tbegin, &tend, n);
+#if 0
 	MSG("sum=%lld,  sum2=%lld, expected %lld\n",sum,sum2, n*(n+1)/2ll);
+#endif
+	ASSERT(sum== n*(n+1)/2ll );
 	ASSERT(sum2== n*(n+1)/2ll );
 }
 
@@ -652,9 +693,7 @@ int compute_func2(int m)
 	return(m*3);
 }
 
-BARE_TEST(test_exc_inloop2,
-	"Test the performance of exceptions in a loop, non throwing"
-	)
+BARE_TEST(test_exc_inloop2, "Test the performance of exceptions in a loop, non throwing")
 {
 	long long int sum = 0l, sum2=0l;
 	const int n = 10000000;
@@ -667,6 +706,26 @@ BARE_TEST(test_exc_inloop2,
 		}
 	}
 	clock_gettime(CLOCK_REALTIME, &tend);
+	MSG("Timing the cost of setting up a TRY block, without raising an exception\n");
+	report_time(&tbegin, &tend, n);
+	ASSERT(sum==sum2);
+	ASSERT(sum== 3ll*n*(n+1)/2ll );
+}
+
+
+BARE_TEST(test_exc_inloop3, "Test the performance a loop without exceptions, for comparison with previous tests")
+{ 
+	/* Note: these are volatile to disable some very aggressive optimizations */
+	volatile long long int sum = 0l, sum2=0l; 
+	const int n = 10000000; 
+	struct timespec tbegin, tend;
+	clock_gettime(CLOCK_REALTIME, &tbegin);
+	for(int i=1;i<=n;i++) {
+			sum2+=3*i;
+			sum += compute_func2(i);
+	}
+	clock_gettime(CLOCK_REALTIME, &tend);
+	MSG("Timing the cost of the loop without exceptions\n");
 	report_time(&tbegin, &tend, n);
 	ASSERT(sum==sum2);
 	ASSERT(sum== 3ll*n*(n+1)/2ll );
@@ -680,8 +739,9 @@ TEST_SUITE(exception_tests,
 	&test_exc_empty_body,
 	&test_exc_catcher_match,
 	&test_exc_unwind,
-	&test_exc_inloop,
+	&test_exc_inloop1,
 	&test_exc_inloop2,
+	&test_exc_inloop3,
 	NULL
 };
 
@@ -693,6 +753,7 @@ TEST_SUITE(all_tests,
 {
 	&rlist_tests,
 	&rheap_tests,
+	&rdict_tests,
 	&test_pack_unpack,
 	&exception_tests,	
 	NULL

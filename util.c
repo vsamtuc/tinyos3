@@ -205,14 +205,28 @@ rlnode* rheap_to_ring(rlnode* heap)
  **********************/
 
 
+static void rdict_init_buckets(rdict_bucket* buckets, unsigned long size)
+{
+	for(size_t i=0;i<size-1;i++) {
+		buckets[i] = pointer_marked(buckets+i);
+	}
+	buckets[size-1] = NULL; /* sentinel */
+}
+
+
+
 void rdict_init(rdict* dict, unsigned long buckno)
 {
+	if(buckno < 16) buckno = 16;
+
 	dict->size = 0;
-	dict->bucketno = buckno;
-	size_t bucket_bytes = buckno* sizeof(rlnode*);
+	dict->bucketno = buckno-1;
+	size_t bucket_bytes = buckno * sizeof(rlnode*);
 	dict->buckets = (rlnode**)malloc(bucket_bytes);
-	memset(dict->buckets, 0, bucket_bytes);
+	rdict_init_buckets(dict->buckets, buckno);
 }
+
+
 
 void rdict_destroy(rdict* dict)
 {
@@ -220,20 +234,185 @@ void rdict_destroy(rdict* dict)
 		rdict_clear(dict);
 		free(dict->buckets);
 		dict->bucketno = 0;
+		dict->buckets = NULL;
 	}
 }
 
 
 void rdict_clear(rdict* dict)
 {
-	for(unsigned long h = 0; h < dict->bucketno; h++) {
-		rlnode* ring = dict->buckets[h];
-		if(ring == NULL) continue;
-		while(ring->next != ring) rl_splice(ring, ring->next);
-		dict->buckets[h] = NULL;
+	for(unsigned long i = 0; i < dict->bucketno; i++) {
+		while(! pointer_is_marked(dict->buckets[i])) {
+			rlnode* elem = dict->buckets[i];
+			dict->buckets[i] = elem->next;
+			elem->next = elem;
+		}
 	}
+
 	dict->size = 0;
 }
+
+
+
+rdict_iterator rdict_begin(rdict* dict)
+{
+	rdict_iterator iter = dict->buckets;
+	for(size_t i=0; i<dict->bucketno; i++) if(!pointer_is_marked(*iter)) return iter;
+	return NULL;
+}
+
+
+rdict_iterator rdict_next(rdict_iterator pos)
+{
+	assert(pos);  /* not null */
+	assert(*pos != (*pos)->next); /* not in a removed element */
+
+	if(pointer_is_marked(pos)) {
+		while(1) {
+			if(pointer_is_marked(*pos)) pos = 1+(rdict_bucket*)pointer_unmarked(*pos);
+			else if(*pos == NULL) return NULL; else return pos;
+		}
+	}
+	else
+		return &(*pos)->next;
+}
+static inline void __rdict_size_changed(rdict* dict)
+{
+
+}
+
+static inline void __rdict_bucket_insert(rdict_iterator pos, rlnode* elem)
+{
+	elem->next = *pos;
+	*pos = elem;
+}
+
+static inline int __rdict_bucket_remove(rdict_iterator pos, rlnode* elem)
+{
+	for(; !pointer_is_marked(*pos); pos = &(*pos)->next)
+		if(*pos == elem) {
+			*pos = (*pos)->next;
+			elem->next = elem;
+			return 1;
+		}
+	return 0;
+}
+
+
+void rdict_bucket_insert(rdict* dict, rdict_iterator pos, rlnode* elem)
+{
+	__rdict_bucket_insert(pos, elem);
+	dict->size++;
+	__rdict_size_changed(dict);
+}
+
+
+rdict_iterator rdict_bucket_find(rdict_iterator pos, rlnode_key key, rdict_equal equalf)
+{
+	for( ; !rdict_bucket_end(pos); pos = & (*pos)->next ) {
+		if(equalf(*pos, key)) return pos;
+	}
+	return pos;
+}
+
+
+int rdict_bucket_remove(rdict* dict, rdict_iterator pos, rlnode* elem)
+{
+	if(__rdict_bucket_remove(pos, elem)) {
+		dict->size--;
+		__rdict_size_changed(dict);
+		return 1;
+	} else 
+		return 0;
+}
+
+
+void rdict_node_update(rlnode* elem, hash_value new_hash, rdict* dict)
+{
+	if(elem != elem->next) {
+		/* size remains unchanged, avoid resizing the hash table */
+		assert(dict != NULL);
+		int rc = __rdict_bucket_remove(rdict_get_bucket(dict, elem->hash), elem);
+		assert(rc);
+		if(rc) __rdict_bucket_insert(rdict_get_bucket(dict, new_hash), elem);
+	}
+
+	elem->hash = new_hash;
+}
+
+
+
+/*
+	From the C++ libaries
+ */
+#define NUM_DISTINCT_SIZES
+static const size_t prime_hash_table_sizes[NUM_DISTINCT_SIZES] =
+    {
+      /* 0     */              5ul,
+      /* 1     */              11ul, 
+      /* 2     */              23ul, 
+      /* 3     */              47ul, 
+      /* 4     */              97ul, 
+      /* 5     */              199ul, 
+      /* 6     */              409ul, 
+      /* 7     */              823ul, 
+      /* 8     */              1741ul, 
+      /* 9     */              3469ul, 
+      /* 10    */              6949ul, 
+      /* 11    */              14033ul, 
+      /* 12    */              28411ul, 
+      /* 13    */              57557ul, 
+      /* 14    */              116731ul, 
+      /* 15    */              236897ul,
+      /* 16    */              480881ul, 
+      /* 17    */              976369ul,
+      /* 18    */              1982627ul, 
+      /* 19    */              4026031ul,
+      /* 20    */              8175383ul, 
+      /* 21    */              16601593ul, 
+      /* 22    */              33712729ul,
+      /* 23    */              68460391ul, 
+      /* 24    */              139022417ul, 
+      /* 25    */              282312799ul, 
+      /* 26    */              573292817ul, 
+      /* 27    */              1164186217ul,
+      /* 28    */              2364114217ul, 
+      /* 29    */              4294967291ul,
+      /* 30    */              8589934583ull,
+      /* 31    */              17179869143ull,
+      /* 32    */              34359738337ull,
+      /* 33    */              68719476731ull,
+      /* 34    */              137438953447ull,
+      /* 35    */              274877906899ull,
+      /* 36    */              549755813881ull,
+      /* 37    */              1099511627689ull,
+      /* 38    */              2199023255531ull,
+      /* 39    */              4398046511093ull,
+      /* 40    */              8796093022151ull,
+      /* 41    */              17592186044399ull,
+      /* 42    */              35184372088777ull,
+      /* 43    */              70368744177643ull,
+      /* 44    */              140737488355213ull,
+      /* 45    */              281474976710597ull,
+      /* 46    */              562949953421231ull, 
+      /* 47    */              1125899906842597ull,
+      /* 48    */              2251799813685119ull, 
+      /* 49    */              4503599627370449ull,
+      /* 50    */              9007199254740881ull, 
+      /* 51    */              18014398509481951ull,
+      /* 52    */              36028797018963913ull, 
+      /* 53    */              72057594037927931ull,
+      /* 54    */              144115188075855859ull,
+      /* 55    */              288230376151711717ull,
+      /* 56    */              576460752303423433ull,
+      /* 57    */              1152921504606846883ull,
+      /* 58    */              2305843009213693951ull,
+      /* 59    */              4611686018427387847ull,
+      /* 60    */              9223372036854775783ull,
+      /* 61    */              18446744073709551557ull,
+    };
+
+
 
 
 

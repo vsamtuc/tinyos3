@@ -96,6 +96,11 @@ static int rootfs_flush_inode(Inode* inode)
  ----------------------------*/
 
 
+/*
+	The following restriction is due to the way a directory stream encodes names.
+ */
+_Static_assert(MAX_NAME_LENGTH <= 255, "The rootfs filesystem currently requires names less than 256 bytes.");
+
 
 struct dentry_node
 {
@@ -174,7 +179,7 @@ static int rootfs_lookup(Inode* this, const pathcomp_t name, inode_t* id)
 	if(strcmp(name, "..")==0) { *id = fsinode->parent; return 0; }
 
 	/* Look up into the dict */
-	rlnode* dnode = rdict_lookup(&fsinode->dentry_dict, hash_string(name), name, NULL, dentry_equal);
+	rlnode* dnode = rdict_lookup(&fsinode->dentry_dict, hash_string(name), name, dentry_equal);
 	if(dnode) { *id = ((struct dentry_node*) dnode->obj)->id; return 0; }
 	else { set_errcode(ENOENT); return -1; }
 }
@@ -220,8 +225,8 @@ static int rootfs_link(Inode* this, const pathcomp_t name, inode_t id)
 	rlnode_init(&newdnode->lnode, newdnode);
 	rlist_push_back(&fsinode->dentry_list, &newdnode->lnode);
 
-	rlnode_init(&newdnode->dnode, newdnode);
-	rdict_insert(&fsinode->dentry_dict, &newdnode->dnode, hash_string(name));
+	rdict_node_init(&newdnode->dnode, newdnode, hash_string(name));
+	rdict_insert(&fsinode->dentry_dict, &newdnode->dnode);
 
 	/* Return success */
 	return 0;
@@ -244,8 +249,7 @@ static int rootfs_unlink(Inode* this, const pathcomp_t name)
 
 	/* Do a dict lookup. */
 	hash_value name_hash = hash_string(name);
-	rlnode* dnode = rdict_lookup(&fsinode->dentry_dict, 
-			name_hash, name, NULL, dentry_equal);
+	rlnode* dnode = rdict_lookup(&fsinode->dentry_dict, name_hash, name, dentry_equal);
 	if(dnode == NULL) { set_errcode(ENOENT); return -1; }
 
 	struct dentry_node* dentry = dnode->obj;
@@ -272,7 +276,7 @@ static int rootfs_unlink(Inode* this, const pathcomp_t name)
 	}
 
 	/* Remove the dentry */
-	rdict_remove(&fsinode->dentry_dict, dnode, name_hash);
+	rdict_remove(&fsinode->dentry_dict, dnode);
 	rlist_remove(&dentry->lnode);
 	free(dentry);
 
