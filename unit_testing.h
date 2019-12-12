@@ -306,6 +306,11 @@ void abort_test();
  ASSERT_MSG(0, "FAILURE: %s \n", (failure_message))
 
 
+#define ASSERT_RELATION(p,q, opfmt, predexpr) do{ \
+ 	__typeof(p) _1=(p); __typeof(q) _2=(q); \
+ 	ASSERT_MSG( predexpr , "%s failed, %s == " opfmt ", %s == " opfmt "\n" , #predexpr,  #p, _1 , #q, _2); \
+ }while(0)
+
 
 /* 
 	Execution utilities

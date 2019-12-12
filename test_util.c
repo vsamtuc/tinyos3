@@ -422,11 +422,90 @@ TEST_SUITE(rheap_tests,
 
 BARE_TEST(test_dict_init, "Initialization of rdict")
 {
-	
+	rdict dict;
+	unsigned long sizes[7] = { 0, 1, 2, 5, 6, 20, 1000 };
+	unsigned long expected[7] = { 5, 5, 5, 11, 11, 23, 1741 };
+	for(int i=0; i<7; i++) {
+		rdict_init(&dict, sizes[i]); 
+		ASSERT_RELATION(dict.bucketno, expected[i], "%lu", _1==_2);
+		rdict_destroy(&dict);
+	}
+}
+
+size_t next_greater_prime_size(size_t size);
+
+
+BARE_TEST(test_dict_resize, "Resizing")
+{
+	rdict dict;
+	unsigned long sizes[6] =    { 1, 2,  5,  6, 20, 1000 };
+	unsigned long expected[6] = { 5, 5, 11, 11, 23, 1741 };
+
+	rlnode node; rdict_node_init(&node, 0, 0);
+
+	ASSERT(next_greater_prime_size((size_t)0)==5lu);
+
+	for(int i=0; i<6; i++) {
+		rdict_init(&dict, 0); 
+		ASSERT_RELATION(dict.bucketno, 5lu, "%lu", _1==_2);
+
+		/* Fudge the size !!! */
+		dict.size = sizes[i];
+		rdict_insert(&dict, &node);
+
+		ASSERT_RELATION(dict.bucketno, expected[i], "%lu", _1==_2);
+		rdict_destroy(&dict);
+	}
 }
 
 
+int equalty(rlnode* n, rlnode_key key) { return n->key.num == key.num; }
 
+BARE_TEST(test_dict_insert_lookup_remove, "Test the dictionary inserting many elements, looking them up and removing them")
+{
+	const int N = 1000000;
+ 
+	rdict dict;
+
+	rdict_init(&dict, 0);
+
+	/* Build N elements */
+	for(intptr_t i=0;i<N;i++) {
+		rlnode* node = malloc(sizeof(rlnode));
+		rdict_node_init(node, i, i);
+		rdict_insert(&dict, node);
+	}
+
+	ASSERT(dict.size == N);
+	ASSERT(dict.bucketno >= dict.size);
+
+	/* Look them up */
+	for(intptr_t i=0;i<N;i++) {
+		rdict_iterator iter = rdict_find(&dict, i, i, equalty);
+		ASSERT(iter != NULL);
+		ASSERT((*iter)->num == i);
+
+		ASSERT(rdict_lookup(&dict, i,i,equalty)->num == i);
+	}
+
+	/* Scan the elements sequentially and check that we get them all */
+	unsigned long count = 0;
+	for(rdict_iterator I=rdict_begin(&dict); I!=rdict_end(&dict); I = rdict_next(I)) {
+		count ++;
+	}
+	ASSERT_RELATION(count, dict.size, "%lu", _1==_2);
+
+	/* Remove them out of order */
+	for(intptr_t i=0;i<N;i++) {
+		rdict_iterator iter = rdict_find(&dict, i, i, equalty);
+		ASSERT(iter != NULL);
+		ASSERT((*iter)->num == i);
+		rlnode* node = *iter;
+		ASSERT(rdict_remove(&dict, *iter));
+		free(node);
+	}
+
+}
 
 
 
@@ -434,6 +513,8 @@ BARE_TEST(test_dict_init, "Initialization of rdict")
 TEST_SUITE(rdict_tests, "Tests for the hashing data structure rdict")
 {
 	&test_dict_init,
+	&test_dict_resize,
+	&test_dict_insert_lookup_remove,
 	NULL
 };
 

@@ -1,4 +1,5 @@
 
+#include <stdarg.h>
 #include "util.h"
 
 
@@ -200,12 +201,33 @@ rlnode* rheap_to_ring(rlnode* heap)
 }
 
 
-/**********************
-	Dict
- **********************/
+/************************************************************************
+	rdict implementation
+	---------------------
+
+	In the following let B stand for dict.bucketno and S for dict.size
+
+	The bucket array is  B+1 elements long.
+
+	The first B elements are initialized as sentinels via pointer marking,
+	with a value pointing to themselves.
+
+	The last bucket is initialized to NULL.
+
+	When iterating over a bucket, chasing the next pointer in rlnodes,
+	if we come upon a marked pointer, we know that it is the location of the 
+	bucket.
 
 
-static void rdict_init_buckets(rdict_bucket* buckets, unsigned long size)
+ **********************************************************************/
+
+
+
+
+/*
+	Initialize the bucket list with sentinel values.
+ */
+static inline void __rdict_init_buckets(rdict_bucket* buckets, unsigned long size)
 {
 	for(size_t i=0;i<size-1;i++) {
 		buckets[i] = pointer_marked(buckets+i);
@@ -213,33 +235,10 @@ static void rdict_init_buckets(rdict_bucket* buckets, unsigned long size)
 	buckets[size-1] = NULL; /* sentinel */
 }
 
-
-
-void rdict_init(rdict* dict, unsigned long buckno)
-{
-	if(buckno < 16) buckno = 16;
-
-	dict->size = 0;
-	dict->bucketno = buckno-1;
-	size_t bucket_bytes = buckno * sizeof(rlnode*);
-	dict->buckets = (rlnode**)malloc(bucket_bytes);
-	rdict_init_buckets(dict->buckets, buckno);
-}
-
-
-
-void rdict_destroy(rdict* dict)
-{
-	if(dict->bucketno>0) {
-		rdict_clear(dict);
-		free(dict->buckets);
-		dict->bucketno = 0;
-		dict->buckets = NULL;
-	}
-}
-
-
-void rdict_clear(rdict* dict)
+/*
+	Remove every element without triggering a resize 
+ */
+static inline void __rdict_clear(rdict* dict)
 {
 	for(unsigned long i = 0; i < dict->bucketno; i++) {
 		while(! pointer_is_marked(dict->buckets[i])) {
@@ -248,8 +247,84 @@ void rdict_clear(rdict* dict)
 			elem->next = elem;
 		}
 	}
-
 	dict->size = 0;
+}
+
+/*
+	This is the action called by all size-changing operations.
+ */
+static inline void __rdict_size_changed(rdict* dict)
+{
+	if(dict->policy->check_resize_needed(dict))
+		dict->policy->trigger_resize(dict);
+}
+
+/* Pushing an element into the bucket list */
+static inline void __rdict_bucket_insert(rdict_iterator pos, rlnode* elem)
+{
+	elem->next = *pos;
+	*pos = elem;
+}
+
+/* Locate and remove an element in the bucket */
+static inline int __rdict_bucket_remove(rdict_iterator pos, rlnode* elem)
+{
+	for(; !pointer_is_marked(*pos); pos = &(*pos)->next)
+		if(*pos == elem) {
+			*pos = (*pos)->next;
+			elem->next = elem;
+			return 1;
+		}
+	return 0;
+}
+
+
+/* Precondition: must be at bucket end, i.e. *iter must be marked */
+static inline rdict_bucket* __rdict_next_bucket(rdict_iterator iter)
+{
+	/* assert(pointer_is_marked(*iter)); */
+	return 1 + (rdict_bucket*)pointer_unmarked(*iter);
+}
+
+/* It at bucket end, move forward, else return as is */
+static inline rdict_iterator __rdict_next_element_iter(rdict_iterator iter)
+{
+	while(pointer_is_marked(*iter)) 
+		iter = __rdict_next_bucket(iter);
+	return iter;
+}
+
+/* Now the public API */
+
+
+void rdict_initialize(rdict* dict, struct rdict_policy* policy, ...)
+{
+	dict->size = 0;
+	dict->policy = policy;
+	dict->policy_data = NULL;
+	dict->bucketno = 0;
+	dict->buckets = NULL;
+
+	va_list ap;
+	va_start(ap, policy);
+	policy->initialize(dict, ap);
+	va_end(ap);
+
+	assert(dict->bucketno>0);
+	dict->buckets = policy->allocate(dict, (dict->bucketno+1)*sizeof(rdict_bucket));
+	__rdict_init_buckets(dict->buckets, dict->bucketno+1);
+}
+
+
+void rdict_destroy(rdict* dict)
+{
+	if(dict->buckets) {
+		__rdict_clear(dict);
+		dict->bucketno = 0;
+		dict->policy->deallocate(dict, dict->buckets);
+		dict->buckets = NULL;
+	}
+	dict->policy->destroy(dict);
 }
 
 
@@ -265,37 +340,10 @@ rdict_iterator rdict_begin(rdict* dict)
 rdict_iterator rdict_next(rdict_iterator pos)
 {
 	assert(pos);  /* not null */
+	assert(! rdict_bucket_end(pos));
 	assert(*pos != (*pos)->next); /* not in a removed element */
-
-	if(pointer_is_marked(pos)) {
-		while(1) {
-			if(pointer_is_marked(*pos)) pos = 1+(rdict_bucket*)pointer_unmarked(*pos);
-			else if(*pos == NULL) return NULL; else return pos;
-		}
-	}
-	else
-		return &(*pos)->next;
-}
-static inline void __rdict_size_changed(rdict* dict)
-{
-
-}
-
-static inline void __rdict_bucket_insert(rdict_iterator pos, rlnode* elem)
-{
-	elem->next = *pos;
-	*pos = elem;
-}
-
-static inline int __rdict_bucket_remove(rdict_iterator pos, rlnode* elem)
-{
-	for(; !pointer_is_marked(*pos); pos = &(*pos)->next)
-		if(*pos == elem) {
-			*pos = (*pos)->next;
-			elem->next = elem;
-			return 1;
-		}
-	return 0;
+	
+	return __rdict_next_element_iter(&(*pos)->next);
 }
 
 
@@ -327,6 +375,30 @@ int rdict_bucket_remove(rdict* dict, rdict_iterator pos, rlnode* elem)
 }
 
 
+
+void rdict_resize(rdict* dict, unsigned long new_bucketno)
+{ 
+	/* Allocate the new buckets */
+	rdict_bucket* new_buckets = dict->policy->allocate(dict, (new_bucketno+1)*sizeof(rdict_bucket));
+	__rdict_init_buckets(new_buckets, new_bucketno+1);
+
+	/* Move the nodes to the new buckets */
+	for(int i=0; i < dict->bucketno; i++) {
+		rdict_iterator iter = &dict->buckets[i];
+		while( !pointer_is_marked(*iter) ) {
+			rlnode* node = *iter;
+			*iter = node->next;
+			__rdict_bucket_insert(new_buckets+(node->hash % new_bucketno), node);
+		}
+	}
+
+	/* Set everything up */
+	dict->policy->deallocate(dict, dict->buckets);
+	dict->bucketno = new_bucketno;
+	dict->buckets = new_buckets;
+}
+
+
 void rdict_node_update(rlnode* elem, hash_value new_hash, rdict* dict)
 {
 	if(elem != elem->next) {
@@ -341,12 +413,23 @@ void rdict_node_update(rlnode* elem, hash_value new_hash, rdict* dict)
 }
 
 
+/* ==========================================================
+
+
+	Various policies policies 
+
+
+   ========================================================== */
+
+
+
+
 
 /*
-	From the C++ libaries
+	From the C++ libaries, a list of prime numbers suitable for sizing dictionaries
  */
-#define NUM_DISTINCT_SIZES
-static const size_t prime_hash_table_sizes[NUM_DISTINCT_SIZES] =
+#define NUM_DISTINCT_SIZES 62
+static const size_t prime_hash_table_sizes[NUM_DISTINCT_SIZES+1] =
     {
       /* 0     */              5ul,
       /* 1     */              11ul, 
@@ -410,10 +493,96 @@ static const size_t prime_hash_table_sizes[NUM_DISTINCT_SIZES] =
       /* 59    */              4611686018427387847ull,
       /* 60    */              9223372036854775783ull,
       /* 61    */              18446744073709551557ull,
+    	/* In case of overflow */
+    							SIZE_MAX
     };
 
 
+static int prime_size_index(size_t size)
+{
+	if(size < prime_hash_table_sizes[0]) return 0;
+	if(size >= prime_hash_table_sizes[NUM_DISTINCT_SIZES-1]) return NUM_DISTINCT_SIZES;
 
+	int low=0, high=NUM_DISTINCT_SIZES-1;
+
+	while(high-low > 1) {
+		int mid = (high+low) >> 1;
+		if(prime_hash_table_sizes[mid] <= size) low = mid;
+		else high = mid;
+	}
+	return high;
+}
+
+
+size_t next_greater_prime_size(size_t size)
+{
+	return prime_hash_table_sizes[prime_size_index(size)];
+}
+
+
+/* ---------------------------------------------------------
+	Default hashing policy
+   --------------------------------------------------------- */
+
+
+struct rdict_policy rdict_default = {
+	rdict_std_initialize,
+	rdict_std_destroy,
+	rdict_std_allocate,
+	rdict_std_deallocate,
+	rdict_std_resize_size,
+	rdict_std_check_resize_needed,
+	rdict_std_trigger_resize
+};
+
+
+void rdict_std_initialize(rdict* dict, va_list ap)
+{
+	unsigned long bucketno_hint = va_arg(ap, unsigned long);
+	dict->bucketno = next_greater_prime_size(bucketno_hint);
+}
+
+
+void rdict_std_destroy(rdict* d) { /* Nothing to do */ }
+
+void* rdict_std_allocate(rdict* d, size_t size) { return malloc(size); }
+
+void rdict_std_deallocate(rdict* d, void* ptr) { free(ptr); }
+
+unsigned long rdict_std_resize_size(rdict* d) 
+{
+	unsigned long newbucketno = next_greater_prime_size(d->size);
+	return newbucketno;
+}
+
+int rdict_std_check_resize_needed(rdict* dict)
+{
+	/* 
+		The load factor is size/bucketno.
+		If the load factor is more than 1, resize.
+		If the load factor is less than 1/8, resize.
+	 */
+	return (dict->size > dict->bucketno) || ( (dict->size << 3) < dict->bucketno );
+}
+
+void rdict_std_trigger_resize(rdict* dict)
+{
+	unsigned long new_bucketno = dict->policy->resize_size(dict);
+	rdict_resize(dict, new_bucketno);
+}
+
+
+
+
+/* ---------------------------------------------------------
+	... hashing policy
+   --------------------------------------------------------- */
+/* ---------------------------------------------------------
+	... hashing policy
+   --------------------------------------------------------- */
+/* ---------------------------------------------------------
+	... hashing policy
+   --------------------------------------------------------- */
 
 
 
