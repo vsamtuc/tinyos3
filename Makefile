@@ -42,7 +42,7 @@ CFLAGS+=  $(OPTFLAGS) $(PROFFLAGS) $(INCLUDE_PATH)
 endif
 
 LDFLAGS= $(PLFLAGS) $(BASICFLAGS)
-LIBS=-lpthread -lrt -lm
+LIBS= -L. -lfcontext -lpthread -lrt -lm 
 
 
 C_PROG= test_util.c test_bios.c test_kernel.c \
@@ -65,11 +65,19 @@ FIFOS= con0 con1 con2 con3 kbd0 kbd1 kbd2 kbd3
 
 .PHONY: all tests clean distclean doc shorthelp help depend
 
-all: shorthelp mtask tinyos_shell terminal tests fifos examples
+all: libfcontext.a shorthelp mtask tinyos_shell terminal tests fifos examples
 
 tests: test_util validate_api test_example test_bios test_kernel
 
 examples: $(EXAMPLE_PROG:.c=) 
+
+
+#
+# libfcontext.a
+#
+libfcontext.a: make_x86_64_sysv_elf_gas.o jump_x86_64_sysv_elf_gas.o ontop_x86_64_sysv_elf_gas.o
+	$(AR) -crv $@ $^
+	$(RANLIB) $@
 
 #
 # Normal apps

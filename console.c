@@ -30,7 +30,7 @@ static int stdio_write(void* __this, const char *buf, unsigned int size)
 {
 	size_t ret;
 	while(1) {
-		ret = write(0, buf, size);
+		ret = write(1, buf, size);
 		if(ret==-1 && errno==EINTR) continue; else break;
 	}
 	if(ret==-1) { set_errcode(errno); }

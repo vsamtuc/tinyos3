@@ -365,6 +365,16 @@ typedef struct FsMount FsMount;				/**< @brief Forward declaration */
 /** @brief A convenience typedef */
 typedef struct resource_list_node * rlnode_ptr;
 
+
+#if __x86_64__
+	typedef int32_t int_pair_t[2];
+	typedef uint32_t uint_pair_t[2];
+#else
+	typedef int16_t int_pair_t[2];
+	typedef uint16_t uint_pair_t[2];
+#endif
+
+
 #define RLNODE_KEY \
     PCB* pcb; \
     TCB* tcb; \
@@ -377,7 +387,10 @@ typedef struct resource_list_node * rlnode_ptr;
     const char* str; \
     rlnode_ptr node_ptr; \
     intptr_t num; \
+    int_pair_t num_pair; \
     uintptr_t unum; \
+    uint_pair_t unum_pair; \
+
 
 /** @brief A convenience type for the key of an @c rlnode.
 	
@@ -1032,30 +1045,16 @@ rlnode* rheap_to_ring(rlnode* heap);
 	If  \c equalf(n,k) then \f$h(n)=h(k)\f$.
 
 	Then, hashing on the hash values ensures that all nodes retrievable by a particular lookup key will belong
-	in the same bucket.  The API does have support for multiple retrieved nodes per lookup, although not in the
-	form of a single function call.
+	in the same bucket.  The API supports storing multiple equal nodes in the dictionary.
 
-	## The model of a dictionary ##
+	## Internals ##
 
-	The dictionary contains a number of buckets. In \c rdict, a bucket is a list of nodes. If the hash values
-	of two nodes are equal then they will be in the same bucket. Buckets are exposed in \c rdict; the user can
-	iterate over all elements of a bucket.
-
-	The number of buckets is very important for good  performance. Roughly, the cost of a lookup or a removal is
-	proportional to the length of the looked up bucket, in the worst case. In order to keep bucket sizes small 
-	it is important to minimize __collisions__, i.e., nodes with different hash values being assigned to the same 
-	bucket.  This can be done by ensuring that the number of buckets grows proportionally to the number of elements.
-
-	## Lookup ##
-
-	If the user is sure that there will be only one object matching a particular lookup key (or, if only one is
-	enough), then the user can call \ref rdict_find() or \ref rdict_lookup(). 
-
-	## Insertion and removal ##
-
-	In order to insert an \c rlnode into an \c rdict, we must call function @ref rdict_node_init(). This function
-	will store the hash value of the object in the node, so that it is available to the \c rdict. After that,
-	a node can be inserted and removed freely.
+	The dictionary contains a number of buckets. Each a bucket is a list of nodes. All nodes with equal hash value
+	will be in the same bucket. The number of buckets is very important for good  performance. Roughly, the cost 
+	of a lookup or a removal is proportional to the length of the looked up bucket, in the worst case. In order to 
+	keep bucket sizes small it is important to minimize __collisions__, i.e., nodes with different hash values being 
+	assigned to the same bucket.  This can be done by ensuring that the number of buckets grows proportionally to the 
+	number of elements.
 
 	## Updating a node ##
 
@@ -1180,7 +1179,7 @@ struct rdict_policy
 typedef struct rdict
 {
 	struct rdict_policy* policy;/**< @brief The policy object for this dict */
-	void* policy_data;			/**< @brief This field can used by policy objects */
+	rlnode_key policy_data;		/**< @brief This field can used by policy objects */
 	unsigned long size;			/**< @brief Number of elements in the table */
 	unsigned long bucketno;		/**< @brief Number of buckets in the table */
 	rdict_bucket* buckets;		/**< @brief Array of buckets */
@@ -1190,7 +1189,15 @@ typedef struct rdict
 /**
 	@brief Initialize a \c rdict with specific policy.
 
-	
+	Initialize an \c rdict with a particular policy. After the policy, a number
+	of additional arguments can be provided, depending on the policy. 
+
+	This function should be used only if a custom policy is used. For the default policy
+	users can call @ref rdict_init.
+
+	@param dict the dictionary to initialize
+	@param policy the policy object	
+	@see rdict_init
  */
 void rdict_initialize(rdict* dict, struct rdict_policy* policy, ...);
 
@@ -1220,12 +1227,13 @@ void rdict_resize(rdict* dict, unsigned long new_bucketno);
 
 
 /**
-	@brief Iterator for sequential scan on \c rdict.
+	@brief Iterator for \c rdict.
 
 	Using iterators we can perform the basic operations on
-	an \c rdict in a more flexible manner. An iterator represents
-	a position in an \c rdict. There are two types of iterators:
-	- __Element iterators__: these iterators indicate a particular element (\c rlnode)
+	an \c rdict in a flexible manner. An iterator represents
+	a position in an \c rdict. 
+
+	Iterators are used to indicate a particular element (\c rlnode)
 	contained in the \c rdict. This element can be obtained by dereferencing
 	the iterator, i.e. like
 	\code
@@ -1233,36 +1241,11 @@ void rdict_resize(rdict* dict, unsigned long new_bucketno);
 	rlnode* node = *I;
 	\endcode
 
-	A special non-element (i.e. bucket) iterator is \c rdict_end(dict), which can
-	be dereferenced, but returns \c NULL. It corresponds to a (non-existent) bucket at a position 
-	just after the last bucket. In what follows, we will denote it by \c END.
+	A special non-element iterator is \c rdict_end(dict), which returns NULL 
+	if dereferenced, For the sake of brevity, we will denote it by \c END.
 
-	An element iterator is obtained by calling one of @ref rdict_begin()
-	or @ref rdict_find(). The \c END iterator returned from @ref rdict_begin 
-	indicates an empty dict. Also, the \c END iterator returned from \c rdict_find
-	indicates a failed lookup.
-	Any other value returned from @ref rdict_begin() or @ref rdict_find() is an element
-	iterator and can be dereferenced. 
-
-	If \c I is an iterator, the expression \c (*I) returns a pointer to an \c rlnode in 
-	the \c rdict. Once an iterator \c I is given, we can call @ref rdict_next() to
-	get an element iterator to the next element in the \c rdict. The following 
-	loop iterates over every element in the \c rdict.
-	\code
-	rdict d = ...;
-	for(rdict_iterator i=rdict_begin(&d); i!=rdict_end(&d); i=rdict_next(i)) 
-		process_rlnode(*i);
-	\endcode
-
-	- __Bucket iterators__: these iterators cannot, in general, be dereferenced 
-	(not safely at least).
-	They indicate a position suitable for inserting into a bucket, or for searching
-	the elements of a bucket. Function @ref rdict_get_bucket() returns a bucket
-	iterator for some bucket.
-	Function @ref rdict_bucket_end checks if a bucket iterator can be dereferenced. If
-	not, it corresponds to the end of some bucket.
-
-
+	After an insertion or deletion, iterators may be invalidated. This includes
+	\c rdict_end(dict); it is invalidated if the dictionary is resized;
 */
 typedef rlnode** rdict_iterator;
 
@@ -1303,111 +1286,6 @@ static inline rdict_iterator rdict_end(rdict* dict)
 rdict_iterator rdict_next(rdict_iterator pos);
 
 
-/**
-	@brief Return an iterator designating a bucket.
-
-	The iterator returned by this call is not safe to
-	dereference, and is never \c NULL. However, it can be
-	used to perform find/insert/remove operations on a bucket.
-	These operations are __the fundamental operations on an rdict__.
-	To designate the desired bucket, this function accepts a \c hash_value.
-	The returned bucket will be the one responsible for handling this
-	hash value.
-
-	@see rdict_bucket_find
-	@see rdict_bucket_insert
-	@see rdict_bucket_remove
-	@see rdict_bucket_end
-
-	@param dict the \c rdict object
-	@param h  a hash value designating the bucket which is to be returned
-	@return a bucket iterator for the designated bucket
- */
-static inline rdict_iterator rdict_get_bucket(rdict* dict, hash_value h)
-{
-	return & dict->buckets[h % dict->bucketno];
-}
-
-
-/**
-	@brief Indicate if an iterator is at the end of a bucket.
-
-	This call returns true if \c pos refers to the end of some
-	bucket. If this call returns true, the iterator should not
-	be dereferenced. However, it is acceptable to call 
-	@ref rdict_bucket_insert on it. On the other hand, if this
-	call returns 0, then the iterator can be safely dereferenced.
-
-	It \c pos was obtained by @ref rdict_get_bucket and this call
-	returns true, then the bucket is empty. More generally, one
-	can iterate over all nodes in a bucket using the following code:
-	\code
-	for(rdict_iterator I=rdict_get_buffer(dict, hash);
-		! rdict_bucket_end(I); I=rdict_next(I)) 
-	{
-		process_rlnode(*I);
-	}
-
-	@param pos a bucket iterator to check
-	@return 1 if at the end of a bucket, else 0
-	@pre \c pos should not be \c NULL
- */
-static inline int rdict_bucket_end(rdict_iterator pos)
-{
-	return pointer_is_marked(*pos);
-}
-
-
-
-/**
-	@brief Look up an element inside a bucket.
-
-	The first argument should be either a bucket iterator, or
-	an element iterator. The function will try to find an \c rlnode
-	in the bucket, such that the call
-	\code
-	equalf(node, key)
-	\endcode
-	returns true. 
-
-	The returned iterator is a bucket iterator. 
-	If a suitable element was not found in the bucket, the returned iterator
-	refers to the end of the bucket.
-
-	@param pos either a bucket iterator or else a non-\c NULL element iterator.
-	@param key a key to compare with element
-	@param equalf the equality function
-	@return a  bucket iterator to a matching node, or a reference to the end of the bucket
- */
-rdict_iterator rdict_bucket_find(rdict_iterator pos, rlnode_key key, rdict_equal equalf);
-
-
-/**
-	@brief Insert an element in a bucket
-
-	This is a low-level routine that can insert an element into the position indicated
-	by a bucket iterator.
-
-	@param dict the dictionary
-	@param pos a bucket iterator where insertion will happen
-	@param elem the element to insert
- */
-void rdict_bucket_insert(rdict* dict, rdict_iterator pos, rlnode* elem);
-
-
-/**
-	@brief Possibly remove an element from a bucket.
-
-	This is a low-level routine that may remove an element from a bucket
-	designated by a bucket iterator.
-
-	@param dict the dictionary
-	@param pos a bucket iterator in the bucket where removal will happen, if at all
-	@param elem the element to remove
-	@return 1 if the removal happened, 0 otherwise
- */
-int rdict_bucket_remove(rdict* dict, rdict_iterator pos, rlnode* elem);
-
 
 
 /**
@@ -1430,7 +1308,7 @@ static inline rlnode* rdict_node_init(rlnode* node, rlnode_key key, hash_value h
 }
 
 /**
-	@brief Return an element iterator on a node.
+	@brief Return an iterator to a node that matches a given key.
 
 	This call returns an element iterator. If there exists a node
 	such that  \c equalf(node,key)  is true, then the returned iterator
@@ -1441,22 +1319,60 @@ static inline rlnode* rdict_node_init(rlnode* node, rlnode_key key, hash_value h
 	@param key  the key to use with \c equalf
 	@param equalf a function used to match an element
 	@return an element iterator to a found node, or \c END.
+	@see rdict_find_next
  */
-static inline rdict_iterator rdict_find(rdict* dict, hash_value hash, rlnode_key key, rdict_equal equalf)
-{
-	rdict_iterator iter = rdict_bucket_find(rdict_get_bucket(dict, hash), key, equalf);
-	return rdict_bucket_end(iter)? rdict_end(dict) : iter;
-}
+rdict_iterator rdict_find(rdict* dict, hash_value hash, rlnode_key key, rdict_equal equalf);
+
+
+/**
+	@brief Return an iterator to the next node that matches a key.
+
+	This call locates the next matching node after \c pos, equal to the given \c key.
+	Iterator \c pos should have been returned by a previous call to either @ref rdict_find
+	or to @ref rdict_find_next, with the same arguments.
+
+	Using this call, one can iterate over multiple equal elements in the dictionary, using
+	the following code:
+	\code
+	for(rdict_iterator I = rdict_find(dict, hash, key, equalf);
+		I != rdict_end(dict);
+		I = rdict_find_next(dict, I, hash, key, equalf) ) 
+	{
+		... // process equal elements 
+	}
+	\endcode
+
+	@param dict the dictionary to search
+	@param pos initial position for the search
+	@param hash the hash value of the searched node
+	@param key  the key to use with \c equalf
+	@param equalf a function used to match an element
+	@return an element iterator to a found node, or \c END.
+ */
+rdict_iterator rdict_find_next(rdict* dict, rdict_iterator pos, hash_value hash, rlnode_key key, rdict_equal equalf);
+
+
+/**
+	@brief Return an iterator to a particular node.
+
+	This call locates a particular node in the dictionary.
+	It the node is not in the dictionary, \c END is returned.
+
+	@param dict the dictionary to search
+	@param node the node to search for
+	@return an iterator to the node if found, or \c END if not found.
+ */
+rdict_iterator rdict_find_node(rdict* dict, rlnode* node);
 
 
 /**
 	@brief Return a node from a rdict.
 
-	This call returns a node. It is equivalent to
+	This call returns a node. It is equivalent to expression
 	\code
-	rdict_iterator I = rdict_find(dict, h, key, equalf);
-	return  (I==rdict_end(dict)) ? NULL : *I;
+	  * rdict_find(dict, h, key, equalf)
 	\endcode
+	but it so common that it deserves a name.
 
 	@param dict the dict to search
 	@param hash the hash value of the searched node
@@ -1475,25 +1391,30 @@ static inline rlnode* rdict_lookup(rdict* dict, hash_value hash, rlnode_key key,
 	@param dict the \c rdict to insert to
 	@param elem the prepared node to insert
  */
-static inline void rdict_insert(rdict* dict, rlnode* elem)
-{
-	rdict_bucket_insert(dict, rdict_get_bucket(dict, elem->hash), elem);
-}
+rdict_iterator rdict_insert(rdict* dict, rlnode* elem);
 
 
 /**
 	@brief Possibly remove a prepared node
 
+	If \c elem is found int \c dict, remove it.
+
 	@param dict the \c rdict to remove from
 	@param elem the prepared node to remove
-	@return 1 if the node was removed, else 0
+	@return \c elem if the node was removed, else \c NULL
  */
-static inline int rdict_remove(rdict* dict, rlnode* elem)
-{
-	if(elem == elem->next) return 0;
-	return rdict_bucket_remove(dict, rdict_get_bucket(dict, elem->hash), elem);
-}
+rlnode* rdict_remove(rdict* dict, rlnode* elem);
 
+/**
+	@brief Remove and return a prepared node at a given position
+
+	This call removes from the dictionary the node at \c pos and returns it.
+
+	@param dict the \c rdict to remove from
+	@param pos iterator to the prepared node to remove
+	@return the node that was removed, or \c NULL
+ */
+rlnode* rdict_pop(rdict* dict, rdict_iterator pos);
 
 
 /**
@@ -1516,26 +1437,66 @@ static inline int rdict_remove(rdict* dict, rlnode* elem)
 void rdict_node_update(rlnode* elem, hash_value new_hash, rdict* dict);
 
 
-/* =====================================
+/** @brief Function type to pass to \c rdict_apply */
+typedef void (*rdict_apply_func)(rlnode_ptr);
 
-	Some predefined policies
+/**
+	@brief Apply a function to each element.
 
-   ===================================== */
+	Call \c func on each element of the dictionary
+
+	@param dict the dictionary
+	@param func the function to apply
+	@see rdict_apply_removed
+ */
+void rdict_apply(rdict* dict, rdict_apply_func func);
+
+/**
+	@brief Apply a function to each element after removing it.
+
+	Call \c func on each element of the dictionary, after removing it.
+	At the end, \c dict is left empty.
+
+	@param dict the dictionary
+	@param func the function to apply
+ */
+void rdict_apply_removed(rdict* dict, rdict_apply_func func);
+
+
+/* ==================================================
+
+	Some predefined policies and related functions
+
+   ================================================= */
 
 
 /**
-	@brief The callbacks of the default policy.
+	@brief Return good size thresholds for an \c rdict
 
-	@{
+	Hashing works better when the __capacity__, that is, the number of buckets,
+	is a prime number. This function can return recommended capacities,
+	which are prime numbers.
+
+	To use this function, pass \c size for the number of elements in the
+	dictionary. A shift of 0 will return a capacity greater, but 'close' to
+	\c size. Positive values of shift will increase this by roughly \f$2^\text{shift}\f$.
+	Negative values of shift will likewise decrease this. In general,
+	the following holds (\c gps is a short hand for \c rdict_next_greater_prime_size):
+	\code
+	size < gps(size,0)
+	\endcode
+	Also,
+	\code
+	if size>=gps(0,0) then  gps(size,-1) <= size
+	\endcode
+
+	The smallest size of \c gps(0,0) is currently 5.
+
+	@param size the base size
+	@param shift the shift from base size
+	@return the recommended dictionary size
  */
-void rdict_std_initialize(rdict*, va_list);
-void rdict_std_destroy(rdict*);
-void* rdict_std_allocate(rdict*, size_t);
-void rdict_std_deallocate(rdict*, void*);
-unsigned long rdict_std_resize_size(rdict*);
-int rdict_std_check_resize_needed(rdict*);
-void rdict_std_trigger_resize(rdict*);
-/** @} */
+size_t rdict_next_greater_prime_size(size_t size, int shift);
 
 
 /** @brief The default policy object */
@@ -2007,6 +1968,19 @@ static inline struct exception_stack_frame* __exc_exit_try(exception_context con
 
 
 /** @}  exceptions */
+
+
+
+typedef void*   fcontext_t;
+struct transfer_t {
+    fcontext_t  fctx;
+    void    *   data;
+};
+
+struct transfer_t jump_fcontext( fcontext_t const to, void * vp);
+fcontext_t  make_fcontext( void * sp, size_t size, void (* fn)( struct transfer_t) );
+struct transfer_t ontop_fcontext( fcontext_t const to, void * vp, struct transfer_t (* fn)( struct transfer_t) );
+
 
 
 /** @} utilities */

@@ -222,6 +222,74 @@ rlnode* rheap_to_ring(rlnode* heap)
  **********************************************************************/
 
 
+/* Return an iterator designating a bucket */
+static inline rdict_iterator __rdict_bucket_begin(rdict* dict, hash_value h)
+{
+	return & dict->buckets[h % dict->bucketno];
+}
+
+
+/* Indicate if an iterator is at the end of a bucket. */
+static inline int __rdict_bucket_end(rdict_iterator pos)
+{
+	return pointer_is_marked(*pos);
+}
+
+
+/* It at bucket end, move forward, else return as is */
+static inline rdict_iterator __rdict_forward(rdict_iterator iter)
+{
+	while(__rdict_bucket_end(iter)) 
+		iter = 1 + (rdict_bucket*)pointer_unmarked(*iter);
+	return iter;
+}
+
+
+/* Pushing an element into the bucket list */
+static inline rdict_iterator __rdict_iter_push(rdict_iterator pos, rlnode* elem)
+{
+	assert(*pos);  /* not END */
+	elem->next = *pos;
+	*pos = elem;
+	return pos;
+}
+
+/* Pop an element via iterator */
+static inline rlnode* __rdict_iter_pop(rdict_iterator pos)
+{
+	assert(*pos && !__rdict_bucket_end(pos)); /* not END, not bucket end */
+	rlnode* elem = *pos;
+	*pos = (*pos)->next;
+	elem->next = elem;
+	return elem;	
+}
+
+
+static inline rdict_iterator __rdict_bucket_find(rdict_iterator pos, hash_value hash, rlnode_key key, rdict_equal equalf)
+{
+	for( ; !__rdict_bucket_end(pos); pos = & (*pos)->next ) {
+		if((*pos)->hash == hash && equalf(*pos, key)) break;
+	}
+	return pos;
+}
+
+
+static inline rdict_iterator __rdict_bucket_find_node(rdict_iterator pos, rlnode* node)
+{
+	for(; ! __rdict_bucket_end(pos); pos = &(*pos)->next)
+		if(*pos == node) break;
+	return pos;
+}
+
+
+/* Locate and remove an element in the bucket */
+static inline rlnode* __rdict_bucket_remove(rdict_iterator pos, rlnode* elem)
+{
+	for(; ! __rdict_bucket_end(pos); pos = &(*pos)->next)
+		if(*pos == elem) 
+			return __rdict_iter_pop(pos);
+	return NULL;
+}
 
 
 /*
@@ -234,6 +302,7 @@ static inline void __rdict_init_buckets(rdict_bucket* buckets, unsigned long siz
 	}
 	buckets[size-1] = NULL; /* sentinel */
 }
+
 
 /*
 	Remove every element without triggering a resize 
@@ -259,49 +328,20 @@ static inline void __rdict_size_changed(rdict* dict)
 		dict->policy->trigger_resize(dict);
 }
 
-/* Pushing an element into the bucket list */
-static inline void __rdict_bucket_insert(rdict_iterator pos, rlnode* elem)
-{
-	elem->next = *pos;
-	*pos = elem;
-}
 
-/* Locate and remove an element in the bucket */
-static inline int __rdict_bucket_remove(rdict_iterator pos, rlnode* elem)
-{
-	for(; !pointer_is_marked(*pos); pos = &(*pos)->next)
-		if(*pos == elem) {
-			*pos = (*pos)->next;
-			elem->next = elem;
-			return 1;
-		}
-	return 0;
-}
+/* ====================================
 
 
-/* Precondition: must be at bucket end, i.e. *iter must be marked */
-static inline rdict_bucket* __rdict_next_bucket(rdict_iterator iter)
-{
-	/* assert(pointer_is_marked(*iter)); */
-	return 1 + (rdict_bucket*)pointer_unmarked(*iter);
-}
-
-/* It at bucket end, move forward, else return as is */
-static inline rdict_iterator __rdict_next_element_iter(rdict_iterator iter)
-{
-	while(pointer_is_marked(*iter)) 
-		iter = __rdict_next_bucket(iter);
-	return iter;
-}
-
-/* Now the public API */
+	The public API of rdict
+	
+ ====================================== */
 
 
 void rdict_initialize(rdict* dict, struct rdict_policy* policy, ...)
 {
 	dict->size = 0;
 	dict->policy = policy;
-	dict->policy_data = NULL;
+	dict->policy_data = (rlnode_key){ .obj = NULL };
 	dict->bucketno = 0;
 	dict->buckets = NULL;
 
@@ -310,6 +350,7 @@ void rdict_initialize(rdict* dict, struct rdict_policy* policy, ...)
 	policy->initialize(dict, ap);
 	va_end(ap);
 
+	/* Allocate the buckets array */
 	assert(dict->bucketno>0);
 	dict->buckets = policy->allocate(dict, (dict->bucketno+1)*sizeof(rdict_bucket));
 	__rdict_init_buckets(dict->buckets, dict->bucketno+1);
@@ -331,49 +372,15 @@ void rdict_destroy(rdict* dict)
 
 rdict_iterator rdict_begin(rdict* dict)
 {
-	rdict_iterator iter = dict->buckets;
-	for(size_t i=0; i<dict->bucketno; i++) if(!pointer_is_marked(*iter)) return iter;
-	return NULL;
+	return __rdict_forward(dict->buckets);
 }
 
 
 rdict_iterator rdict_next(rdict_iterator pos)
 {
-	assert(pos);  /* not null */
-	assert(! rdict_bucket_end(pos));
-	assert(*pos != (*pos)->next); /* not in a removed element */
-	
-	return __rdict_next_element_iter(&(*pos)->next);
+	assert(! __rdict_bucket_end(pos));
+	return __rdict_forward(&(*pos)->next);
 }
-
-
-void rdict_bucket_insert(rdict* dict, rdict_iterator pos, rlnode* elem)
-{
-	__rdict_bucket_insert(pos, elem);
-	dict->size++;
-	__rdict_size_changed(dict);
-}
-
-
-rdict_iterator rdict_bucket_find(rdict_iterator pos, rlnode_key key, rdict_equal equalf)
-{
-	for( ; !rdict_bucket_end(pos); pos = & (*pos)->next ) {
-		if(equalf(*pos, key)) return pos;
-	}
-	return pos;
-}
-
-
-int rdict_bucket_remove(rdict* dict, rdict_iterator pos, rlnode* elem)
-{
-	if(__rdict_bucket_remove(pos, elem)) {
-		dict->size--;
-		__rdict_size_changed(dict);
-		return 1;
-	} else 
-		return 0;
-}
-
 
 
 void rdict_resize(rdict* dict, unsigned long new_bucketno)
@@ -385,10 +392,10 @@ void rdict_resize(rdict* dict, unsigned long new_bucketno)
 	/* Move the nodes to the new buckets */
 	for(int i=0; i < dict->bucketno; i++) {
 		rdict_iterator iter = &dict->buckets[i];
-		while( !pointer_is_marked(*iter) ) {
+		while( ! __rdict_bucket_end(iter) ) {
 			rlnode* node = *iter;
 			*iter = node->next;
-			__rdict_bucket_insert(new_buckets+(node->hash % new_bucketno), node);
+			__rdict_iter_push(new_buckets+(node->hash % new_bucketno), node);
 		}
 	}
 
@@ -404,12 +411,88 @@ void rdict_node_update(rlnode* elem, hash_value new_hash, rdict* dict)
 	if(elem != elem->next) {
 		/* size remains unchanged, avoid resizing the hash table */
 		assert(dict != NULL);
-		int rc = __rdict_bucket_remove(rdict_get_bucket(dict, elem->hash), elem);
-		assert(rc);
-		if(rc) __rdict_bucket_insert(rdict_get_bucket(dict, new_hash), elem);
+		rlnode* found = __rdict_bucket_remove(__rdict_bucket_begin(dict, elem->hash), elem);
+		assert(found == elem);
+		if(found) __rdict_iter_push(__rdict_bucket_begin(dict, new_hash), found);
 	}
 
 	elem->hash = new_hash;
+}
+
+
+rdict_iterator rdict_find(rdict* dict, hash_value hash, rlnode_key key, rdict_equal equalf)
+{
+	rdict_iterator iter = __rdict_bucket_find(__rdict_bucket_begin(dict, hash), hash, key, equalf);
+	return __rdict_bucket_end(iter)? rdict_end(dict) : iter;
+}
+
+
+rdict_iterator rdict_find_next(rdict* dict, rdict_iterator pos, hash_value hash, rlnode_key key, rdict_equal equalf)
+{
+	assert(! __rdict_bucket_end(pos));
+	rdict_iterator iter = __rdict_bucket_find( & (*pos)->next, hash, key, equalf);
+	return __rdict_bucket_end(iter)? rdict_end(dict) : iter;	
+}
+
+
+rdict_iterator rdict_find_node(rdict* dict, rlnode* node)
+{
+	for(rdict_iterator I = __rdict_bucket_begin(dict, node->hash);
+		! __rdict_bucket_end(I);  I = &(*I)->next )
+		if(*I == node)
+			return I;
+	return rdict_end(dict);
+}
+
+
+rdict_iterator rdict_insert(rdict* dict, rlnode* elem)
+{
+	rdict_iterator pos = __rdict_iter_push(__rdict_bucket_begin(dict, elem->hash), elem);
+	dict->size++;
+	__rdict_size_changed(dict);
+	return pos;
+}
+
+
+rlnode* rdict_remove(rdict* dict, rlnode* elem)
+{
+	if(elem == elem->next) return NULL;
+	elem = __rdict_bucket_remove(__rdict_bucket_begin(dict, elem->hash), elem);
+	if(elem != NULL) {
+		dict->size--;
+		__rdict_size_changed(dict);
+	}
+	return elem;
+}
+
+
+rlnode* rdict_pop(rdict* dict, rdict_iterator pos)
+{
+	rlnode* node = __rdict_iter_pop(pos);
+	dict->size --;
+	__rdict_size_changed(dict);
+	return node;
+}
+
+
+
+void rdict_apply(rdict* dict, void (*func)(rlnode*))
+{
+	for(rdict_iterator i=rdict_begin(dict); i!=rdict_end(dict); i = rdict_next(i))
+		func(*i);	
+}
+
+
+void rdict_apply_removed(rdict* dict, void (*func)(rlnode*))
+{
+	unsigned long orig_size = dict->size;
+	for(rdict_iterator i=rdict_begin(dict); i!=rdict_end(dict); i = __rdict_forward(i)) {
+		rlnode* elem = __rdict_iter_pop(i);
+		dict->size --;  /* reduce the size before calling func */
+		func(elem);
+	}
+	assert(dict->size==0);
+	if(orig_size!=0) __rdict_size_changed(dict);
 }
 
 
@@ -420,9 +503,6 @@ void rdict_node_update(rlnode* elem, hash_value new_hash, rdict* dict)
 
 
    ========================================================== */
-
-
-
 
 
 /*
@@ -514,15 +594,26 @@ static int prime_size_index(size_t size)
 }
 
 
-size_t next_greater_prime_size(size_t size)
+size_t rdict_next_greater_prime_size(size_t size, int shift)
 {
-	return prime_hash_table_sizes[prime_size_index(size)];
+	int ret = prime_size_index(size)+shift;
+	if(ret<0) ret=0; else if(ret>NUM_DISTINCT_SIZES) ret=NUM_DISTINCT_SIZES;
+	return prime_hash_table_sizes[ret];
 }
+
 
 
 /* ---------------------------------------------------------
 	Default hashing policy
    --------------------------------------------------------- */
+
+void rdict_std_initialize(rdict*, va_list);
+void rdict_std_destroy(rdict*);
+void* rdict_std_allocate(rdict*, size_t);
+void rdict_std_deallocate(rdict*, void*);
+unsigned long rdict_std_resize_size(rdict*);
+int rdict_std_check_resize_needed(rdict*);
+void rdict_std_trigger_resize(rdict*);
 
 
 struct rdict_policy rdict_default = {
@@ -539,7 +630,7 @@ struct rdict_policy rdict_default = {
 void rdict_std_initialize(rdict* dict, va_list ap)
 {
 	unsigned long bucketno_hint = va_arg(ap, unsigned long);
-	dict->bucketno = next_greater_prime_size(bucketno_hint);
+	dict->bucketno = rdict_next_greater_prime_size(bucketno_hint,0);
 }
 
 
@@ -551,7 +642,7 @@ void rdict_std_deallocate(rdict* d, void* ptr) { free(ptr); }
 
 unsigned long rdict_std_resize_size(rdict* d) 
 {
-	unsigned long newbucketno = next_greater_prime_size(d->size);
+	unsigned long newbucketno = rdict_next_greater_prime_size(d->size, 0);
 	return newbucketno;
 }
 

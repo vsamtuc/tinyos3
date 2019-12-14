@@ -51,6 +51,25 @@ int LEFT(int i, int N) { return (i+1) % N; }
 int RIGHT(int i, int N) { return (i+N-1) % N; }
 
 
+#define BLACK   "\033[30;7m"
+#define RED     "\033[31;1m"
+#define GREEN   "\033[32;1m"
+#define YELLOW  "\033[33;1m"
+#define BLUE    "\033[34;1m"
+#define MAGENTA "\033[35;1m"
+#define CYAN    "\033[36;1m"
+#define WHITE   "\033[37;1m"
+#define NORMAL  "\033[0m"
+
+const char* STATE_COLOR[] = {
+  GREEN,
+  GREEN,
+  MAGENTA,
+  CYAN
+};
+
+#define WITH_COLOR 0
+
 /* Prints the current state given a change (described by fmt) for
  philosopher ph */
 void print_state(int N, PHIL* state, const char* fmt, int ph)
@@ -60,9 +79,18 @@ void print_state(int N, PHIL* state, const char* fmt, int ph)
   if(N<100) {
     for(i=0;i<N;i++) {
       char c= (".THE")[state[i]];
+#if WITH_COLOR==1
+      const char* color = STATE_COLOR[state[i]];
+      if(i==ph) printf("%s[%c]", color, c);
+      else printf("%s %c ", color, c);
+#else
       if(i==ph) printf("[%c]", c);
       else printf(" %c ", c);
+#endif
     }
+#if WITH_COLOR==1
+    printf("%s", NORMAL);
+#endif
   }
   printf(fmt, ph);
 #endif

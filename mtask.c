@@ -61,9 +61,9 @@ void usage(const char* pname)
     where:\n\
     <ncores> is the number of cpu cores to use,\n\
     <nterm> is the number of terminals to use,\n\
-    <philosiphers> is from 1 to %d\n\
+    <philosophers> is from 1 to %d\n\
     <bites> is the number of times each philisopher eats.\n",
-	 pname, MAX_PROC);
+	 pname, MAX_PROC-3);
   exit(1);
 }
 
@@ -85,7 +85,7 @@ int main(int argc, const char** argv)
 
   /* check arguments */
 
-  if( (nphil <= 0) || (nphil > MAX_PROC) ) usage(argv[0]); 
+  if( (nphil <= 0) || (nphil > MAX_PROC-3) ) usage(argv[0]); 
   if( (bites <= 0) ) usage(argv[0]); 
 
   /* adjust work per fibo call (to adapt to many philosophers/bites) */

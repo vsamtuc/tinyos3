@@ -432,8 +432,6 @@ BARE_TEST(test_dict_init, "Initialization of rdict")
 	}
 }
 
-size_t next_greater_prime_size(size_t size);
-
 
 BARE_TEST(test_dict_resize, "Resizing")
 {
@@ -443,7 +441,7 @@ BARE_TEST(test_dict_resize, "Resizing")
 
 	rlnode node; rdict_node_init(&node, 0, 0);
 
-	ASSERT(next_greater_prime_size((size_t)0)==5lu);
+	ASSERT(rdict_next_greater_prime_size((size_t)0, 0)==5lu);
 
 	for(int i=0; i<6; i++) {
 		rdict_init(&dict, 0); 
@@ -474,6 +472,9 @@ BARE_TEST(test_dict_insert_lookup_remove, "Test the dictionary inserting many el
 		rlnode* node = malloc(sizeof(rlnode));
 		rdict_node_init(node, i, i);
 		rdict_insert(&dict, node);
+
+		/* The starndard policy has a threshold of 1 to the load factor */
+		ASSERT(dict.bucketno >= dict.size);
 	}
 
 	ASSERT(dict.size == N);
@@ -483,9 +484,13 @@ BARE_TEST(test_dict_insert_lookup_remove, "Test the dictionary inserting many el
 	for(intptr_t i=0;i<N;i++) {
 		rdict_iterator iter = rdict_find(&dict, i, i, equalty);
 		ASSERT(iter != NULL);
+		ASSERT(*iter != NULL);
 		ASSERT((*iter)->num == i);
-
 		ASSERT(rdict_lookup(&dict, i,i,equalty)->num == i);
+
+		ASSERT(rdict_find_node(&dict, *iter) == iter);
+		ASSERT(rdict_find_next(&dict, iter, i, i, equalty) == rdict_end(&dict));
+
 	}
 
 	/* Scan the elements sequentially and check that we get them all */
@@ -505,6 +510,7 @@ BARE_TEST(test_dict_insert_lookup_remove, "Test the dictionary inserting many el
 		free(node);
 	}
 
+	rdict_destroy(&dict);
 }
 
 
