@@ -47,6 +47,7 @@ int util_stat(size_t, const char**);
 int util_ln(size_t, const char**);
 int util_rm(size_t, const char**);
 int util_cat(size_t, const char**);
+int util_kill(size_t, const char**);
 
 
 struct { const char * cmdname; Program prog; uint nargs; const char* help; } 
@@ -79,6 +80,7 @@ COMMANDS[]  =
 	{"ln", util_ln, 2, "ln <oldpath> <newpath>:  Add a hard link to a file"},
 	{"rm", util_rm, 1, "Unlink a file"},
 	{"cat", util_cat, 0, "Concatenate a list of files"},
+	{"kill", util_kill, 1, "Kill a process"},
 
 	{NULL, NULL, 0, NULL}
 };
@@ -90,7 +92,7 @@ int programs() {
 }
 
 #define checkargs(argno) if(argc <= (argno)) {\
-  printf("Insufficient arguments. %d expected, %zd given.\n", (argno), argc-1);\
+  printf("Insufficient arguments. %d expected, %zd given.  Try %s -h for help.\n", (argno), argc-1, argv[0]);\
   return 1; }\
 
 #define getint(n)  atoi(argv[n])
@@ -185,7 +187,7 @@ int RunTerm(size_t argc, const char** argv)
 	}
 	Dup2(0, 1);  /* use the same stream for stdout */
 
-	return Execute(COMMANDS[prog].prog, argc-2, argv+2);
+	return Execute(COMMANDS[prog].prog, argc-2, argv+2)==NOPROC;
 }
 
 
@@ -803,47 +805,146 @@ int RemoteClient(size_t argc, const char** argv)
 
 
 
+void check_help(size_t argc, const char** argv, const char* help)
+{
+	for(size_t i=1; i<argc; i++) 
+		if(strcmp(argv[i],"-h")==0) { printf(help); Exit(0); }
+}
+
+
+
 int util_mkdir(size_t argc, const char** argv)
 {
 	checkargs(1);
-	if(MkDir(argv[1])!=0) {
-		PError(argv[0]);
-		return 1;
-	}
+	check_help(argc, argv,
+"Usage: mkdir DIRECTORY...\n"
+"Create the DIRECTORY(ies), if they do not already exist.\n"
+		);
+	for(int i=1; i<argc; i++) 
+		if(MkDir(argv[i])!=0) {
+			PError(argv[0]);
+			return 1;
+		}
 	return 0;
 }
 
 int util_rmdir(size_t argc, const char** argv)
 {
 	checkargs(1);
-	if(RmDir(argv[1])!=0) {
-		PError(argv[0]);
-		return 1;
-	}
+	check_help(argc, argv,
+"Usage: rmdir DIRECTORY...\n"
+"Remove the DIRECTORY(ies), if they are empty.\n"
+		);
+	for(int i=1; i<argc; i++) 
+		if(RmDir(argv[i])!=0) {
+			PError(argv[0]);
+			return 1;
+		}
 	return 0;
 }
 
 int util_ls(size_t argc, const char** argv)
 {
+	check_help(argc,argv,
+"Usage: ls [OPTION]... [FILE]...\n"
+"List information about the FILEs (the current directory by default).\n"
+"Options:\n"
+"  -a          do not ignore entries starting with .\n"
+"  -F          append indicator (one of */=>@|) to entries\n"
+"  -l          use a long listing format \n"
+"  -s          print the allocated size of each file, in blocks\n"
+			);
 
-	Fid_t fdir = Open(".", OPEN_RDONLY);
-	if(fdir==NOFILE) { PError(argv[0]); return 1; }
+	const char* list[argc];
+	int nlist = 0;
 
-	char name[MAX_NAME_LENGTH+1];
-	int rc;
-	printf("Type Links     Size Name\n"
-		   "------------------------\n");
-	while( (rc=ReadDir(fdir, name, MAX_NAME_LENGTH+1)) > 0)
-	{
-		struct Stat st;
-		Stat(name, &st);
-		const char* T="ufso";
-		switch(st.st_type) { 
-			case FSE_DIR: T="dir"; break;
-			case FSE_FILE: T="file"; break;
-			case FSE_DEV: T="dev"; break;
+	const char* files[argc];
+	int nfiles = 0;
+
+	int opt_long = 0;
+	int opt_size = 0;
+	int opt_all = 0;
+	int opt_type = 0;
+
+	struct Stat st;
+
+	void set_options(const char* opt) {
+		for(; *opt; ++opt) {
+			switch(*opt) {
+				case 'a':  opt_all=1; break;
+				case 'l':  opt_long=1; break;
+				case 's':  opt_size=1; break;
+				case 'F':  opt_type=1; break;
+				default:
+					printf("Invalid option: '%c'. Type ls -h  for help\n", *opt);
+			}
 		}
-		printf("%4s %5d %8zu %s\n", T, st.st_nlink, st.st_size, name);
+	}
+
+	for(int i=1; i<argc;i++) {
+		if(argv[i][0]=='-' && argv[i][1]!='\0') set_options(argv[i]+1);
+		else { 
+			int rc = Stat(argv[i], &st);
+			if(rc==-1) { PError(argv[i]); continue; }
+			if(st.st_type==FSE_DIR) { list[nlist++] = argv[i]; }
+			else { files[nfiles++] = argv[i]; }
+		}
+	}
+	if(nlist==0 && nfiles==0) { list[0]="."; nlist=1; }
+
+
+	void ls_print(const char* name) {
+		if(!opt_all && name[0]=='.') return;  /* hidden files */
+		Stat(name, &st);
+
+		/* print size */
+		if(opt_size) printf("%3d ", (st.st_size+1023)/1024);
+
+		/* print long info */
+		if(opt_long) {
+			const char* T="ufso";
+			switch(st.st_type) { 
+				case FSE_DIR: T="dir"; break;
+				case FSE_FILE: T="file"; break;
+				case FSE_DEV: T="dev"; break;
+			}
+			printf("%4s %5d %8zu ", T, st.st_nlink, st.st_size);
+		}
+
+		/* print name */
+		printf("%s", name);
+
+		/* print file type */
+		if(opt_type) {
+			const char* T="?";
+			switch(st.st_type) { 
+				case FSE_DIR: T="/"; break;
+				case FSE_FILE: T=""; break;
+				case FSE_DEV: T=">"; break;
+			}
+			printf("%s", T);
+		}
+
+		/* done */
+		printf("\n");
+	}
+
+	for(int i=0; i<nfiles;i++) ls_print(files[i]);
+	for(int i=0; i<nlist; i++) {
+		Fid_t fdir = Open(list[i], OPEN_RDONLY);
+		if(fdir==NOFILE) { PError(list[i]); continue; }
+		if(nfiles > 0 || nlist>1) printf("%s:\n", list[i]);
+
+		char name[MAX_NAME_LENGTH+1];
+		int rc;
+#if 0
+		printf("Type Links     Size Name\n"
+			   "------------------------\n");
+#endif
+		while( (rc=ReadDir(fdir, name, MAX_NAME_LENGTH+1)) > 0)
+		{
+			ls_print(name);
+		}
 	}
 
 	return 0;
@@ -853,6 +954,10 @@ int util_ls(size_t argc, const char** argv)
 int util_stat(size_t argc, const char** argv)
 {
 	checkargs(1);
+	check_help(argc, argv,
+"Usage: stat FILE...\n"
+"Display file or file system status.\n"
+ 	);
 
 	const char* file_type(Fse_type type) {
 		switch(type) {
@@ -880,9 +985,14 @@ int util_stat(size_t argc, const char** argv)
 	return 0;	
 }
 
+
 int util_ln(size_t argc, const char** argv)
 {
 	checkargs(2);
+	check_help(argc, argv,
+"Usage: ln TARGET LINK_NAME\n"
+"Create a link to TARGET with the name LINK_NAME.\n"
+ 	);
 	if(Link(argv[1], argv[2])!=0) { PError(argv[0]); return 1; }
 	return 0;
 }
@@ -890,13 +1000,35 @@ int util_ln(size_t argc, const char** argv)
 int util_rm(size_t argc, const char** argv)
 {
 	checkargs(1);
-	if(Unlink(argv[1])!=0) { PError(argv[0]); return 1; }
+	check_help(argc, argv,
+"Usage: rm [FILE]...\n"
+"Remove (unlink) the FILE(s).\n"
+ 	);
+	for(int i=1; i<argc; i++) 
+		if(Unlink(argv[i])!=0) { PError(argv[0]); return 1; }
 	return 0;
 }
 
+int util_kill(size_t argc, const char** argv)
+{
+	checkargs(1);
+	check_help(argc, argv,
+"Usage: kill pid\n"
+"Send a kill signal to the process.\n"
+ 	);
+	Pid_t pid = atoi(argv[1]);
+	int rc = Kill(pid);
+	if(rc==-1) { PError(argv[0]); return 1; }
+	return 0;
+}
 
 int util_cat(size_t argc, const char** argv)
 {
+	check_help(argc, argv,
+"Usage: cat [FILE]...\n"
+"Concatenate FILE(s) to standard output.\n"
+ 	);
+
 	void output(Fid_t fid) {
 		char buffer[8192];
 		while(1) {
@@ -1279,7 +1411,7 @@ int boot_shell(int argl, void* args)
 
 void usage(const char* pname)
 {
-  printf("usage:\n  %s <ncores> <nterm> <philosophers> <bites>\n\n  \
+  printf("usage:\n  %s <ncores> <nterm>\n\n  \
     where:\n\
     <ncores> is the number of cpu cores to use,\n\
     <nterm> is the number of terminals to use,\n",

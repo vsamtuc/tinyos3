@@ -73,7 +73,9 @@ typedef void (*dl_module_func)(dlinker*);
 struct dl_module
 {
 	dl_module_func func;
-	void* stack_top;
+	void* saved_sp;
+	void* alloc_sp;
+	size_t stack_size;
 
 	/* used by the dloader */
 	rlnode modules_node;
@@ -84,7 +86,9 @@ struct dl_module
 void dl_module_init(struct dl_module* dlmod, dl_module_func func)
 {
 	dlmod->func = func;
-	dlmod->stack_top = NULL;
+	dlmod->saved_sp = NULL;
+	dlmod->alloc_sp = NULL;
+	dlmod->stack_size = 0;
 
 	rdict_node_init(& dlmod->modules_node, dlmod, hash_buffer(&func, sizeof(func)));
 	dlmod->load_next = NULL;
@@ -219,8 +223,11 @@ void dl_bind_symbol(dlinker* dl, const char* name, void** addr)
 void dl_load(dlinker* dl, struct dl_module* mod)
 {
 	/* Execute the module in a fast context */
-	size_t stack_size = 1<<16;
-	void* stack = malloc(stack_size);
+	mod->stack_size = 1<<16;
+	mod->alloc_sp = malloc(mod->stack_size);
+
+	/* stack grows towards 0 */
+	void* stack = mod->alloc_sp + mod->stack_size;
 
 	void trampoline(struct transfer_t trans)
 	{
@@ -228,10 +235,11 @@ void dl_load(dlinker* dl, struct dl_module* mod)
 		mod->func(dl);
 	}
 
-	fcontext_t module_ctx = make_fcontext(stack+stack_size, stack_size, trampoline);
+	fcontext_t module_ctx = make_fcontext(stack, mod->stack_size, trampoline);
 	struct transfer_t t = jump_fcontext(module_ctx, NULL);
 
-	mod->stack_top = t.data;
+	mod->saved_sp = t.data;
+	fprintf(stderr, "Used stack = %lu\n", mod->stack_size - (mod->saved_sp - mod->alloc_sp));
 }
 
 /* Called at the end of a module to provide it to the dynamic linker in a prepared state */

@@ -6,6 +6,7 @@ terminal
 bios_example*
 tinyos_shell
 validate_api
+libfcontext.a
 test_*
 !test_*.c
 !test_*.h
