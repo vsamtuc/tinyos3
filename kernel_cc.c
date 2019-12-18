@@ -39,7 +39,7 @@ void Mutex_Lock(Mutex* lock)
   while(__atomic_test_and_set(lock,__ATOMIC_ACQUIRE)) {
     int spin=MUTEX_SPINS;
     while(__atomic_load_n(lock, __ATOMIC_RELAXED)) {
-#if defined(i386)
+#if defined(__x86__) || (__x86_64__)
       __builtin_ia32_pause();
 #endif
       if(spin>0) 
