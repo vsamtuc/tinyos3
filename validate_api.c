@@ -1199,7 +1199,7 @@ BOOT_TEST(test_pipe_fails_on_exhausted_fid,
 	for(uint i=0; i< (MAX_FILEID/2); i++ )
 		ASSERT(Pipe(&pipe)==0);
 	for(uint i=0; i< (MAX_FILEID/2); i++ )
-		ASSERT(Pipe(&pipe)==-1);	
+		ASSERT_ERRNO(Pipe(&pipe)==-1, EMFILE);	
 	return 0;
 }
 
@@ -1218,7 +1218,7 @@ BOOT_TEST(test_pipe_close_reader,
 	}
 	Close(pipe.read);
 	for(int i=0;i<3;i++) {
-		ASSERT((rc=Write(pipe.write, "Hello world", 12))==-1);
+		ASSERT_ERRNO((rc=Write(pipe.write, "Hello world", 12))==-1, EPIPE);
 	}
 	return 0;
 }
@@ -1367,6 +1367,108 @@ BOOT_TEST(test_pipe_multi_producer,
 }
 
 
+const char* Lipsum = 
+"Lorem ipsum dolor sit amet, consectetur adipiscing elit, "
+"sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. "
+"Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris "
+"nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in "
+"reprehenderit in voluptate velit esse cillum dolore eu fugiat "
+"nulla pariatur. Excepteur sint occaecat cupidatat non proident, "
+"sunt in culpa qui officia deserunt mollit anim id est laborum.\n";
+size_t Lipsum_len = 446;
+
+
+/* Takes in data in (argl, args), writes it to 1 */
+int checked_data_producer(int argl, void* args)
+{
+	unsigned int nbytes = argl;
+	void* buf = args;
+	Close(0);
+	while(nbytes>0) {		
+		unsigned int n = (nbytes<1024) ? nbytes : 1024;
+		int rc = Write(1, buf, n);
+		FATAL_ASSERT(rc>0);
+		nbytes -= rc;
+		buf += rc;
+	}
+	Close(1);
+	return 0;
+}
+
+/* Takes (argl, args). Reads its standard input to exhaustion,
+   asserts it read exactly these. */
+int checked_data_consumer(int argl, void* args) 
+{
+	char buffer[367];
+	int count = 0;
+	Close(1);
+	int rc = 1;
+	while(rc) {
+		rc = Read(0, buffer, 367);
+		FATAL_ASSERT(rc>=0);
+		FATAL_ASSERT(count + rc <= argl);
+		ASSERT(memcmp(buffer, args+count, rc)==0);
+		count += rc;
+	}
+	ASSERT(count == argl);
+	Close(0);
+	return 0;
+}
+
+
+
+
+BOOT_TEST(test_pipe_reads_writes, "Test that the consumer reads what the producer sends.")
+{
+	ASSERT(strlen(Lipsum)==Lipsum_len);
+
+	/* Make 1000 copies of Lipsum */
+	const uint N = 1000;
+	char* text = xmalloc(N*Lipsum_len);
+	for(uint i=0; i<N; i++) {
+		memcpy(text + i*Lipsum_len, Lipsum, Lipsum_len);
+	}
+
+	pipe_t pipe;
+	ASSERT(Pipe(&pipe)==0);	
+
+	/* First, make pipe.read be zero. We cannot just Dup, because we may close pipe.write */
+	if(pipe.read != 0) {
+		if(pipe.write==0) {
+			/* Get a null stream! */
+			Fid_t fid = OpenNull();
+			FATAL_ASSERT(fid!=NOFILE);
+			Dup2(0, fid);
+			pipe.write = fid;
+		}
+		Dup2(pipe.read, 0);
+		Close(pipe.read);
+	}
+	if(pipe.write!=1)  {
+		Dup2(pipe.write, 1);
+		Close(pipe.write);
+	}
+
+	ASSERT(Spawn(checked_data_consumer, N*Lipsum_len, text)!=NOPROC);
+	ASSERT(Spawn(checked_data_producer, N*Lipsum_len, text)!=NOPROC);
+
+	free(text);
+
+	Close(0);
+	Close(1);
+
+	WaitChild(NOPROC,NULL);
+	WaitChild(NOPROC,NULL);
+	return 0;
+
+
+	return 0;
+}
+
+
+
+
+
 TEST_SUITE(pipe_tests,
 	"A suite of tests for pipes. We are focusing on correctness, not performance."
 	)
@@ -1377,6 +1479,7 @@ TEST_SUITE(pipe_tests,
 	&test_pipe_close_writer,
 	&test_pipe_single_producer,
 	&test_pipe_multi_producer,
+	&test_pipe_reads_writes,
 	NULL
 };
 

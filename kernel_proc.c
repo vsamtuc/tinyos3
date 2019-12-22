@@ -25,7 +25,7 @@
 
   Process table 
 
- ============================== */
+  ============================== */
 
 /* The process table is implemented as an array of PCB */
 PCB PT[MAX_PROC];
@@ -39,31 +39,31 @@ static wait_channel wchan_wait_child = { SCHED_JOIN, "wait_child" };
 
 PCB* get_pcb(Pid_t pid)
 {
-  if(pid<0 || pid>=MAX_PROC) return NULL;
-  return PT[pid].pstate==FREE ? NULL : &PT[pid];
+	if(pid<0 || pid>=MAX_PROC) return NULL;
+	return PT[pid].pstate==FREE ? NULL : &PT[pid];
 }
 
 Pid_t get_pid(PCB* pcb)
 {
-  return pcb==NULL ? NOPROC : pcb-PT;
+	return pcb==NULL ? NOPROC : pcb-PT;
 }
 
 /* Initialize a PCB */
 static inline void initialize_PCB(PCB* pcb)
 {
-  pcb->pstate = FREE;
-  pcb->argl = 0;
-  pcb->args = NULL;
-  pcb->snapshot = NULL;
+	pcb->pstate = FREE;
+	pcb->argl = 0;
+	pcb->args = NULL;
+	pcb->snapshot = NULL;
 
-  for(int i=0;i<MAX_FILEID;i++)
-    pcb->FIDT[i] = NULL;
+	for(int i=0;i<MAX_FILEID;i++)
+		pcb->FIDT[i] = NULL;
 
-  rlnode_init(& pcb->children_list, NULL);
-  rlnode_init(& pcb->exited_list, NULL);
-  rlnode_init(& pcb->children_node, pcb);
-  rlnode_init(& pcb->exited_node, pcb);
-  wqueue_init(& pcb->child_exit, &wchan_wait_child);
+	rlnode_init(& pcb->children_list, NULL);
+	rlnode_init(& pcb->exited_list, NULL);
+	rlnode_init(& pcb->children_node, pcb);
+	rlnode_init(& pcb->exited_node, pcb);
+	wqueue_init(& pcb->child_exit, &wchan_wait_child);
 }
 
 
@@ -71,62 +71,62 @@ static PCB* pcb_freelist;
 
 void initialize_processes()
 {
-  /* initialize the PCBs */
-  for(Pid_t p=0; p<MAX_PROC; p++) {
-    initialize_PCB(&PT[p]);
-  }
+	/* initialize the PCBs */
+	for(Pid_t p=0; p<MAX_PROC; p++) {
+		initialize_PCB(&PT[p]);
+	}
 
-  /* use the parent field to build a free list */
-  PCB* pcbiter;
-  pcb_freelist = NULL;
-  for(pcbiter = PT+MAX_PROC; pcbiter!=PT; ) {
-    --pcbiter;
-    pcbiter->parent = pcb_freelist;
-    pcb_freelist = pcbiter;
-  }
+	/* use the parent field to build a free list */
+	PCB* pcbiter;
+	pcb_freelist = NULL;
+	for(pcbiter = PT+MAX_PROC; pcbiter!=PT; ) {
+		--pcbiter;
+		pcbiter->parent = pcb_freelist;
+		pcb_freelist = pcbiter;
+	}
 
-  process_count = 0;
+	process_count = 0;
 
-  /* Execute a null "idle" process */
-  if(sys_Spawn(NULL,0,NULL)!=0)
-    FATAL("The scheduler process does not have pid==0");
+	/* Execute a null "idle" process */
+	if(sys_Spawn(NULL,0,NULL)!=0)
+		FATAL("The scheduler process does not have pid==0");
 }
 
 
 /*
-  Must be called with kernel_mutex held
-*/
+   Must be called with kernel_mutex held
+ */
 PCB* acquire_PCB()
 {
-  PCB* pcb = NULL;
+	PCB* pcb = NULL;
 
-  if(pcb_freelist != NULL) {
-    pcb = pcb_freelist;
-    pcb->pstate = ALIVE;
-    pcb_freelist = pcb_freelist->parent;
-    process_count++;
-  }
+	if(pcb_freelist != NULL) {
+		pcb = pcb_freelist;
+		pcb->pstate = ALIVE;
+		pcb_freelist = pcb_freelist->parent;
+		process_count++;
+	}
 
-  return pcb;
+	return pcb;
 }
 
 /*
-  Must be called with kernel_mutex held
-*/
+   Must be called with kernel_mutex held
+ */
 void release_PCB(PCB* pcb)
 {
-  pcb->pstate = FREE;
-  pcb->parent = pcb_freelist;
-  pcb_freelist = pcb;
-  process_count--;
+	pcb->pstate = FREE;
+	pcb->parent = pcb_freelist;
+	pcb_freelist = pcb;
+	process_count--;
 }
 
 
 /*=============================================
- 
- Process info
- 
- ============================================*/
+
+  Process info
+
+  ============================================*/
 
 typedef struct 
 {
@@ -141,13 +141,13 @@ typedef struct
 void load_procinfo(procinfo* info, PCB* pcb)
 {
 	info->pid = get_pid(pcb);          /**< @brief The pid of the process. */
-    info->ppid = get_pid(pcb->parent); 
+	info->ppid = get_pid(pcb->parent); 
 	info->alive = (pcb->pstate == ALIVE);
 	info->thread_count = 1;
-  	info->main_task = pcb->main_task;
-  	info->argl = pcb->argl;
+	info->main_task = pcb->main_task;
+	info->argl = pcb->argl;
 #define min(x,y) (x<y)?x:y
-  	memcpy(info->args, pcb->args, min(pcb->argl,PROCINFO_MAX_ARGS_SIZE));
+	memcpy(info->args, pcb->args, min(pcb->argl,PROCINFO_MAX_ARGS_SIZE));
 #undef min
 }
 
@@ -185,12 +185,12 @@ int procinfo_read(void* sobj, char* buf, unsigned int size)
 		/* bytes to transfer */
 		unsigned int tsize = (dsize<size) ? dsize : size;
 
- 		if(tsize == 0) break;
- 		memcpy(buf, info->buffer+info->pos, tsize);
- 		buf += tsize;
- 		size -= tsize;
- 		info->pos = tsize;
- 		count += tsize;
+		if(tsize == 0) break;
+		memcpy(buf, info->buffer+info->pos, tsize);
+		buf += tsize;
+		size -= tsize;
+		info->pos = tsize;
+		count += tsize;
 	}
 
 	return count;
@@ -226,15 +226,15 @@ Fid_t sys_OpenInfo()
 
 
 /*=============================================
- 
- Program execution
- 
- ============================================*/
+
+  Program execution
+
+  ============================================*/
 
 /*
-	This function is provided as an argument to Spawn,
-	to execute the main thread of a process.
-*/
+   This function is provided as an argument to Spawn,
+   to execute the main thread of a process.
+ */
 static void start_main_thread()
 {
 	int exitval;
@@ -249,8 +249,8 @@ static void start_main_thread()
 
 
 /* 
-	Create and wake up the thread for the main function. 
-*/
+   Create and wake up the thread for the main function. 
+ */
 void process_exec(PCB* proc, Task call, int argl, void* args)
 {
 	/* Set the main thread's function */
@@ -283,8 +283,8 @@ void process_clear_exec_info(PCB* proc)
 void process_exit_thread()
 {
 	/* We need to release the kernel lock before we die! */
-  	kernel_unlock();
-  	exit_thread();
+	kernel_unlock();
+	exit_thread();
 }
 
 
@@ -298,10 +298,10 @@ void sys_Exec(Task call, int argl, void* args)
 
 
 /*=============================================
- 
- Process creation
- 
- ============================================*/
+
+  Process creation
+
+  ============================================*/
 
 
 
@@ -321,7 +321,7 @@ void process_init_resources(PCB* newproc, PCB* parent)
 			newproc->root_dir = pin_inode(mount_table, mount_table->root_dir);
 			newproc->cur_dir = newproc->root_dir;
 			repin_inode(newproc->cur_dir);
-		
+
 		}
 		return;
 	}
@@ -331,23 +331,25 @@ void process_init_resources(PCB* newproc, PCB* parent)
 
 	/* get the root and current directories */
 	newproc->root_dir = parent->root_dir;
-	newproc->cur_dir = parent->cur_dir;
 	repin_inode(newproc->root_dir);
+
+	newproc->cur_dir = parent->cur_dir;
 	repin_inode(newproc->cur_dir);
 
 	/* Inherit file streams from parent */
 	for(int i=0; i<MAX_FILEID; i++) {
-		   newproc->FIDT[i] = parent->FIDT[i];
-		   if(newproc->FIDT[i])
-		      FCB_incref(newproc->FIDT[i]);
+		newproc->FIDT[i] = parent->FIDT[i];
+		if(newproc->FIDT[i])
+			FCB_incref(newproc->FIDT[i]);
 	}
+
 }
 
 
 
 
 /*
-	System call to create a new process.
+   System call to create a new process.
  */
 Pid_t sys_Spawn(Task call, int argl, void* args)
 {
@@ -368,9 +370,9 @@ Pid_t sys_Spawn(Task call, int argl, void* args)
 		process_init_resources(newproc, CURPROC);
 
 	/* 
-		This must be the last thing we do, because once we wakeup the new thread it may run! 
-		So we need to have finished the initialization of the PCB.
-	*/
+	   This must be the last thing we do, because once we wakeup the new thread it may run! 
+	   So we need to have finished the initialization of the PCB.
+	 */
 	process_exec(newproc, call, argl, args);
 
 	return get_pid(newproc);
@@ -378,17 +380,17 @@ Pid_t sys_Spawn(Task call, int argl, void* args)
 
 
 /*=============================================
- 
-	Getting information
- 
- ============================================*/
+
+  Getting information
+
+  ============================================*/
 
 
 
 /* System call */
 Pid_t sys_GetPid()
 {
-  	return get_pid(CURPROC);
+	return get_pid(CURPROC);
 }
 
 
@@ -405,10 +407,10 @@ int sys_GetError()
 
 
 /*=============================================
- 
- Wait on processes for state change
- 
- ============================================*/
+
+  Wait on processes for state change
+
+  ============================================*/
 
 
 static void cleanup_zombie(PCB* pcb, int* status)
@@ -431,42 +433,42 @@ static Pid_t wait_for_specific_child(PCB* parent, Pid_t cpid, int* status)
 
 	/* Legality checks */
 	if((cpid<0) || (cpid>=MAX_PROC)) {
-  		set_errcode(ESRCH);
-    	return NOPROC;
+		set_errcode(ESRCH);
+		return NOPROC;
 	}
 
-  	/* 
-  		Condition:
-  		child==NULL or child->parent!=parent or child->pstate==ZOMBIE  
+	/* 
+Condition:
+child==NULL or child->parent!=parent or child->pstate==ZOMBIE  
 
-		Action:
-		if child==NULL || child->parent!=parent
-			return error ECHILD
-		else
-			cleanup and return status of child
+Action:
+if child==NULL || child->parent!=parent
+return error ECHILD
+else
+cleanup and return status of child
 
-  		It is complicated to write the condition as an expression inside while(), 
-  		because get_pcb(cpid) may return a different thing every time a waiter is woken up! 
-  		We write it more verbosely as below:
-  	 */
-  	PCB* child;
+It is complicated to write the condition as an expression inside while(), 
+because get_pcb(cpid) may return a different thing every time a waiter is woken up! 
+We write it more verbosely as below:
+	 */
+	PCB* child;
 	while(1)
 	{
-  		child = get_pcb(cpid);
+		child = get_pcb(cpid);
 
-  		/* If the condition is true proceed */
-  		if(child == NULL
-  			|| child->parent!=parent
-  			|| child->pstate == ZOMBIE
-  			)
-  			break;
-  		/* Else wait */
+		/* If the condition is true proceed */
+		if(child == NULL
+				|| child->parent!=parent
+				|| child->pstate == ZOMBIE
+		  )
+			break;
+		/* Else wait */
 		kernel_wait(& parent->child_exit);
-    }
+	}
 
-    /* This is the action */
+	/* This is the action */
 
-    /* error */
+	/* error */
 	if( child == NULL || child->parent != parent)
 	{
 		set_errcode(ECHILD);
@@ -475,27 +477,27 @@ static Pid_t wait_for_specific_child(PCB* parent, Pid_t cpid, int* status)
 
 	/* good case */
 	cleanup_zombie(child, status);  
-  	return cpid;
+	return cpid;
 }
 
 
 static Pid_t wait_for_any_child(PCB* parent, int* status)
 {
 	/* 
-		Condition: parent has no children or some child is exited
-		Action:
-			If parent has no children
-				return error ECHILD
-			else
-				cleanup and return status of some exited child
-	*/
+Condition: parent has no children or some child is exited
+Action:
+If parent has no children
+return error ECHILD
+else
+cleanup and return status of some exited child
+	 */
 	while(! is_rlist_empty(& parent->children_list)
-		&& is_rlist_empty(& parent->exited_list))
+			&& is_rlist_empty(& parent->exited_list))
 	{
 		kernel_wait(& parent->child_exit);
 	}	
 
-  	/* Make sure I have children! */
+	/* Make sure I have children! */
 	if(is_rlist_empty(& parent->children_list)) {
 		set_errcode(ECHILD);
 		return NOPROC;
@@ -506,29 +508,29 @@ static Pid_t wait_for_any_child(PCB* parent, int* status)
 	assert(child->pstate == ZOMBIE);
 	cleanup_zombie(child, status);
 
-  	return cpid;
+	return cpid;
 }
 
 
 Pid_t sys_WaitChild(Pid_t cpid, int* status)
 {
-  /* Wait for specific child. */
-  if(cpid != NOPROC) {
-    return wait_for_specific_child(CURPROC, cpid, status);
-  }
-  /* Wait for any child */
-  else {
-    return wait_for_any_child(CURPROC, status);
-  }
+	/* Wait for specific child. */
+	if(cpid != NOPROC) {
+		return wait_for_specific_child(CURPROC, cpid, status);
+	}
+	/* Wait for any child */
+	else {
+		return wait_for_any_child(CURPROC, status);
+	}
 
 }
 
 
 /*=============================================
- 
-	Process termination
- 
- ============================================*/
+
+  Process termination
+
+  ============================================*/
 
 
 
@@ -537,26 +539,26 @@ void restore_snapshot();
 void sys_Exit(int exitval)
 {
 
-  /* Right here, we must check that we are not the boot task. If we are, 
-     we must wait until all processes exit. */
-  if(sys_GetPid()==1) {
-    while(sys_WaitChild(NOPROC,NULL)!=NOPROC);
-  }
+	/* Right here, we must check that we are not the boot task. If we are, 
+	   we must wait until all processes exit. */
+	if(sys_GetPid()==1) {
+		while(sys_WaitChild(NOPROC,NULL)!=NOPROC);
+	}
 
-  PCB *curproc = CURPROC;  /* cache for efficiency */
+	PCB *curproc = CURPROC;  /* cache for efficiency */
 
-  /* Save the exit status */
-  curproc->exitval = exitval;
+	/* Save the exit status */
+	curproc->exitval = exitval;
 
-  /* Do all the other cleanup we want here, close files etc. */
+	/* Do all the other cleanup we want here, close files etc. */
 
-  	/* Release directory handles */
+	/* Release directory handles */
 	unpin_inode(curproc->root_dir);
 	unpin_inode(curproc->cur_dir);
 
-  /* Disconnect my main_thread */
-  curproc->main_thread = NULL;
-  process_clear_exec_info(curproc);
+	/* Disconnect my main_thread */
+	curproc->main_thread = NULL;
+	process_clear_exec_info(curproc);
 
 	/* Clean up FIDT */
 	for(int i=0;i<MAX_FILEID;i++) {
@@ -566,27 +568,27 @@ void sys_Exit(int exitval)
 		}
 	}
 
-  /* Reparent any children of the exiting process to the 
-     initial task */
-  PCB* initpcb = get_pcb(1);
-  while(!is_rlist_empty(& curproc->children_list)) {
-    rlnode* child = rlist_pop_front(& curproc->children_list);
-    child->pcb->parent = initpcb;
-    rlist_push_front(& initpcb->children_list, child);
-  }
+	/* Reparent any children of the exiting process to the 
+	   initial task */
+	PCB* initpcb = get_pcb(1);
+	while(!is_rlist_empty(& curproc->children_list)) {
+		rlnode* child = rlist_pop_front(& curproc->children_list);
+		child->pcb->parent = initpcb;
+		rlist_push_front(& initpcb->children_list, child);
+	}
 
-  /* Add exited children to the initial task's exited list 
-     and signal the initial task */
-  if(!is_rlist_empty(& curproc->exited_list)) {
-    rlist_append(& initpcb->exited_list, &curproc->exited_list);
-    kernel_broadcast(& initpcb->child_exit);
-  }
+	/* Add exited children to the initial task's exited list 
+	   and signal the initial task */
+	if(!is_rlist_empty(& curproc->exited_list)) {
+		rlist_append(& initpcb->exited_list, &curproc->exited_list);
+		kernel_broadcast(& initpcb->child_exit);
+	}
 
-  /* Put me into my parent's exited list */
-  if(curproc->parent != NULL) {   /* Maybe this is init */
-    rlist_push_front(& curproc->parent->exited_list, &curproc->exited_node);
-    kernel_broadcast(& curproc->parent->child_exit);
-  }
+	/* Put me into my parent's exited list */
+	if(curproc->parent != NULL) {   /* Maybe this is init */
+		rlist_push_front(& curproc->parent->exited_list, &curproc->exited_node);
+		kernel_broadcast(& curproc->parent->child_exit);
+	}
 
 
 	/* Now, mark the process as exited. */

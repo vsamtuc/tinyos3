@@ -113,7 +113,7 @@ int Cond_Wait(Mutex* mutex, CondVar* cv)
 {
 	cv_ensure_init(cv);
 	int retval = wqueue_wait((wait_queue*) cv, mutex, NO_TIMEOUT);
-	check_sigs();
+	check_sigs(); /* Returning from Cond_Wait */
 	return retval;
 }
 
@@ -121,7 +121,7 @@ int Cond_TimedWait(Mutex* mutex, CondVar* cv, timeout_t timeout)
 {
 	cv_ensure_init(cv);
 	int retval = wqueue_wait((wait_queue*) cv, mutex, timeout*1000ul);
-	check_sigs();
+	check_sigs(); /* Returning from Cond_TimedWait */
 	return retval;
 }
 

@@ -13,7 +13,7 @@
 #include <fcntl.h>
 #include <poll.h>
 #include <stdarg.h>
-
+#include <stdatomic.h>
 #include <setjmp.h>
 
 #include "util.h"
@@ -260,13 +260,15 @@ static void dispatch_interrupts(Core* core)
 	for(int intno = 0; intno < maximum_interrupt_no; intno++) {
 		if(core->int_disabled) break; /* will continue at
 										 cpu_interrupt_enable()*/
-		if(core->intpending[intno]) {
-			core->intpending[intno] = 0;
+		sig_atomic_t pending = 
+			atomic_exchange_explicit(& core->intpending[intno], 0, 
+										memory_order_relaxed);
+		if(pending) {
 			core->irq_delivered[intno]++;
 			interrupt_handler* handler =  core->intvec[intno];
 			if(handler != NULL) { 
 				handler();
-			}
+			}			
 		}
 	}	
 }
@@ -813,20 +815,19 @@ void cpu_interrupt_handler(Interrupt interrupt, interrupt_handler handler)
 void cpu_disable_interrupts()
 {
 	Core* core = curr_core();
-	if(! core->int_disabled) {
-		CHECKRC(pthread_sigmask(SIG_BLOCK, &sigusr1_set, NULL));
-		core->int_disabled = 1;
-	}
+	core->int_disabled = 1;
+	atomic_signal_fence(memory_order_seq_cst);
 }
 
 void cpu_enable_interrupts()
 {
 	Core* core = curr_core();
-	if(core->int_disabled) {        
-		core->int_disabled = 0;
-		CHECKRC(pthread_sigmask(SIG_UNBLOCK, &sigusr1_set, NULL));      
+	int was_disabled = 
+		atomic_exchange_explicit(&core->int_disabled, 0,
+			memory_order_relaxed);
+	atomic_signal_fence(memory_order_seq_cst);
+	if(was_disabled)     
 		dispatch_interrupts(curr_core());
-	}
 }
 
 

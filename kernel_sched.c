@@ -1,6 +1,8 @@
 
 #include <assert.h>
 #include <sys/mman.h>
+#include <signal.h>
+
 
 #include "tinyos.h"
 #include "kernel_cc.h"
@@ -604,14 +606,17 @@ void wqueue_broadcast(wait_queue* wqueue)
 /* Interrupt handler for ALARM */
 void yield_handler() 
 {
+	assert(get_core_preemption()==1);
 	yield(SCHED_QUANTUM); 
-	if(get_core_preemption()==1) check_sigs();
+	assert(get_core_preemption()==1);
+	if(get_core_preemption()==1) check_sigs(); /* ALARM handler */
 }
 
 /* Interrupt handle for inter-core interrupts */
 void ici_handler()
-{ /* noop for now... */
-	if(get_core_preemption()==1) check_sigs();
+{ 
+	/* noop for now... */
+	if(get_core_preemption()==1) check_sigs(); /* ICI handler */
 }
 
 
