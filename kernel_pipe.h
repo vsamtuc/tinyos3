@@ -24,7 +24,7 @@ size_t ring_buffer_put(ring_buffer* this, void* buf, size_t nelem);
 size_t ring_buffer_get(ring_buffer* this, void* buf, size_t nsize);
 
 
-#define PIPE_SIZE 128
+#define PIPE_SIZE 8192
 
 typedef struct pipe_control_block
 {
