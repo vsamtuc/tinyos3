@@ -156,7 +156,7 @@ void SymposiumTable_philosopher(SymposiumTable* table, int i);
 	This program can be called as follows:
 	@code
 	symposium_t symp = ...;
-	Exec(SymposiumOfThreads, sizeof(symp), &symp);
+	Spawn(SymposiumOfThreads, sizeof(symp), &symp);
 	@endcode
 */
 int SymposiumOfThreads(int argl, void* args);
@@ -169,7 +169,7 @@ int SymposiumOfThreads(int argl, void* args);
 	This program can be called as follows:
 	@code
 	symposium_t symp = ...;
-	Exec(SymposiumProcesses, sizeof(symp), &symp);
+	Spawn(SymposiumProcesses, sizeof(symp), &symp);
 	@endcode
 */
 int SymposiumOfProcesses(int argl, void* args);
