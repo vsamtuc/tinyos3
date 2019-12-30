@@ -268,8 +268,6 @@ typedef int (*Task)(int, void*);
 Pid_t Spawn(Task task, int argl, void* args);
 
 
-Pid_t Vfork();
-
 
 void Exec(Task task, int argl, void* args);
 

@@ -54,7 +54,6 @@ static inline void initialize_PCB(PCB* pcb)
 	pcb->pstate = FREE;
 	pcb->argl = 0;
 	pcb->args = NULL;
-	pcb->snapshot = NULL;
 
 	for(int i=0;i<MAX_FILEID;i++)
 		pcb->FIDT[i] = NULL;
@@ -552,7 +551,6 @@ Pid_t sys_WaitChild(Pid_t cpid, int* status)
 
 
 
-void restore_snapshot();
 
 void sys_Exit(int exitval)
 {

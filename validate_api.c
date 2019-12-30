@@ -1024,6 +1024,7 @@ BOOT_TEST(test_join_many_threads,
 		return 0;
 	}
 
+	
 	for(int i=0;i<5;i++) {
 		CreateThread(joiner_thread,0,NULL);
 	}

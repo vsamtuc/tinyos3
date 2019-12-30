@@ -32,28 +32,19 @@ typedef enum pid_state_e {
 
 
 
-typedef struct thread_snapshot_s {
-  TCB* tcb;
-  void* data;
-  void* sp;
-  rlnode snapnode;
-  cpu_context_t context;
-} thread_snapshot;
-
-
 /**
   @brief Process Control Block.
 
   This structure holds all information pertaining to a process.
  */
-typedef struct process_control_block {
+typedef struct process_control_block 
+{
   pid_state  pstate;      /**< @brief The pid state for this PCB */
   PCB* parent;            /**< @brief Parent's pcb. */
 
 
   int exitval;            /**< @brief The exit value of the process */
   TCB* main_thread;       /**< @brief The main thread */
-  thread_snapshot* snapshot; /**< used by fork **/
 
   Task main_task;         /**< @brief The main thread's function */
   int argl;               /**< @brief The main thread's argument length */
