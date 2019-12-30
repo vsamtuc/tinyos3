@@ -140,9 +140,27 @@ typedef struct
 
 void load_procinfo(procinfo* info, PCB* pcb)
 {
-	info->pid = get_pid(pcb);          /**< @brief The pid of the process. */
-	info->ppid = get_pid(pcb->parent); 
-	info->alive = (pcb->pstate == ALIVE);
+	info->pid = get_pid(pcb);
+	info->ppid = get_pid(pcb->parent);
+
+	/* Load the status */
+	if(pcb->pstate == ALIVE) {
+		thread_info mtinfo;
+		get_thread_info(pcb->main_thread, &mtinfo);
+		if(mtinfo.state==STOPPED) {
+			info->status = PROCINFO_STOPPED;
+			strncpy(info->wchan, mtinfo.wchan->name, PROCINFO_MAX_WCHAN_SIZE);
+		} else {
+			info->status = PROCINFO_RUNNABLE;
+			strncpy(info->wchan,"", PROCINFO_MAX_WCHAN_SIZE);
+		}
+	} else {
+		info->status = PROCINFO_ZOMBIE;
+		strncpy(info->wchan,"", PROCINFO_MAX_WCHAN_SIZE);
+	}
+
+
+
 	info->thread_count = 1;
 	info->main_task = pcb->main_task;
 	info->argl = pcb->argl;

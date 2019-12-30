@@ -1068,6 +1068,20 @@ int ShutDown(Fid_t sock, shutdown_mode how);
 #define PROCINFO_MAX_ARGS_SIZE (128)
 
 /**
+	@brief The max size of wchan returned by a procinfo structure.
+ */
+#define PROCINFO_MAX_WCHAN_SIZE 14
+
+/**
+	@brief The status of a process as reported by procinfo.
+ */
+enum procinfo_status {
+	PROCINFO_ZOMBIE,	/**< @brief The process is a zombie */
+	PROCINFO_RUNNABLE,	/**< @brief The process main task is runnable */
+	PROCINFO_STOPPED	/**< @brief The process main task is stopped */
+};
+
+/**
 	@brief A struct containing process-related information for a non-free
 	pid.
 
@@ -1081,22 +1095,33 @@ typedef struct procinfo
 
                 This is equal to NOPROC for parentless procs. */
   
-  int alive;      /**< @brief Non-zero if process is alive, zero if process is zombie. */
-	
-  unsigned long thread_count; /**< Current no of threads. */
-	
-  Task main_task;  /**< @brief The main task of the process. */
-	
-  int argl;        /**< @brief Argument length of main task. 
+  	enum procinfo_status status; /**< @brief Process status. */
 
-            Note that this is the
-            real argument length, not just the length of the @c args field, which is
-            limited at @c PROCINFO_MAX_ARGS_SIZE. */
-	char args[PROCINFO_MAX_ARGS_SIZE]; /**< @brief The first 
-       @c PROCINFO_MAX_ARGS_SIZE bytes of the argument of the main task. 
+	/**
+		@brief The wait channel for this process.
 
+		If the process status is @c PROCINFO_STOPPED, return the wait channel of
+		the main task. Else, this is the empty string.
+	 */
+  	char wchan[PROCINFO_MAX_WCHAN_SIZE];
+	
+  	unsigned long thread_count;  /**< Current no of threads. */
+	
+  	Task main_task;  /**< @brief The main task of the process. */
+	
+	/** @brief Argument length of main task. 
+
+		Note that this is the real argument length, 
+		not just the length of the @c args field, which is
+		limited at @c PROCINFO_MAX_ARGS_SIZE. */
+	int argl;
+
+	/** @brief Argument of the main task (possibly truncated).
+
+	This fields holds up to @c PROCINFO_MAX_ARGS_SIZE bytes of the argument of the main task. 
     If the task's argument is longer (as designated by the @c argl field), the
     bytes contained in this field are just the prefix.  */
+	char args[PROCINFO_MAX_ARGS_SIZE]; 
 } procinfo;
 
 

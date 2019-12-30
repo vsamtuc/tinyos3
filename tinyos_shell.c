@@ -199,8 +199,8 @@ int SystemInfo(size_t argc, const char** argv)
 	if(finfo!=NOFILE) {
 		/* Print per-process info */
 		procinfo info;
-		printf("%5s %5s %6s %8s %20s\n",
-			"PID", "PPID", "State", "Threads", "Main program"
+		printf("%5s %5s %-16s %8s %20s\n",
+			"PID", "PPID", "Status", "Threads", "Main program"
 			);
 		/* Read in next piece of info */		
 		while(Read(finfo, (char*) &info, sizeof(info)) > 0) {
@@ -216,10 +216,18 @@ int SystemInfo(size_t argc, const char** argv)
 				if(info.pid==1) pname = "init";
 			}
 
-			printf("%5d %5d %6s %8u %20s\n",
+			char status[17];
+			switch(info.status) {
+				case PROCINFO_ZOMBIE: sprintf(status,"ZOMBIE"); break;
+				case PROCINFO_RUNNABLE: sprintf(status,"RUNNABLE"); break;
+				case PROCINFO_STOPPED:
+				snprintf(status,17,"S:%-14s", info.wchan); break;
+			}
+
+			printf("%5d %5d %-16s %8u %20s\n",
 				info.pid,
 				info.ppid,
-				(info.alive?"ALIVE":"ZOMBIE"),
+				status,
 				info.thread_count,
 				pname
 				);
