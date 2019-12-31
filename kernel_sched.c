@@ -1,7 +1,6 @@
 
 #include <assert.h>
-#include <sys/mman.h>
-#include <signal.h>
+#include <stdatomic.h>
 
 
 #include "tinyos.h"
@@ -129,8 +128,8 @@ static inline void sched_unlock()
   A counter for active threads. By "active", we mean 'existing',
   with the exception of idle threads (they don't count).
  */
-volatile unsigned int active_threads = 0;
-Mutex active_threads_spinlock = MUTEX_INIT;
+atomic_uint active_threads = 0;
+
 
 /* The memory allocated for the TCB must be a multiple of SYSTEM_PAGE_SIZE */
 #define THREAD_TCB_SIZE \
@@ -229,9 +228,7 @@ TCB* spawn_thread(PCB* pcb, void (*func)())
 #endif
 
 	/* increase the count of active threads */
-	spin_lock(&active_threads_spinlock);
 	active_threads++;
-	spin_unlock(&active_threads_spinlock);
 
 	/* Init the context */
 	cpu_initialize_context(&tcb->context, sp, THREAD_STACK_SIZE, thread_start, 1, func);
@@ -250,9 +247,7 @@ void release_thread(TCB* tcb)
 #endif
 
 	free_thread(tcb, THREAD_SIZE);
-	spin_lock(&active_threads_spinlock);
 	active_threads--;
-	spin_unlock(&active_threads_spinlock);
 }
 
 

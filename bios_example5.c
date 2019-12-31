@@ -14,7 +14,7 @@
 
 	To run this program, you must execute two terminals
 	in two different windows first. Otherwise, the program
-	will block.
+	will not run.
 
  */
 
@@ -120,9 +120,13 @@ void bootfunc()
 
 int main()
 {
-	fprintf(stderr, "Please make sure that you have 2 terminals running, or else"
-		" this process will be stuck.\nIf you do not see a message to tell you to"
-		" 'Type a line', please either start terminals 0 and 1 or kill this process"
-		" (by hitting <Control>-C).\n");
-	vm_boot(bootfunc, 2, 2);
+	vm_config VMC;
+	VMC.bootfunc = bootfunc;
+	VMC.cores = 2;
+	int rc = vm_config_terminals(&VMC, 2, 1);
+	if(rc==-1)
+		fprintf(stderr, "Please make sure that you have 2 terminals running, or else"
+			" this process will not run.\nYou need to start terminals 0 and 1.\n");
+	else
+		vm_run(&VMC);
 }
