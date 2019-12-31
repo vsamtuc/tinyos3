@@ -196,7 +196,8 @@ typedef struct proxy_daemon {
 	pthread_t thread;	/* Daemon thread */
 	PatternProc proc;	/* Pattern processor function */
 	int complete;     	/* Flag that the VM will not access the terminal any more. */
-	int fd;				/* The fd */
+	int fd;				/* The fd of the daemon end */
+	int vmfd; 			/* The fd of the VM end */
 	rlnode pattern; 	/* The pattern list */
 	pthread_mutex_t mx; /* Monitor mutex */
 	pthread_cond_t pat; /* Signal that there is a new pattern, or that the VM is done. */
@@ -212,11 +213,33 @@ typedef struct term_proxy
 
 void* term_proxy_daemon(void*);
 
+#if 0
+void term_proxy_daemon_init(proxy_daemon* this, const char* fifoname, uint fifono, PatternProc proc)
+#endif
+
 void term_proxy_daemon_init(proxy_daemon* this, const char* fifoname, uint fifono, PatternProc proc)
 {
 	this->proc = proc;
 	this->complete = 0;
+
+#if 0
+	/* This is the old code */	
 	this->fd = open_fifo(fifoname, fifono);
+#endif
+	int pipefd[2];
+	CHECK(pipe(pipefd));
+	if(strcmp(fifoname,"kbd")==0) {
+		this->fd = pipefd[1];
+		this->vmfd = pipefd[0];
+	} else if(strcmp(fifoname,"con")==0) {
+		this->fd = pipefd[0];
+		this->vmfd = pipefd[1];
+	} else {
+		close(pipefd[0]); close(pipefd[1]);
+		MSG("Unknown fifo name for term proxy: '%s'. Expected 'con' or 'kbd'", fifoname);
+		abort_test();
+	}
+
 	rlnode_init(&this->pattern, NULL);
 	CHECKRC(pthread_mutex_init(& this->mx, NULL));
 	CHECKRC(pthread_cond_init(& this->pat, NULL));
@@ -568,10 +591,20 @@ int execute_boot(int ncores, int nterm, Task bootfunc, int argl, void* args, uns
 {
 	void run_boot() 
 	{
-		for(uint i=0;i<nterm; i++)
-			term_proxy_init(&PROXY[i], i);
+		vm_config vmc;
+		vmc.cores = ncores;
+		vmc.serialno = nterm;
 
-		boot(ncores, nterm, bootfunc, argl, args);		
+		for(uint i=0;i<nterm; i++) {
+			term_proxy_init(&PROXY[i], i);
+			vmc.serial_out[i] = PROXY[i].con.vmfd;
+			vmc.serial_in[i] = PROXY[i].kbd.vmfd;
+		}
+
+
+
+
+		boot(&vmc, bootfunc, argl, args);
 
 
 		for(uint i=0;i<nterm; i++)

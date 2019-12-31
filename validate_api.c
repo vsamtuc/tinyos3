@@ -64,7 +64,9 @@ BARE_TEST(test_boot,
 	struct test_cpu_rec* cpu_rec_ptr = &cpu_rec;
 
 	FUDGE(cpu_rec);
-	boot(1,0, test_boot_boot, sizeof(cpu_rec_ptr), &cpu_rec_ptr);
+	vm_config vmc;
+	vm_configure(&vmc, NULL, 1, 0);
+	boot(&vmc, test_boot_boot, sizeof(cpu_rec_ptr), &cpu_rec_ptr);
 
 	ASSERT(cpu_rec.argl == sizeof(cpu_rec_ptr));
 	ASSERT( (struct test_cpu_rec **)cpu_rec.args != &cpu_rec_ptr);
@@ -1024,7 +1026,7 @@ BOOT_TEST(test_join_many_threads,
 		return 0;
 	}
 
-	
+
 	for(int i=0;i<5;i++) {
 		CreateThread(joiner_thread,0,NULL);
 	}
@@ -2176,7 +2178,9 @@ BARE_TEST(test_parallelism,
 	{
 		double minTrun=0.0;
 		for(int I=0;I<ntimes; I++) {
-			boot(ncores, 0, run_twice, 0, NULL);
+			vm_config vmc;
+			vm_configure(&vmc, NULL, ncores, 0);
+			boot(&vmc, run_twice, 0, NULL);
 			if(I==0)
 				minTrun = Trun;
 			else 

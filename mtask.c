@@ -6,6 +6,7 @@
 
 #include "tinyoslib.h"
 #include "symposium.h"
+#include "bios.h"
 
 
 /*
@@ -97,7 +98,9 @@ int main(int argc, const char** argv)
 
   /* boot TinyOS */
   printf("*** Booting TinyOS\n");
-  boot(ncores, nterm, boot_symposium, sizeof(symp), &symp);
+  vm_config vmc;
+  vm_configure(&vmc, NULL, ncores, nterm);
+  boot(&vmc, boot_symposium, sizeof(symp), &symp);
   printf("*** TinyOS halted. Bye!\n");
 
   return 0;

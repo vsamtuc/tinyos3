@@ -65,13 +65,14 @@ void boot_tinyos_kernel()
 }
 
 
-void boot(uint ncores, uint nterm, Task boot_task, int argl, void* args)
+void boot(vm_config* vmc, Task boot_task, int argl, void* args)
 {
   boot_rec.init_task = boot_task;
   boot_rec.argl = argl;
   boot_rec.args = args;
 
-  vm_boot(boot_tinyos_kernel, ncores, nterm);
+  vmc->bootfunc = boot_tinyos_kernel; 
+  vm_run(vmc);
 }
 
 

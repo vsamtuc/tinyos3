@@ -1438,7 +1438,10 @@ int main(int argc, const char** argv)
 
   /* boot TinyOS */
   printf("*** Booting TinyOS with %d cores and %d terminals\n", ncores, nterm);
-  boot(ncores, nterm, boot_shell, 0, NULL);
+  vm_config vmc;
+  vm_configure(&vmc, NULL, ncores, nterm);
+
+  boot(&vmc, boot_shell, 0, NULL);
   printf("*** TinyOS halted. Bye!\n");
 
   return 0;
