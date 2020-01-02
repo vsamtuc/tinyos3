@@ -13,9 +13,9 @@
 #include "kernel_fs.h"
 
 
-BOOT_TEST(test_rootfs_is_root, "Test that the rootfs filesystem is mounted as root")
+BOOT_TEST(test_memfs_is_root, "Test that the memfs filesystem is mounted as root")
 {
-	FSystem* rootfs = get_fsys("rootfs");
+	FSystem* rootfs = get_fsys("memfs");
 	ASSERT(rootfs!=NULL);
 
 	FsMount* mnt = & mount_table[0];
@@ -379,7 +379,7 @@ BOOT_TEST(test_dlink,"Test dynamic linking")
 
 TEST_SUITE(fsystem_tests, "Filesystem tests")
 {
-	&test_rootfs_is_root,
+	&test_memfs_is_root,
 	&test_pathcomp,
 	&test_dlinker_binding,
 	&test_dlink,

@@ -496,15 +496,15 @@ Fid_t OpenNull();
 enum Open_flags
 {
 	/* Status flags */
-	OPEN_RDONLY = 001,	/**< @brief Open only for reading */
-	OPEN_WRONLY = 002,	/**< @brief Open only for writing */
-	OPEN_RDWR   = 003,	/**< @brief Open for both reading and writing */
-	OPEN_APPEND = 012,	/**< @brief Open in "append mode" */
+	OPEN_RDONLY = 0x001,	/**< @brief Open only for reading */
+	OPEN_WRONLY = 0x002,	/**< @brief Open only for writing */
+	OPEN_RDWR   = 0x003,	/**< @brief Open for both reading and writing */
+	OPEN_APPEND = 0x012,	/**< @brief Open in "append mode" */
 
 	/* Creation flags */
-	OPEN_CREAT  = 100,	/**< @brief Create file if it does not exist */
-	OPEN_EXCL   = 200,	/**< @brief Ensure the file does not exist, fail if it does. */
-	OPEN_TRUNC  = 400	/**< @brief Truncate file (if opened for writing) */
+	OPEN_CREAT  = 0x100,	/**< @brief Create file if it does not exist */
+	OPEN_EXCL   = 0x200,	/**< @brief Ensure the file does not exist, fail if it does. */
+	OPEN_TRUNC  = 0x400	/**< @brief Truncate file (if opened for writing) */
 };
 
 
@@ -594,6 +594,12 @@ typedef uint64_t Dev_t;
 #define NO_DEVICE ((Dev_t) -1)
 #define DEV_MAJOR(dev)  ((uint32_t) ((dev)>>32))
 #define DEV_MINOR(dev)  ((uint32_t) (dev))
+
+static inline Dev_t device_id(uint32_t major, uint32_t minor) 
+{
+	return (((Dev_t) major) << 32) | ((Dev_t) minor);
+}
+
 
 /**
 	@brief Types of File System Entity (FSE).

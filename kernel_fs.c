@@ -13,6 +13,81 @@
   =========================================================*/
 
 
+/* --------------------------------------------
+	Some convenience methods on Inode objects.
+	These methods essentially wrap the FSystem API
+	using Inode handles
+ ---------------------------------------------- */
+
+/* Return the mount of this inode handle */
+inline static FsMount* i_mnt(Inode* inode) { return inode->ino_mnt; }
+
+/* Return MOUNT for inode */
+inline static MOUNT i_fsmount(Inode* inode) { return i_mnt(inode)->fsmount; }
+
+/*  Return the mount of this inode handle */
+inline static inode_t i_id(Inode* inode) { return inode->ino_id; }
+
+/* Return the file system driver of this inode handle */
+inline static FSystem* i_fsys(Inode* inode) {  return i_mnt(inode)->fsys; }
+
+
+/* Wraps Open */
+inline static int i_open(Inode* inode, int flags, void** obj, file_ops** ops)
+{
+	return i_fsys(inode)->Open(i_fsmount(inode), i_id(inode), flags, obj, ops);
+}
+
+/* Wraps Fetch */
+inline static int i_fetch(Inode* dir, const pathcomp_t name, inode_t* id, int creat)
+{
+	return i_fsys(dir)->Fetch(i_fsmount(dir), i_id(dir), name, id, creat);
+}
+
+
+/* Wrap link */
+inline static int i_link(Inode* dir, const pathcomp_t name, inode_t inode)
+{
+	return i_fsys(dir)->Link(i_fsmount(dir), i_id(dir), name, inode);
+}
+
+
+/* Wrap unlink */
+inline static int i_unlink(Inode* dir, const pathcomp_t name)
+{
+	return i_fsys(dir)->Unlink(i_fsmount(dir), i_id(dir), name);
+}
+
+/* Wrap Flush */
+inline static int i_flush(Inode* inode)
+{
+	return i_fsys(inode)->Flush(i_fsmount(inode), i_id(inode));
+}
+
+/* Wrap Truncate */
+inline static int i_truncate(Inode* inode, intptr_t length)
+{
+	return i_fsys(inode)->Truncate(i_fsmount(inode), i_id(inode), length);
+}
+
+
+/* Return the FSE type of an i-node */
+inline static Fse_type i_type(Inode* inode)
+{
+	struct Stat s;
+	int rc = i_fsys(inode)->Status(i_fsmount(inode), i_id(inode), &s, NULL, STAT_TYPE);
+	assert(rc==0);
+	return s.st_type;
+}
+
+
+/* --------------------------------------------
+
+  Handle management
+
+ ---------------------------------------------- */
+
+
 /* 
 	The inode table is used to map Inode_ref(mnt, id)-> Inode*.
 	Using this table, we are sure that there is at most one Inode* object
@@ -33,7 +108,7 @@ static int inode_table_equal(rlnode* node, rlnode_key key)
 {
 	/* Get the ino_ref pointer from the key */
 	struct Inode_ref* keyiref = key.obj;
-	return inode_mnt(node->inode)==keyiref->mnt && inode_id(node->inode) == keyiref->id;
+	return i_mnt(node->inode)==keyiref->mnt && i_id(node->inode) == keyiref->id;
 }
 
 
@@ -54,7 +129,7 @@ Inode* inode_if_pinned(FsMount* mnt, inode_t id)
 
 
 /*
-	The root inode points to the base of the file system.
+	Creating a Inode handle.
  */
 
 Inode* pin_inode(FsMount* mnt, inode_t id)
@@ -86,9 +161,11 @@ Inode* pin_inode(FsMount* mnt, inode_t id)
 	inode->ino_id = id;
 	inode->mounted = NULL;
 
-	/* Fetch data from file system. If there is an error, clean up and return NULL */
-	if(fsys->PinInode(inode)==-1) {
+	/* Pin inode in the file system. If there is an error, clean up and return NULL */
+	int rc = fsys->Pin(mnt->fsmount, id);
+	if(rc!=0) {
 		free(inode);
+		set_errcode(rc);
 		return NULL;
 	}
 	
@@ -112,30 +189,27 @@ int unpin_inode(Inode* inode)
 	inode->pincount --;
 	if(inode->pincount != 0) return 0;
 
-	/* Nobody is pinning the inode, so we may release the handle */
+	/* Nobody is pinning the inode, so we release the handle */
+
 	/* Remove it from the inode table */
 	rdict_remove(&inode_table, &inode->inotab_node);
 
 	/* Remove reference to mount */
-	mount_decref(inode_mnt(inode));
+	mount_decref(i_mnt(inode));
 
-	/* Evict it */
-	int ret = inode_fsys(inode)->UnpinInode(inode);
+	/* Unpin the i-node */
+	int rc = i_fsys(inode)->Unpin(i_fsmount(inode), i_id(inode));
 
-	/* Delete it */
+	/* Delete the handle and return */
 	free(inode);
 
-	return ret;
+	if(rc) {
+		set_errcode(rc);
+		return -1;
+	} else 
+		return 0;
 }
 
-
-
-Fse_type inode_type(Inode* inode)
-{
-	struct Stat s;
-	inode_fsys(inode)->Status(inode, &s, NULL, STAT_TYPE);
-	return s.st_type;
-}
 
 
 /*=========================================================
@@ -143,7 +217,6 @@ Fse_type inode_type(Inode* inode)
 	FSys calls
 
   =========================================================*/
-
 
 
 /* File system table */
@@ -186,6 +259,7 @@ FSystem* get_fsys(const char* fsname)
 
 FSystem* file_system_table[FSYS_MAX];
 
+
 /*=========================================================
 
 	FsMount calls
@@ -225,61 +299,90 @@ void mount_decref(FsMount* mnt)
 
   =========================================================*/
 
-
+/*
+	Get the parent of dir. A new pin is acquired on it.
+ */
 Inode* dir_parent(Inode* dir)
 {
-	FsMount* mnt = inode_mnt(dir);
+	FsMount* mnt = i_mnt(dir);
 	inode_t par_id;
 
-	if(inode_lookup(dir, "..", &par_id)==-1) {
+	if(i_fetch(dir, "..", &par_id, 0)!=0) {
 		/* Oh dear, we are deleted!! */
 		return NULL;
 	}
 
 	/* See if we are root */
-	if(par_id == inode_id(dir)) {
+	if(par_id == i_id(dir)) {
 		/* Yes, we are a root in our file system.
 		  Take the parent of our mount point */
 		if(mnt->mount_point == NULL) {
-			/* Oh dear, we are THE root */
+			/* Aha, we are **THE** root */
 			repin_inode(dir);
 			return dir;
 		} 
-		return dir_parent(mnt->mount_point);
+		else
+			return dir_parent(mnt->mount_point);
 	}
-
+	/* We are no root, just pin the parent */
 	return pin_inode(mnt, par_id);
 }
 
 
+/* Return true if the name exists in the directory */
 int dir_name_exists(Inode* dir, const pathcomp_t name)
 {
 	if(strcmp(name, ".")==0 || strcmp(name, "..")==0) return 1;
 	inode_t id;
-	return inode_lookup(dir, name, &id) == 0;
+	return i_fetch(dir, name, &id, 0) == 0;
 }
 
 
-Inode* dir_lookup(Inode* dir, const pathcomp_t name)
+/* 
+	Resolve a member of this directory. A new pin is acquired on it.
+	With the creat flag, potentially create a regular file.
+
+	This call knows to traverse mount points. 
+	Assume  /mnt/foo is a mount point for mount M and X is the root of M,
+	and let Y = dir_lookup(X, "..");
+	Then,
+	(a) Y corresponds to /mnt (on mount M') and
+	(b) dir_lookup(Y, "foo") returns X on mount M 
+	  (instead of whatever was /mnt/foo on M')
+
+	A particular idiom is the following:
+	// Inode* dir = ...  defined previously
+
+	dir = dir_fetch(dir, ".", 0);
+	unpin_inode(dir);
+
+	This ensures that if dir pointed to a mount point, it now points
+	to the mounted filesystem.
+ */
+Inode* dir_fetch(Inode* dir, const pathcomp_t name, int creat)
 {
-	/* Check the easy cases */
-	if(strcmp(name, ".")==0) {
-		repin_inode(dir);
-		return dir;
-	}
+	/* Check the easy case */
 	if(strcmp(name, "..")==0) 
 		return dir_parent(dir);
 
-	inode_t id;
+	Inode* inode = NULL;
 
-	/* Do a lookup */
-	if(inode_lookup(dir, name, &id) == -1) return NULL;
+	if(strcmp(name, ".")==0) {
+		repin_inode(dir);
+		inode = dir;
+	} else {
+		inode_t id;
 
-	/* Pin the next dir */
-	Inode* inode = pin_inode(inode_mnt(dir), id);
-	if(inode==NULL) return NULL;
+		/* Do a lookup */
+		if(i_fetch(dir, name, &id, creat) != 0) return NULL;
+
+		/* Pin the fetched i-node */
+		inode = pin_inode(i_mnt(dir), id);
+		if(inode==NULL) return NULL;
+	}
 	
-	/* Check to see if it has a mounted directory on it */
+	/* Check to see if inode has a mounted directory on it, and
+	   if so, take that. */
 	if(inode->mounted != NULL) {
 		FsMount* mnt = inode->mounted;
 		unpin_inode(inode);
@@ -291,21 +394,19 @@ Inode* dir_lookup(Inode* dir, const pathcomp_t name)
 }
 
 
-Inode* dir_allocate(Inode* dir, const pathcomp_t name, Fse_type type)
+/*
+	Create a new file system element in a directory. 
+
+	This call can be used to create new members in a directory.
+ */
+Inode* dir_create(Inode* dir, const pathcomp_t name, Fse_type type, void* data)
 {
-	FsMount* mnt = inode_mnt(dir);
+	FsMount* mnt = i_mnt(dir);
 	FSystem* fsys = mnt->fsys;
 	inode_t new_id;
 
-	if(dir_name_exists(dir, name)) return NULL;
-
-	new_id = fsys->AllocateNode(mnt->fsmount, type, NO_DEVICE);
-	if( inode_link(dir, name, new_id) == -1 ) {
-		// This should not have happened...
-		fsys->FreeNode(mnt->fsmount, new_id);
-		return NULL;
-	}
-
+	int rc = fsys->Create(mnt->fsmount, i_id(dir), name, type, &new_id, data);
+	if(rc != 0) { set_errcode(rc); return NULL; }
 	return pin_inode(mnt, new_id);
 }
 
@@ -320,7 +421,23 @@ Inode* dir_allocate(Inode* dir, const pathcomp_t name, Fse_type type)
 
 #define PATHSEP '/'
 
+/* 
+	Resolve a pathname.
+	
+	If last is provided (!= NULL), this call splits the
+	pathname into two, as in dirname/last. It returns 
+	an Inode to dirname and makes last point to the last
+	component of pathname. 
+	Note: if the pathname ended in '/' (i.e., "/foo/bar/")
+	then *last will be set to NULL.
 
+	If last is NULL, this call returns the Inode corresponding
+	to the full pathname.
+
+	In both cases, if there is an error the returned value is
+	NULL and set_errcode() has been called with the correct 
+	error code.
+*/
 Inode* lookup_pathname(const char* pathname, const char** last)
 {
 	int pathlen = strlen(pathname);
@@ -331,17 +448,18 @@ Inode* lookup_pathname(const char* pathname, const char** last)
 	const char* cur;
 	Inode* inode = NULL;
 
-	/* Two local helpers */
+	/* Local helper function to advance to the next path component */
 	int advance() {
 		pathcomp_t comp;
 		memcpy(comp, base, (cur-base));
 		comp[cur-base] = 0;
-		Inode* next = dir_lookup(inode, comp);
+		Inode* next = dir_fetch(inode, comp, 0);
 		unpin_inode(inode);
 		inode = next;		
 		return next!=NULL; 
 	}
 
+	/* Local helper function to check the length of the current path component */
 	int length_is_ok() {
 		if( (cur-base)>MAX_NAME_LENGTH ) {
 			set_errcode(ENAMETOOLONG);
@@ -354,7 +472,9 @@ Inode* lookup_pathname(const char* pathname, const char** last)
 	/* Start with the first character */
 	if(*base == '/')  { inode = CURPROC->root_dir; base++; }
 	else { inode= CURPROC->cur_dir; }
-	repin_inode(inode);
+
+	/* Obtain a new pin, making sure we are on a top-level inode */
+	inode = dir_fetch(inode, ".", 0);
 
 	/* Iterate over all but the last component */
 	for(cur = base; *base != '\0'; base=++cur) 
@@ -423,6 +543,12 @@ Fid_t sys_Open(const char* pathname, int flags)
 	Fid_t fid;
 	FCB* fcb;
 
+	/* Check the flags */
+	if( ((flags&OPEN_APPEND) || (flags&OPEN_TRUNC)) && !(flags&OPEN_WRONLY) ) {
+		set_errcode(EINVAL);
+		return -1;
+	}
+
 	/* Try to reserve ids */
 	if(! FCB_reserve(1, &fid, &fcb)) {
 		return NOFILE;
@@ -436,40 +562,41 @@ Fid_t sys_Open(const char* pathname, int flags)
         FCB_unreserve(1, &fid, &fcb);		
 		return NOFILE;
 	}
+	if(last == NULL) 
+		/* The pathname ended in '/', fix it! */
+		last = ".";
 
-	/* Try looking up the file system entity */
-	Inode* file AUTO_UNPIN = dir_lookup(dir, last);
+	/* Try to fetch or create the file */
+	Inode* file AUTO_UNPIN = NULL;
 
-	if(file == NULL) {
-		/* If no entity was found, look at the creation flags */
-		if(flags & OPEN_CREAT) {
-			/* Try to create a file by this name */
-			file = dir_allocate(dir, last, FSE_FILE);
-			if(file==NULL) {
-				FCB_unreserve(1, &fid, &fcb);
-				return NOFILE;
-			}
-		} else {
-			/* Creation was not specified, so report error */
+	if(flags & OPEN_EXCL) 
+		file = dir_create(dir, last, FSE_FILE, NULL);
+	else
+		file = dir_fetch(dir, last, (flags & OPEN_CREAT) ? 1 : 0);
+
+	/* Have we succeeded? */
+	if(file==NULL) {
+		FCB_unreserve(1, &fid, &fcb);
+		return NOFILE;
+	}
+
+	/* Possibly truncate the file */
+	if(flags & OPEN_TRUNC) {
+		int rc = i_truncate(file, 0);
+		if(rc) {
+			set_errcode(rc);
 			FCB_unreserve(1, &fid, &fcb);
-			set_errcode(ENOENT);
-			return NOFILE;
-		}
-	} else {
-		/* An entity was found but again look at the creation flags */
-		if((flags & OPEN_CREAT) && (flags & OPEN_EXCL)) {
-			FCB_unreserve(1, &fid, &fcb);
-			set_errcode(EEXIST);
-			return NOFILE;			
+			return NOFILE;		
 		}
 	}
 
-	int rc = inode_open(file, flags & 077, &fcb->streamobj, &fcb->streamfunc);
-
-	if(rc==-1) {
-		/* Error in inode_open() */
+	/* Perform the opening, pass status flags to open */
+	int rc = i_open(file, flags & 0xff, &fcb->streamobj, &fcb->streamfunc);
+	if(rc!=0) {
+		/* Error in open() */
+		set_errcode(rc);
 		FCB_unreserve(1, &fid, &fcb);
-		return NOFILE;					
+		return NOFILE;
 	}
 
 	/* Success! */
@@ -484,7 +611,8 @@ int sys_Stat(const char* pathname, struct Stat* statbuf)
 	Inode* inode AUTO_UNPIN = lookup_pathname(pathname, NULL);
 	if(inode==NULL) return -1;
 
-	inode_fsys(inode)->Status(inode, statbuf, NULL, STAT_ALL);
+	int rc = i_fsys(inode)->Status(i_fsmount(inode), i_id(inode), statbuf, NULL, STAT_ALL);
+	if(rc) { set_errcode(rc); return -1; }
 	return 0;
 }
 
@@ -504,12 +632,14 @@ int sys_Link(const char* pathname, const char* newpath)
 	if(old==NULL) return -1;
 
 	/* They must be in the same FS */
-	if(inode_mnt(old) != inode_mnt(newdir)) {
+	if(i_mnt(old) != i_mnt(newdir)) {
 		set_errcode(EXDEV);
 		return -1;
 	}
 
-	return inode_link(newdir, last, inode_id(old));
+	int rc = i_link(newdir, last, i_id(old));
+	if(rc) { set_errcode(rc); return -1; }
+	return 0;
 }
 
 
@@ -522,14 +652,17 @@ int sys_Unlink(const char* pathname)
 	if(dir==NULL) return -1;
 	if(last==NULL) { set_errcode(EISDIR); return -1; }
 
-	Inode* inode AUTO_UNPIN = dir_lookup(dir, last);
+	Inode* inode AUTO_UNPIN = dir_fetch(dir, last, 0);
 
-	if(inode_type(inode)==FSE_DIR) {
+	/* The i-node unlink can treat directories, but we must not let it ... */
+	if(i_type(inode)==FSE_DIR) {
 		set_errcode(EISDIR);
 		return -1;
 	}
 	
-	return inode_unlink(dir, last);
+	int rc = i_unlink(dir, last);
+	if(rc) { set_errcode(rc); return -1; }
+	return 0;
 }
 
 
@@ -540,9 +673,9 @@ int sys_MkDir(const char* pathname)
 
 	if(dir==NULL) return -1;
 	if(last==NULL || dir_name_exists(dir, last)) { set_errcode(EEXIST); return -1; }
-	if(inode_type(dir)!=FSE_DIR) { set_errcode(ENOTDIR); return -1; }
+	if(i_type(dir)!=FSE_DIR) { set_errcode(ENOTDIR); return -1; }
 
-	Inode* newdir AUTO_UNPIN = dir_allocate(dir, last, FSE_DIR);
+	Inode* newdir AUTO_UNPIN = dir_create(dir, last, FSE_DIR, NULL);
 	return (newdir == NULL)?-1:0;
 }
 
@@ -556,7 +689,9 @@ int sys_RmDir(const char* pathname)
 	if(strcmp(last,".")==0) { set_errcode(EINVAL); return -1; }	
 	if(! dir_name_exists(dir,last)) { set_errcode(ENOENT); return -1; }
 
-	return inode_unlink(dir, last);
+	int rc = i_unlink(dir, last);
+	if(rc) { set_errcode(rc); return -1; }
+	return 0;
 }
 
 int sys_GetCwd(char* buffer, unsigned int size)
@@ -592,7 +727,7 @@ int sys_GetCwd(char* buffer, unsigned int size)
 			if(rc!=0) return rc;
 
 			pathcomp_t comp;
-			inode_fsys(dir)->Status(dir, NULL, comp, STAT_NAME);
+			i_fsys(dir)->Status(i_fsmount(dir), i_id(dir), NULL, comp, STAT_NAME);
 			if(rc!=0) return -1;
 
 			if(bprintf("/")!=0) return-1;
@@ -607,16 +742,16 @@ int sys_ChDir(const char* pathname)
 {
 	Inode* dir AUTO_UNPIN = lookup_pathname(pathname, NULL);
 	if(dir==NULL)  return -1;
-	if(inode_type(dir)!=FSE_DIR) {
+	if(i_type(dir)!=FSE_DIR) {
 		set_errcode(ENOTDIR);
 		return -1;
 	}
 
-	if(CURPROC->cur_dir != dir) {
-		Inode* prevcd = CURPROC->cur_dir;
-		CURPROC->cur_dir = dir;
-		dir = prevcd;
-	}
+	/* Swap CURPROC->cur_dir  with dir */
+	Inode* prevcd = CURPROC->cur_dir;
+	CURPROC->cur_dir = dir;
+	dir = prevcd;
+
 	return 0;
 }
 
@@ -635,7 +770,9 @@ int sys_Mount(Dev_t device, const char* mount_point, const char* fstype, unsigne
 	if(mount_point != NULL) {
 		mpoint = lookup_pathname(mount_point, NULL);
 		if(mpoint==NULL) return -1;
+		if(i_type(mpoint) != FSE_DIR) { set_errcode(ENOTDIR); return -1; }
 		if(mpoint->pincount != 1) { set_errcode(EBUSY); return -1; }
+		assert(mpoint->mounted == NULL);
 	} 
 	else 
 	{
@@ -648,7 +785,9 @@ int sys_Mount(Dev_t device, const char* mount_point, const char* fstype, unsigne
 
 	/* TODO: check that the device is not busy */
 
-	int rc = fsys->Mount(& mnt->fsmount, fsys, device, paramc, paramv);
+	/* TODO 2: Check that the device and fstype agree */
+
+	int rc = fsys->Mount(& mnt->fsmount, device, paramc, paramv);
 	if(rc==0) {
 		if(mpoint) {
 			repin_inode(mpoint);
@@ -661,9 +800,11 @@ int sys_Mount(Dev_t device, const char* mount_point, const char* fstype, unsigne
 
 		/* This assignment makes the FsMount object reserved! */
 		mnt->fsys = fsys;
+		return 0;
+	} else {
+		set_errcode(rc);
+		return -1;
 	}
-
-	return rc;
 }
 
 int sys_Umount(const char* mount_point)
@@ -678,12 +819,12 @@ int sys_Umount(const char* mount_point)
 		Inode* mpoint AUTO_UNPIN = lookup_pathname(mount_point, NULL);
 		if(mpoint==NULL) return -1;
 
-		if(inode_mnt(mpoint)->root_dir != inode_id(mpoint)) {
+		if(i_mnt(mpoint)->root_dir != i_id(mpoint)) {
 			set_errcode(EINVAL);    /* This is not a mount point */
 			return -1;
 		}
 
-		mnt = inode_mnt(mpoint);
+		mnt = i_mnt(mpoint);
 	}
 
     /* See if we are busy */
@@ -694,7 +835,7 @@ int sys_Umount(const char* mount_point)
 
     /* Ok, let's unmount */
     int rc = mnt->fsys->Unmount(mnt->fsmount);
-    if(rc==-1) return -1;
+    if(rc) { set_errcode(rc); return -1; }
 
     /* Detach from the filesystem */
     if(mnt->mount_point!=NULL) {
@@ -714,7 +855,7 @@ int sys_StatFs(const char* pathname, struct StatFs* statfs)
 	Inode* inode AUTO_UNPIN = lookup_pathname(pathname, NULL);
 	if(inode==NULL) return -1;
 
-	FsMount* mnt = inode_mnt(inode);
+	FsMount* mnt = i_mnt(inode);
 	FSystem* fsys = mnt->fsys;
 
 	fsys->StatFs(mnt->fsmount, statfs);
@@ -744,8 +885,8 @@ void initialize_filesys()
 	/* Init inode_table and root_node */
 	rdict_init(&inode_table, MAX_PROC);
 
-	/* FsMount the rootfs as the root filesystem */
-	int rc = sys_Mount(NO_DEVICE, NULL, "rootfs", 0, NULL);
+	/* FsMount the memfs as the root filesystem */
+	int rc = sys_Mount(NO_DEVICE, NULL, "memfs", 0, NULL);
 	assert(rc==0);
 	if(rc!=0) abort();
 }
@@ -753,10 +894,10 @@ void initialize_filesys()
 
 void finalize_filesys()
 {
-	/* Unmount rootfs */
+	/* Unmount root fs */
 	int rc = sys_Umount(NULL);
 	assert(rc==0);
-	if(rc!=0) abort();
+	if(rc!=0) fprintf(stderr, "Unmounting the root failed, error = %s\n", strerror(rc));
 
 	assert(inode_table.size == 0);
 	rdict_destroy(&inode_table);

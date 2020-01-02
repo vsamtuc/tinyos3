@@ -85,6 +85,13 @@ typedef struct device_control_block
 	*/
   	void (*Init)();
 
+  	/**
+  		@brief Finalize the device type at shutdown.
+
+  		This function is called during shutdown to finalize the device type.
+  	 */
+  	void (*Fini)();
+
 	/**
 		@brief Return a stream object on which the other methods will operate.
 
@@ -141,9 +148,18 @@ static void __add_ ## dcb ##_to_device_table() { register_device(&dcb); }
 /** 
   @brief Initialization for devices.
 
-  This function is called at kernel startup.
+  This function is called at kernel boot.
  */
 void initialize_devices();
+
+
+/** 
+  @brief Initialization for devices.
+
+  This function is called at kernel shutdown.
+ */
+void finalize_devices();
+
 
 
 /**

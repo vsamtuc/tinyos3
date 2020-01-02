@@ -1245,8 +1245,8 @@ int process_line(int argc, const char** argv)
 		return 0;
 	}
 
-	Fid_t plout = (output_redir.pathname==NULL)? Dup(0) : Open(output_redir.pathname, output_redir.flags);
-	if(plin==NOFILE) {
+	Fid_t plout = (output_redir.pathname==NULL)? Dup(1) : Open(output_redir.pathname, output_redir.flags);
+	if(plout==NOFILE) {
 		assert(output_redir.pathname);
 		char errbuf[80];
 		printf("Could not open '%s' for output: %s\n", output_redir.pathname, strerror_r(GetError(), errbuf,80));

@@ -46,21 +46,21 @@ void boot_tinyos_kernel()
       FATAL("The init process does not have PID==1");
   }
 
+  /* Cores wait initialization before entering scheduler */
   cpu_core_barrier_sync();
-
-#if 0
-#ifndef NVALGRIND
-  VALGRIND_PRINTF_BACKTRACE("TINYOS: Entering scheduler for core %d\n",cpu_core_id);
-#endif
-#endif
   
+  /* Enter scheduler */
   run_scheduler();
+
+  /* All cores must exit scheduler before finalization */
+  cpu_core_barrier_sync();
 
   if(cpu_core_id==0) {
     /* Here, we could add cleanup after the scheduler has ended. */
     finalize_filesys();
   }
 
+  /* Finalization done, we may shut down */ 
   cpu_core_barrier_sync();
 }
 

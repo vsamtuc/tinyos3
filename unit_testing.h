@@ -255,7 +255,7 @@ void abort_test();
 	@see ASSERT
 */
 #define ASSERT_MSG(expr, format, ...) do{ if(!(expr)) \
- { FLAG_FAILURE++; if(FLAG_FAILURE < 250) \
+ { FLAG_FAILURE++; if(FLAG_FAILURE < 50) \
  	MSG("%s(%d): " format , __FILE__, __LINE__, ##  __VA_ARGS__ ); \
  	else {\
  		MSG("... Too many errors, ABORTING\n"); \
