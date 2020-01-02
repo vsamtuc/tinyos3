@@ -863,6 +863,84 @@ int sys_StatFs(const char* pathname, struct StatFs* statfs)
 }
 
 
+
+/*---------------------------------------------
+ *
+ * Directory listing
+ *
+ * A dir_list is an object that can be used to
+ * make the contents of a directory available
+ * to the kernel in a standard format.
+ *
+ *-------------------------------------------*/
+
+void dir_list_create(dir_list* dlist)
+{
+	dlist->buffer = NULL;
+	dlist->buflen = 0;
+	dlist->builder = open_memstream(& dlist->buffer, & dlist->buflen);
+}
+
+void dir_list_add(dir_list* dlist, const char* name)
+{
+	FILE* mfile = dlist->builder;
+	unsigned int len = strlen(name);
+	assert(len < 256);
+    fprintf(mfile, "%02x%s%c", len, name, 0);                  
+}
+
+void dir_list_open(dir_list* dlist)
+{
+	FILE* mfile = dlist->builder;
+	fclose(mfile);
+	dlist->pos = 0;	
+}
+
+int dir_list_read(dir_list* s, char* buf, unsigned int size)
+{
+	if(size==0) return 0;
+	if(s->pos >= s->buflen) return 0;
+
+	size_t remaining_bytes = s->buflen - s->pos;
+	size_t txbytes = (remaining_bytes < size) ? remaining_bytes : size ;
+
+	memcpy(buf, s->buffer+s->pos, txbytes);
+	s->pos += txbytes;
+
+	return txbytes;
+}
+
+intptr_t dir_list_seek(dir_list* s, intptr_t offset, int whence)
+{
+	intptr_t newpos;
+	switch(whence) {
+	        case SEEK_SET:
+	                newpos = 0; break;
+	        case SEEK_CUR: 
+	                newpos = s->pos; break;
+	        case SEEK_END:
+	                newpos = s->buflen; break;
+	        default:
+	                set_errcode(EINVAL);
+	                return -1;
+	}
+
+	newpos += offset;
+	if(newpos <0 || newpos>= s->buflen) {
+	                set_errcode(EINVAL);
+	                return -1;              
+	}
+	s->pos = newpos;
+	return newpos;
+}
+
+int dir_list_close(dir_list* dlist)
+{
+	free(dlist->buffer);
+	return 0;
+}
+
+
 /*=========================================================
 
 

@@ -165,6 +165,10 @@ static void serial_devinit()
 
 	/* Initialize the serial devices */
 	for(int i=0; i<bios_serial_ports(); i++) {
+		char buffer[20];
+		snprintf(buffer, 20, "serial%d", i+1);
+		device_publish(buffer, DEV_SERIAL, i);
+
 		serial_dev[i].devno = i;
 		wqueue_init(& serial_dev[i].rx_ready, &wchan_serial_read);
 		wqueue_init(& serial_dev[i].tx_ready, &wchan_serial_write);

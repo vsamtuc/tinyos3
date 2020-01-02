@@ -48,6 +48,8 @@ int util_ln(size_t, const char**);
 int util_rm(size_t, const char**);
 int util_cat(size_t, const char**);
 int util_kill(size_t, const char**);
+int util_mount(size_t, const char**);
+int util_umount(size_t, const char**);
 
 
 struct { const char * cmdname; Program prog; uint nargs; const char* help; } 
@@ -81,6 +83,9 @@ COMMANDS[]  =
 	{"rm", util_rm, 1, "Unlink a file"},
 	{"cat", util_cat, 0, "Concatenate a list of files"},
 	{"kill", util_kill, 1, "Kill a process"},
+
+	{"mount", util_mount, 2, "Mount a file system to some location"},
+	{"umount", util_umount, 1, "Unmount a file system"},
 
 	{NULL, NULL, 0, NULL}
 };
@@ -1066,6 +1071,30 @@ int util_cat(size_t argc, const char** argv)
 	return 0;
 }
 
+int util_mount(size_t argc, const char** argv)
+{
+	checkargs(2);
+	check_help(argc, argv,
+"Usage: mount mpoint fstype\n"
+"Mount a file system.\n"
+ 	);
+
+	int rc = Mount(NO_DEVICE, argv[1], argv[2], 0, NULL);
+	if(rc!=0)
+		PError(argv[0]);
+	return rc;
+}
+
+int util_umount(size_t argc, const char** argv)
+{
+	checkargs(1);
+	check_help(argc, argv,
+"Usage: mount mpoint fstype\n"
+"Mount a file system.\n"
+ 	);
+
+	return 0;
+}
 
 
 /*************************************

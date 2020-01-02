@@ -574,6 +574,35 @@ int unpin_inode(Inode* inode);
 Inode* inode_if_pinned(FsMount* mnt, inode_t id);
 
 
+/*---------------------------------------------
+ *
+ * Directory listing
+ *
+ * A dir_list is an object that can be used to
+ * make the contents of a directory available
+ * to the kernel in a standard format.
+ *
+ *-------------------------------------------*/
+
+typedef struct dir_listing 
+{
+	char* buffer;
+	size_t buflen;
+	union {
+		intptr_t pos;
+		void* builder;
+	};
+} dir_list;
+
+void dir_list_create(dir_list* dlist);
+void dir_list_add(dir_list* dlist, const char* name);
+void dir_list_open(dir_list* dlist);
+
+int dir_list_read(dir_list* dlist, char* buf, unsigned int size);
+int dir_list_close(dir_list* dlist);
+intptr_t dir_list_seek(dir_list* dlist, intptr_t offset, int whence);
+
+
 
 /*----------------------------------
  *

@@ -131,6 +131,32 @@ extern DCB* device_table[DEV_MAX];
  */
 void register_device(DCB* dcb);
 
+
+/**
+	@brief Publish a device to the device directory
+
+	Make a device available via @c devname. The device file system
+	will publish the device.
+
+	The API does not check for name collisions; if multiple devices
+	are published under the same name, the results are unpredictable
+	(to say the least).
+
+	@param devname the name of the device
+	@param major the major device number
+	@param minor the minor device number
+ */
+void device_publish(const char* devname, uint major, uint minor);
+/**
+	@brief Remove a device from the device directory
+
+	Remove a device from the device directory
+
+	@param devname the name of the device to retract
+ */
+void device_retract(const char* devname);
+
+
 /**
 	@brief Designate a static DCB object to add to the device table.
 

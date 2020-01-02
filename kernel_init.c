@@ -57,6 +57,7 @@ void boot_tinyos_kernel()
 
   if(cpu_core_id==0) {
     /* Here, we could add cleanup after the scheduler has ended. */
+    finalize_devices();
     finalize_filesys();
   }
 
