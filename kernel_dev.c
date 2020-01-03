@@ -123,11 +123,16 @@ uint device_no(uint major)
 }
 
 
-/***********************************
+/****************************************************
 
-  The device file system
+  The device file system. This is a really minimal
+  file system that depends on the device_publish/device_retract
+  facility to show all devices as special nodes in
+  a directory.
 
-***********************************/
+  This is typically mounted under /dev.
+
+ ****************************************************/
 
 extern FSystem DEVFS;
 

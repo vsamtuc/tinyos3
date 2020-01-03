@@ -228,6 +228,8 @@ static int memfs_open_dir(memfs_mnt* mnt, memfs_inode* inode, int flags, void** 
 	/* Initialize the rest */
 	s->mnt = mnt;
 	s->inode = inode;
+
+	/* Take a handle on the directory */
 	memfs_inclink(mnt, inode);
 	mnt->busy_count ++;
 
@@ -238,22 +240,36 @@ static int memfs_open_dir(memfs_mnt* mnt, memfs_inode* inode, int flags, void** 
 	return 0;
 }
 
+int memfs_read_dir(void* this, char* buf, unsigned int size)
+{
+	struct memfs_dir_stream* s = this;
+	return dir_list_read(& s->dlist, buf, size);
+}
+
+intptr_t memfs_seek_dir(void* this, intptr_t offset, int which)
+{
+	struct memfs_dir_stream* s = this;
+	return dir_list_seek(& s->dlist, offset, which);
+}
 
 static int memfs_close_dir(void* this)
 {
 	struct memfs_dir_stream* s = this;
 	dir_list_close(& s->dlist);
+
+	/* Release handle on directory */
 	memfs_declink(s->mnt, s->inode);
 	s->mnt->busy_count --;
+
 	free(s);
 	return 0;
 }
 
 
 file_ops MEMFS_DIR = {
-	.Read = (void*)dir_list_read,
-	.Seek = (void*)dir_list_seek,
-	.Release = memfs_close_dir,
+	.Read = memfs_read_dir,
+	.Seek = memfs_seek_dir,
+	.Release = memfs_close_dir
 };
 
 
