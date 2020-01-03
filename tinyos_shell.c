@@ -44,6 +44,7 @@ int util_mkdir(size_t, const char**);
 int util_rmdir(size_t, const char**);
 int util_ls(size_t, const char**);
 int util_stat(size_t, const char**);
+int util_statfs(size_t, const char**);
 int util_ln(size_t, const char**);
 int util_rm(size_t, const char**);
 int util_cat(size_t, const char**);
@@ -79,6 +80,7 @@ COMMANDS[]  =
 	{"rmdir", util_rmdir, 1, "Remove a directory"},
 	{"ls", util_ls, 0, "Show the contents of a directory"},
 	{"stat", util_stat, 1, "Show the status of a file"},
+	{"statfs", util_statfs, 1, "Show the status of a file system"},
 	{"ln", util_ln, 2, "ln <oldpath> <newpath>:  Add a hard link to a file"},
 	{"rm", util_rm, 1, "Unlink a file"},
 	{"cat", util_cat, 0, "Concatenate a list of files"},
@@ -969,7 +971,7 @@ int util_stat(size_t argc, const char** argv)
 	checkargs(1);
 	check_help(argc, argv,
 "Usage: stat FILE...\n"
-"Display file or file system status.\n"
+"Display file status.\n"
  	);
 
 	const char* file_type(Fse_type type) {
@@ -984,19 +986,54 @@ int util_stat(size_t argc, const char** argv)
 
 	for(int i=1; i<argc; i++) {
 		struct Stat st;
-		if(Stat(argv[1], &st)!=0) {
+		if(Stat(argv[i], &st)!=0) {
 			PError(argv[0]);
 			continue;
 		}
 		printf("File: %s\n", argv[i]);
-		printf("Size: %-8lu\tBlocks: %-8lu\t\tIO Block: %-8lu\t%s\n",
+		printf("Size: %-8lu\tBlocks: %-8lu\t\tIO Block: %-5lu\t%s\n",
 			st.st_size, st.st_blocks, st.st_blksize, file_type(st.st_type));
-		printf("Device: %3u/%-3u\tInode: %-21lu\tLinks: %-8u\n", 
+		printf("Device: %3u/%-3u\tInode: %-21lu\tLinks: %-8u", 
 			DEV_MAJOR(st.st_dev), DEV_MINOR(st.st_dev),
 			st.st_ino, st.st_nlink);
+
+		if(st.st_type==FSE_DEV)
+			printf("\tDevice type: %3u/%-3u", DEV_MAJOR(st.st_rdev), DEV_MINOR(st.st_rdev));
+
+		printf("\n");
 	}
 	return 0;	
 }
+
+
+int util_statfs(size_t argc, const char** argv)
+{
+	checkargs(1);
+	check_help(argc, argv,
+"Usage: statfs FILE...\n"
+"Display file system status for file.\n"
+ 	);
+
+	for(int i=1; i<argc; i++) {
+		struct StatFs st;
+		if(StatFs(argv[i], &st)!=0) {
+			PError(argv[0]);
+			continue;
+		}
+
+		printf("File: %s\n", argv[i]);
+
+		printf("Device: %3u/%-3u\tType: %12s\tRoot: %lx\n",
+			DEV_MAJOR(st.fs_dev), DEV_MINOR(st.fs_dev),
+			st.fs_fsys,
+			st.fs_root);
+		printf("Blocks Total: %6lu\tUsed: %6lu\n", st.fs_blocks, st.fs_bused);
+		printf("Inodes Total: %6lu\tUsed: %6lu\n", st.fs_files, st.fs_fused);
+	}
+	return 0;	
+}
+
+
 
 
 int util_ln(size_t argc, const char** argv)
@@ -1075,7 +1112,7 @@ int util_mount(size_t argc, const char** argv)
 {
 	checkargs(2);
 	check_help(argc, argv,
-"Usage: mount mpoint fstype\n"
+"Usage: mount <moutpoint> <fstype>\n"
 "Mount a file system.\n"
  	);
 
@@ -1089,11 +1126,14 @@ int util_umount(size_t argc, const char** argv)
 {
 	checkargs(1);
 	check_help(argc, argv,
-"Usage: mount mpoint fstype\n"
-"Mount a file system.\n"
+"Usage: umount mpoint\n"
+"Unount a file system.\n"
  	);
 
-	return 0;
+	int rc = Umount(argv[1]);
+	if(rc!=0)
+		PError(argv[0]);
+	return rc;
 }
 
 

@@ -448,8 +448,8 @@ FSystem* get_fsys(const char* fsys_name);
 
 struct FsMount
 {
-	/* Counts users of this mount */
-	unsigned int refcount;
+	/* Counts use of this mount (by Inode handles) */
+	unsigned int use_count;
 
 	/* The file system */
 	FSystem* fsys;
@@ -474,8 +474,6 @@ struct FsMount
 
 extern FsMount mount_table[MOUNT_MAX];
 FsMount* mount_acquire();
-void mount_incref(FsMount* mnt);
-void mount_decref(FsMount* mnt);
 
 
 
@@ -539,8 +537,9 @@ Inode* pin_inode(FsMount* mnt, inode_t id);
 	This call increases the number of holders of the `inode` handle.
 
 	@param inode the \c Inode handle to repin
+	@return the @c inode passed as argument
  */
-void repin_inode(Inode* inode);
+Inode* repin_inode(Inode* inode);
 
 
 /**

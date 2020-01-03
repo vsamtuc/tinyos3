@@ -99,11 +99,11 @@ static inline int memfs_declink(memfs_mnt* mnt, memfs_inode* ino)
 	return 0;
 }
 
-/*----------------------------
-
+/*------------------------------------------------------
 	Directory implementation
 
- ----------------------------*/
+	A directory is a dictionary of dentry_node objects.
+ -------------------------------------------------------*/
 
 
 /*
@@ -197,9 +197,7 @@ static int memfs_free_dir(memfs_mnt* mnt, memfs_inode* rinode)
  */
 struct memfs_dir_stream
 {
-	char* buffer;	/* This buffer contains the full content of the stream */
-	size_t buflen;	/* The length of buffer */
-	intptr_t pos;	/* Current position in the buffer */
+	dir_list dlist;
 	memfs_mnt* mnt;
 	memfs_inode* inode;	/* The directory inode */
 };
@@ -215,22 +213,19 @@ static int memfs_open_dir(memfs_mnt* mnt, memfs_inode* inode, int flags, void** 
 
 	/* Create the stream object */
 	struct memfs_dir_stream* s = xmalloc(sizeof(struct memfs_dir_stream));
-	s->buffer = NULL;
-	s->buflen = 0;
 
 	/* Build the stream contents */
-	FILE* mfile = open_memstream(& s->buffer, & s->buflen);
+	dir_list_create(& s->dlist);
 
-	void add_dentry_to_mfile(rlnode* p) {
+	void add_dentry_to_dlist(rlnode* p) {
 		struct dentry_node* dn = p->obj;
-		fprintf(mfile, "%02x%s%c", (unsigned int)strlen(dn->name), dn->name, 0);		
+		dir_list_add(& s->dlist, dn->name);
 	}
 
-	rdict_apply(& inode->dentry_dict, add_dentry_to_mfile);
-	fclose(mfile);
+	rdict_apply(& inode->dentry_dict, add_dentry_to_dlist);
+	dir_list_open(& s->dlist);
 
-	/* Finish the initialization */
-	s->pos = 0;
+	/* Initialize the rest */
 	s->mnt = mnt;
 	s->inode = inode;
 	memfs_inclink(mnt, inode);
@@ -243,65 +238,22 @@ static int memfs_open_dir(memfs_mnt* mnt, memfs_inode* inode, int flags, void** 
 	return 0;
 }
 
-static int memfs_read_dir(void* this, char *buf, unsigned int size)
-{
-	if(size==0) return 0;
-	struct memfs_dir_stream* s = this;
-	if(s->pos >= s->buflen) return 0;
-
-	size_t remaining_bytes = s->buflen - s->pos;
-	size_t txbytes = (remaining_bytes < size) ? remaining_bytes : size ;
-
-	memcpy(buf, s->buffer+s->pos, txbytes);
-	s->pos += txbytes;
-
-	return txbytes;
-}
-
-/* static int memfs_write_dir(void* this, const char* buf, unsigned int size); */
 
 static int memfs_close_dir(void* this)
 {
 	struct memfs_dir_stream* s = this;
+	dir_list_close(& s->dlist);
 	memfs_declink(s->mnt, s->inode);
 	s->mnt->busy_count --;
-	free(s->buffer);
 	free(s);
 	return 0;
 }
 
 
-static intptr_t memfs_seek_dir(void* this, intptr_t offset, int whence)
-{
-	struct memfs_dir_stream* s = this;
-	
-	intptr_t newpos;
-	switch(whence) {
-		case SEEK_SET:
-	 		newpos = 0; break;
-	 	case SEEK_CUR: 
-	 		newpos = s->pos; break;
-	 	case SEEK_END:
-	 		newpos = s->buflen; break;
-	 	default:
-	 		set_errcode(EINVAL);
-	 		return -1;
-	}
-
-	newpos += offset;
-	if(newpos <0 || newpos>= s->buflen) {
-	 		set_errcode(EINVAL);
-	 		return -1;		
-	}
-	s->pos = newpos;
-	return newpos;
-}
-
-
 file_ops MEMFS_DIR = {
-	.Read = memfs_read_dir,
+	.Read = (void*)dir_list_read,
+	.Seek = (void*)dir_list_seek,
 	.Release = memfs_close_dir,
-	.Seek = memfs_seek_dir
 };
 
 
@@ -311,8 +263,6 @@ file_ops MEMFS_DIR = {
 	File implementation
 
  -------------------------------*/
-
-
 
 static memfs_inode* memfs_create_file()
 {
@@ -374,8 +324,6 @@ static int memfs_truncate_file(memfs_mnt* mnt, memfs_inode* rinode, intptr_t siz
 
 	return 0;
 }
-
-
 
 
 /*
@@ -543,8 +491,6 @@ static int memfs_write_file(void* this, const char* buf, unsigned int size)
 	return tbytes;
 }
 
-
-
 static int memfs_close_file(void* this)
 {
 	struct memfs_file_stream* s = this;
@@ -704,7 +650,7 @@ static int memfs_status(MOUNT _mnt, inode_t _inode, struct Stat* st, pathcomp_t 
 {
 	DEF_ARGS(mnt,inode);
 
-	if(which & STAT_DEV) st->st_dev = NO_DEVICE;
+	if(which & STAT_DEV) st->st_dev = 0;
 	if(which & STAT_INO) st->st_ino = _inode;
 
 	if(which & STAT_TYPE) 	st->st_type = inode->type;
@@ -778,7 +724,7 @@ static int memfs_mount(MOUNT* mntp, Dev_t dev, unsigned int pc, mount_param* pv)
 	   for the system root. Therefore, there is no mountpoint to speak of, nor is
 	   there an associated device */
 
-	if(dev!=NO_DEVICE) return ENXIO;
+	if(dev!=NO_DEVICE && dev!=0) return ENXIO;
 
 	/* Allocate */
 	memfs_mnt* mnt = xmalloc(sizeof(struct memfs_mount));
@@ -804,7 +750,7 @@ static int memfs_mount(MOUNT* mntp, Dev_t dev, unsigned int pc, mount_param* pv)
 static int memfs_statfs(MOUNT _mnt, struct StatFs* sfs)
 {
 	memfs_mnt* mnt = _mnt.ptr;
-	sfs->fs_dev = NO_DEVICE;
+	sfs->fs_dev = 0;
 	sfs->fs_root = mnt->root_dir;
 	sfs->fs_fsys = MEM_FSYS.name;
 	sfs->fs_blocks = mnt->avail_blocks;
@@ -828,7 +774,7 @@ static void memfs_purge(memfs_mnt* mnt, memfs_inode* inode)
 	}
 
 	if(inode->type == FSE_DIR) {
-		/* Purge contents */
+		/* Purge directory contents */
 		rdict_apply_removed(&inode->dentry_dict, purge_dentry);
 	}
 	if(inode->lnkcount == 0)

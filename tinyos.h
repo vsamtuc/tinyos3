@@ -727,6 +727,14 @@ typedef struct mount_param
 
 /**
 	@brief Mount a device onto the filesystem.
+
+	@returns 0 on sucess and -1 in case of error.
+	  Possible errors are:
+	  - **@c ENOENT**  \c pathname does not exist.
+	  - **@c ENAMETOOLONG**  \c pathname is too long.
+	  - **@c ENOTDIR**  Some component of \c pathname is not a directory.
+	  - **@c EIO**  	An I/O error occurred.
+	  - **@c ENOMEM**   The mount table is full
  */
 int Mount(Dev_t device, const char* mount_point, const char* fstype, unsigned int paramc, mount_param* paramv);
 

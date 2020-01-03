@@ -70,12 +70,16 @@ inline static int i_truncate(Inode* inode, intptr_t length)
 	return i_fsys(inode)->Truncate(i_fsmount(inode), i_id(inode), length);
 }
 
+inline static int i_status(Inode* inode, struct Stat* st, pathcomp_t name, int which)
+{
+	return i_fsys(inode)->Status(i_fsmount(inode), i_id(inode), st, name, which);
+}
 
 /* Return the FSE type of an i-node */
 inline static Fse_type i_type(Inode* inode)
 {
 	struct Stat s;
-	int rc = i_fsys(inode)->Status(i_fsmount(inode), i_id(inode), &s, NULL, STAT_TYPE);
+	int rc = i_status(inode, &s, NULL, STAT_TYPE);
 	assert(rc==0);
 	return s.st_type;
 }
@@ -171,7 +175,7 @@ Inode* pin_inode(FsMount* mnt, inode_t id)
 	
 	/* Add to inode table */
 	inode->pincount = 1;
-	mount_incref(mnt);
+	mnt->use_count++;
 	assert(inode_table_equal(&inode->inotab_node, &ino_ref));
 	rdict_insert(&inode_table, &inode->inotab_node);
 
@@ -179,9 +183,10 @@ Inode* pin_inode(FsMount* mnt, inode_t id)
 }
 
 
-void repin_inode(Inode* inode)
+Inode* repin_inode(Inode* inode)
 {
 	inode->pincount ++;
+	return inode;
 }
 
 int unpin_inode(Inode* inode)
@@ -195,7 +200,7 @@ int unpin_inode(Inode* inode)
 	rdict_remove(&inode_table, &inode->inotab_node);
 
 	/* Remove reference to mount */
-	mount_decref(i_mnt(inode));
+	i_mnt(inode)->use_count--;
 
 	/* Unpin the i-node */
 	int rc = i_fsys(inode)->Unpin(i_fsmount(inode), i_id(inode));
@@ -210,6 +215,12 @@ int unpin_inode(Inode* inode)
 		return 0;
 }
 
+/* 
+	The 'cleanup' attribute greatly simplifies the manipulation of pins.
+*/
+
+void unpin_cleanup(Inode** inoptr) { if(*inoptr) unpin_inode(*inoptr); }
+#define AUTO_UNPIN  __attribute__((cleanup(unpin_cleanup)))
 
 
 /*=========================================================
@@ -274,22 +285,14 @@ FsMount* mount_acquire()
 {
 	for(unsigned int i=0; i<MOUNT_MAX; i++) {
 		if(mount_table[i].fsys == NULL) {
-			mount_table[i].refcount = 0;
+			/* Found an entry, initialize its use count */
+			mount_table[i].use_count = 0;
 			return & mount_table[i];
 		}
 	}
 	return NULL;
 }
 
-void mount_incref(FsMount* mnt)
-{
-	mnt->refcount ++;
-}
-
-void mount_decref(FsMount* mnt)
-{
-	mnt->refcount --;
-}
 
 
 
@@ -297,21 +300,59 @@ void mount_decref(FsMount* mnt)
 
 	Directory operations
 
+	For mount roots some operations are translated. Suppose
+	that R is the root i-node of a file system mounted at 
+	path /p mount point whose i-node is M. Then, both i-nodes
+	R and M are needed to apply operations on /p.
+
+	Parent:   /p/.. is the parent of M
+	Dir Name: is the name of M
+	Fetch in /p: must be applied to R
+	stat /p: must be applied to R.
+
+	etc ...
+
+	To support this, we say that M is the "back" and R is the
+	"front" i-node of /p. 
+
+	For paths that are not mount points, front and back return
+	the same concept. 
   =========================================================*/
 
+/* Return a new pin to dir's front */
+Inode* dir_front(Inode* dir)
+{
+	if(dir->mounted)
+		return pin_inode(dir->mounted, dir->mounted->root_dir);
+	else 
+		return repin_inode(dir);
+}
+
+/* Return new pin to dir's back */
+Inode* dir_back(Inode* dir) 
+{
+	FsMount* mnt = i_mnt(dir);
+	if(mnt->mount_point && mnt->root_dir == i_id(dir)) 
+		return repin_inode(mnt->mount_point);
+	else
+		return repin_inode(dir);
+}
+
 /*
-	Get the parent of dir. A new pin is acquired on it.
+	Get a new pin on the parent of dir.
  */
 Inode* dir_parent(Inode* dir)
 {
-	FsMount* mnt = i_mnt(dir);
+	Inode* bdir AUTO_UNPIN = dir_back(dir);
 	inode_t par_id;
 
-	if(i_fetch(dir, "..", &par_id, 0)!=0) {
+	if(i_fetch(bdir, "..", &par_id, 0)!=0) {
 		/* Oh dear, we are deleted!! */
 		return NULL;
 	}
 
+	return pin_inode(i_mnt(bdir), par_id);
+#if 0
 	/* See if we are root */
 	if(par_id == i_id(dir)) {
 		/* Yes, we are a root in our file system.
@@ -326,6 +367,19 @@ Inode* dir_parent(Inode* dir)
 	}
 	/* We are no root, just pin the parent */
 	return pin_inode(mnt, par_id);
+#endif
+}
+
+/* 
+	Return the name of a directory, mount aware.
+	If D is the root of a mounted file system,
+	the name of D is the name of its mount point.
+*/
+int dir_name(Inode* dir, pathcomp_t name)
+{
+	Inode* bdir AUTO_UNPIN = dir_back(dir);
+	struct Stat st;
+	return i_status(bdir, &st, name, STAT_NAME);
 }
 
 
@@ -336,6 +390,8 @@ int dir_name_exists(Inode* dir, const pathcomp_t name)
 	inode_t id;
 	return i_fetch(dir, name, &id, 0) == 0;
 }
+
+
 
 
 /* 
@@ -374,7 +430,8 @@ Inode* dir_fetch(Inode* dir, const pathcomp_t name, int creat)
 		inode_t id;
 
 		/* Do a lookup */
-		if(i_fetch(dir, name, &id, creat) != 0) return NULL;
+		int rc = i_fetch(dir, name, &id, creat);
+		if(rc != 0) { set_errcode(rc); return NULL; }
 
 		/* Pin the fetched i-node */
 		inode = pin_inode(i_mnt(dir), id);
@@ -409,6 +466,76 @@ Inode* dir_create(Inode* dir, const pathcomp_t name, Fse_type type, void* data)
 	if(rc != 0) { set_errcode(rc); return NULL; }
 	return pin_inode(mnt, new_id);
 }
+
+
+/*
+	Mount a file system on mpoint. Return 0 on success or an error code.
+ */
+int dir_mount(Inode* mpoint, Dev_t device, FSystem* fsys, unsigned int pmc, mount_param* pmv)
+{
+	/* TODO: check that the device is not busy */
+
+	/* TODO 2: Check that the device and fstype agree */
+
+	/* Get the mount record */
+	FsMount* mnt = mount_acquire();
+	if(mnt==NULL) return ENOMEM;
+
+	int rc = fsys->Mount(& mnt->fsmount, device, pmc, pmv);
+	if(rc==0) {
+		/* Link mount point and mount object */
+		if(mpoint) {
+			mnt->mount_point = repin_inode(mpoint);
+			mpoint->mounted = mnt;
+			/* Add new system to submounts of mount_point's mount */
+			FsMount* pmnt = i_mnt(mpoint);
+			rlist_push_back(& pmnt->submount_list, & mnt->submount_node);
+		} else 
+			mnt->mount_point = NULL;
+
+		/* Cache the mounted fs root */
+		struct StatFs sfs;
+		fsys->StatFs(mnt->fsmount, &sfs);
+		mnt->root_dir = sfs.fs_root;
+
+		/* This assignment makes the FsMount object reserved! */
+		mnt->fsys = fsys;
+	}
+	return rc;
+}
+
+
+/*
+	Unmounts the mount at 'mpoint', if not busy, returns 0 on success,
+	or an error code on failure. 
+
+	If mpoint is NULL, the root file system is unmounted.
+ */
+int dir_umount(Inode* mpoint)
+{
+	assert(mpoint==NULL || mpoint->mounted != NULL);
+
+	FsMount* mnt = mpoint ? mpoint->mounted : mount_table;
+	if(mnt->use_count) return EBUSY;
+
+	assert(is_rlist_empty(& mnt->submount_list));
+
+	int rc = mnt->fsys->Unmount(mnt->fsmount);
+	if(rc==0) {
+		/* Detach from the rest of the filesystem */
+		if(mnt->mount_point!=NULL) {
+			mnt->mount_point->mounted = NULL;
+			unpin_inode(mnt->mount_point);
+		} 
+
+		rlist_remove(& mnt->submount_node);
+
+		/* Make mount object unreserved */
+		mnt->fsys = NULL;
+	}
+	return rc;
+}
+
 
 
 
@@ -532,10 +659,6 @@ Inode* lookup_pathname(const char* pathname, const char** last)
   =========================================================*/
 
 
-/* The cleanup attribute greatly simplifies the implementation of system calls */
-
-void unpin_cleanup(Inode** inoptr) { if(*inoptr) unpin_inode(*inoptr); }
-#define AUTO_UNPIN  __attribute__((cleanup(unpin_cleanup)))
 
 
 Fid_t sys_Open(const char* pathname, int flags)
@@ -611,7 +734,7 @@ int sys_Stat(const char* pathname, struct Stat* statbuf)
 	Inode* inode AUTO_UNPIN = lookup_pathname(pathname, NULL);
 	if(inode==NULL) return -1;
 
-	int rc = i_fsys(inode)->Status(i_fsmount(inode), i_id(inode), statbuf, NULL, STAT_ALL);
+	int rc = i_status(inode, statbuf, NULL, STAT_ALL);
 	if(rc) { set_errcode(rc); return -1; }
 	return 0;
 }
@@ -727,10 +850,10 @@ int sys_GetCwd(char* buffer, unsigned int size)
 			if(rc!=0) return rc;
 
 			pathcomp_t comp;
-			i_fsys(dir)->Status(i_fsmount(dir), i_id(dir), NULL, comp, STAT_NAME);
+			rc = dir_name(dir, comp);
 			if(rc!=0) return -1;
 
-			if(bprintf("/")!=0) return-1;
+			if(bprintf("/")!=0) return -1;
 			return bprintf(comp);
 		}
 	}
@@ -755,97 +878,43 @@ int sys_ChDir(const char* pathname)
 	return 0;
 }
 
+
 int sys_Mount(Dev_t device, const char* mount_point, const char* fstype, unsigned int paramc, mount_param* paramv)
 {
 	/* Find the file system */
 	FSystem* fsys = get_fsys(fstype);
 	if(fsys==NULL) { set_errcode(ENODEV); return -1; }
 
-	/* Get the mount record */
-	FsMount* mnt = mount_acquire();
-	if(mnt==NULL) return -1;
+	Inode* mpoint AUTO_UNPIN = lookup_pathname(mount_point, NULL);
+	if(mpoint==NULL) return -1;
+	if(i_type(mpoint) != FSE_DIR) { set_errcode(ENOTDIR); return -1; }
+	if(mpoint->mounted) { set_errcode(EBUSY); return -1; }
 
-	/* Resolve mount point */
-	Inode* mpoint AUTO_UNPIN = NULL;
-	if(mount_point != NULL) {
-		mpoint = lookup_pathname(mount_point, NULL);
-		if(mpoint==NULL) return -1;
-		if(i_type(mpoint) != FSE_DIR) { set_errcode(ENOTDIR); return -1; }
-		if(mpoint->pincount != 1) { set_errcode(EBUSY); return -1; }
-		assert(mpoint->mounted == NULL);
-	} 
-	else 
-	{
-		/* If mpoint is NULL, we must be the root mount */
-		if(mnt != mount_table) {
-			set_errcode(ENOENT);
-			return -1;
-		}
-	}
-
-	/* TODO: check that the device is not busy */
-
-	/* TODO 2: Check that the device and fstype agree */
-
-	int rc = fsys->Mount(& mnt->fsmount, device, paramc, paramv);
-	if(rc==0) {
-		if(mpoint) {
-			repin_inode(mpoint);
-			mpoint->mounted = mnt;
-		}
-
-		struct StatFs sfs;
-		fsys->StatFs(mnt->fsmount, &sfs);
-		mnt->root_dir = sfs.fs_root;
-
-		/* This assignment makes the FsMount object reserved! */
-		mnt->fsys = fsys;
-		return 0;
-	} else {
-		set_errcode(rc);
-		return -1;
-	}
+	int rc = dir_mount(mpoint, device, fsys, paramc, paramv);
+	if(rc) { set_errcode(rc); return -1; }
+	return 0;
 }
+
+
 
 int sys_Umount(const char* mount_point)
 {
-	FsMount* mnt;
+	assert(mount_point != NULL);
 
-	/* Special case: this must be the root mount */
-	if(mount_point==NULL) {
-		mnt = mount_table;
-	} else {
-		/* Look up the mount point */
-		Inode* mpoint AUTO_UNPIN = lookup_pathname(mount_point, NULL);
-		if(mpoint==NULL) return -1;
+	/* Look up the mount point */
+	Inode* mpoint AUTO_UNPIN = lookup_pathname(mount_point, NULL);
+	if(mpoint==NULL) return -1;
 
-		if(i_mnt(mpoint)->root_dir != i_id(mpoint)) {
-			set_errcode(EINVAL);    /* This is not a mount point */
-			return -1;
-		}
+	Inode* bmpoint AUTO_UNPIN = dir_back(mpoint);
 
-		mnt = i_mnt(mpoint);
+	if(mpoint == bmpoint) {
+		set_errcode(EINVAL);    /* This is not a mount point */
+		return -1;
 	}
 
-    /* See if we are busy */
-    if(mnt->refcount != 0) {
-        set_errcode(EBUSY);
-        return -1;
-    }
-
-    /* Ok, let's unmount */
-    int rc = mnt->fsys->Unmount(mnt->fsmount);
-    if(rc) { set_errcode(rc); return -1; }
-
-    /* Detach from the filesystem */
-    if(mnt->mount_point!=NULL) {
-        mnt->mount_point->mounted = NULL;
-        rlist_remove(& mnt->submount_node);
-    } 
-
-    /* Make mount object unreserved */
-    mnt->fsys = NULL;
-    return rc;
+	/* We need to unpin mpoint, or else the mount is used! */
+	unpin_inode(mpoint);  mpoint=NULL;
+	return dir_umount(bmpoint);
 }
 
 
@@ -955,7 +1024,8 @@ void initialize_filesys()
 {
 	/* Init mounts */
 	for(unsigned i=0; i<MOUNT_MAX; i++) {
-		mount_table[i].refcount = 0;
+		mount_table[i].use_count = 0;
+		mount_table[i].fsys = NULL;
 		rlnode_init(&mount_table[i].submount_node, &mount_table[i]);
 		rlnode_init(&mount_table[i].submount_list, NULL);
 	}
@@ -964,18 +1034,32 @@ void initialize_filesys()
 	rdict_init(&inode_table, MAX_PROC);
 
 	/* FsMount the memfs as the root filesystem */
-	int rc = sys_Mount(NO_DEVICE, NULL, "memfs", 0, NULL);
+	FSystem* rfsys = get_fsys("memfs");
+	int rc = dir_mount(NULL, NO_DEVICE, rfsys, 0, NULL);
 	assert(rc==0);
 	if(rc!=0) abort();
+}
+
+
+
+int umount_all(FsMount* mnt)
+{
+	while(! is_rlist_empty(& mnt->submount_list)) {
+		FsMount* submnt = mnt->submount_list.next->obj;
+		int rc = umount_all(submnt);
+		if(rc!=0) fprintf(stderr, "Unmounting failed, error = %s\n", strerror(rc));
+		if(rc) return rc;
+	}
+	Inode* mpoint = mnt->mount_point;
+	return dir_umount(mpoint);
 }
 
 
 void finalize_filesys()
 {
 	/* Unmount root fs */
-	int rc = sys_Umount(NULL);
+	int rc = umount_all(mount_table);
 	assert(rc==0);
-	if(rc!=0) fprintf(stderr, "Unmounting the root failed, error = %s\n", strerror(rc));
 
 	assert(inode_table.size == 0);
 	rdict_destroy(&inode_table);

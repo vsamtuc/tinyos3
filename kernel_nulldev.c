@@ -53,12 +53,16 @@ void* nulldev_open(uint minor)
 	return &nulldev;
 }
 
+void nulldev_init()
+{
+	device_publish("null", DEV_NULL, 0);
+}
 
 /* The DCB for the null device */
 static DCB nulldev_dcb = {
 	.type = DEV_NULL,
 	.devnum = 1,
-	.Init = NULL,
+	.Init = nulldev_init,
 	.Open = nulldev_open,
 	.dev_fops = {
 		.Read = nulldev_read,

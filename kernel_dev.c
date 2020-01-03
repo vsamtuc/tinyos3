@@ -33,28 +33,38 @@ static int dev_advert_eq(rlnode* node, rlnode_key key)
 	return strcmp(adv->name, key.str)==0;
 }
 
-static rdict dev_directory;
-
-
-void device_publish(const char* devname, uint major, uint minor)
+static rlnode* dev_adv_alloc(const char* devname, uint major, uint minor)
 {
 	dev_advert* adv = xmalloc(sizeof(dev_advert));
 	adv->name = strdup(devname);
 	adv->major = major;
 	adv->minor = minor;
 	rdict_node_init(& adv->dnode, adv, hash_string(devname));
-
-	rdict_insert(& dev_directory, & adv->dnode);
+	return &adv->dnode;	
 }
+
+static void dev_adv_free(rlnode* n)
+{
+	dev_advert* adv = n->obj;
+	free(adv->name);
+	free(adv);
+}
+
+static rdict dev_directory;
+
+
+void device_publish(const char* devname, uint major, uint minor)
+{
+	rdict_insert(& dev_directory, dev_adv_alloc(devname, major, minor));
+}
+
 
 void device_retract(const char* devname)
 {
 	rlnode* n = rdict_lookup(&dev_directory, hash_string(devname), devname, dev_advert_eq);
 	if(n==NULL) return;
 	rdict_remove(&dev_directory, n);
-	dev_advert* adv = n->obj;
-	free(adv->name);
-	free(adv);
+	dev_adv_free(n);
 }
 
 
@@ -78,7 +88,7 @@ void initialize_devices()
 
 void finalize_devices()
 {
-
+	/* Run finalizers */
 	for(int d=0; d<DEV_MAX; d++) {
 		if(device_table[d]) {
 			void (*devfini)() = device_table[d]->Fini;
@@ -87,7 +97,8 @@ void finalize_devices()
 		else fprintf(stderr, "Device type %d is not finalized\n",d);
 	}
 
-
+	/* Destroy the device directory */
+	rdict_apply_removed(& dev_directory, dev_adv_free);
 	rdict_destroy(&dev_directory);
 }
 
@@ -99,11 +110,8 @@ void register_device(DCB* dcb)
 
 int device_open(uint major, uint minor, void** obj, file_ops** ops)
 {
-	assert(major < DEV_MAX);  
-	if(minor >= device_table[major]->devnum) {
-		set_errcode(ENXIO);				
-		return -1;
-	}
+	if(major >= DEV_MAX) { set_errcode(ENXIO); return -1; }
+	if(minor >= device_table[major]->devnum) { set_errcode(ENXIO); return -1; }
 	*obj = device_table[major]->Open(minor);
 	*ops = &device_table[major]->dev_fops;
 	return 0;
@@ -126,25 +134,25 @@ extern FSystem DEVFS;
 /* Mount a file system of this type. */
 int devfs_mount(MOUNT* mnt, Dev_t dev, unsigned int param_no, mount_param* param_vec)
 {
-    if(dev!=NO_DEVICE) return ENXIO;
+    if(dev!=NO_DEVICE && dev!=0) return ENXIO;
     mnt->ptr = NULL;
     return 0;
 }
 
-/* Unmount a particular mount */
+/* Unmount a particular mount always succeeds */
 int devfs_umount(MOUNT mnt) { return 0; }
 
 
 int devfs_statfs(MOUNT mnt, struct StatFs* statfs)
 { 
-	statfs->fs_dev = NO_DEVICE;
+	statfs->fs_dev = 0;
 	statfs->fs_root = (inode_t) NO_DEVICE;
 
 	statfs->fs_fsys = DEVFS.name;
 	statfs->fs_blocks = 0;
 	statfs->fs_bused = 0;
-	statfs->fs_files = 1;
-	statfs->fs_fused = 1;
+	statfs->fs_files = dev_directory.size +1;
+	statfs->fs_fused = statfs->fs_files;
 
 	return 0;
 }
@@ -211,6 +219,11 @@ int devfs_open(MOUNT _mnt, inode_t _ino, int flags, void** obj, file_ops** ops)
 		return ENODEV;
 }
 
+int devfs_truncate(MOUNT _mnt, inode_t _ino, intptr_t length)
+{
+	if(_ino != (inode_t) NO_DEVICE) return 0;
+	else return EISDIR;
+}
 
 int devfs_fetch(MOUNT _mnt, inode_t _dir, const pathcomp_t name, inode_t* id, int creat)
 {
@@ -221,7 +234,7 @@ int devfs_fetch(MOUNT _mnt, inode_t _dir, const pathcomp_t name, inode_t* id, in
 
 	/* Look up into dev_directory */
 	rlnode* n = rdict_lookup(& dev_directory, hash_string(name), name, dev_advert_eq);
-	if(n==NULL) return ENOENT;
+	if(n==NULL) return creat ? EROFS : ENOENT;
 
 	/* Found device */
 	dev_advert* adv = n->obj;
@@ -233,7 +246,7 @@ int devfs_fetch(MOUNT _mnt, inode_t _dir, const pathcomp_t name, inode_t* id, in
 
 int devfs_status(MOUNT _mnt, inode_t _ino, struct Stat* st, pathcomp_t name, int which)
 {
-	st->st_dev = NO_DEVICE;
+	st->st_dev = 0;
 	st->st_ino = _ino;
 
 	if(_ino == (inode_t) NO_DEVICE) {
@@ -267,6 +280,7 @@ FSystem DEVFS = {
 	.Unpin = devfs_unpin,
 	.Flush = devfs_flush,
 	.Open = devfs_open,
+	.Truncate = devfs_truncate,
 	.Fetch = devfs_fetch,
 	.Link = devfs_link,
 	.Unlink = devfs_unlink,
