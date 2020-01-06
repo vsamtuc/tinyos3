@@ -20,7 +20,7 @@
  */
 
 /*******************************************
- * Processes types and constants.
+ * Types and constants.
  *******************************************/
 
 /**
@@ -435,6 +435,40 @@ void ThreadExit(int exitval);
  *
  *******************************************/
 
+
+/**
+	@brief Device id.
+
+	This type encodes a pair (major,minor) 
+ */
+typedef uint32_t Dev_t; 
+
+/**
+  @brief The device major numbers.
+	
+  The device major number of a device determines the driver used.
+*/
+enum Device_type
+{ 
+	DEV_NULL,	/**< @brief Null device, Zero device */
+	DEV_INFO,	/**< @brief Info pseudo-devices */
+	DEV_SERIAL,	/**< @brief Serial device */
+	MAX_DEV = 256 /**< @brief placeholder for maximum device number */
+};
+
+
+
+#define NO_DEVICE ((Dev_t) -1)
+#define DEV_MAJOR(dev)  ((uint16_t) ((dev)>>16))
+#define DEV_MINOR(dev)  ((uint16_t) (dev))
+
+static inline Dev_t device_id(uint16_t major, uint16_t minor) 
+{
+	return (((Dev_t) major) << 16) | ((Dev_t) minor);
+}
+
+
+
 /** @brief Return the number of terminal devices available. 
 
   Terminals are numbered starting from 0. 
@@ -588,19 +622,6 @@ Fid_t Open(const char* pathname, int flags);
 intptr_t Seek(int fid, intptr_t offset, int whence);
 
 
-
-typedef uint64_t Dev_t;
-
-#define NO_DEVICE ((Dev_t) -1)
-#define DEV_MAJOR(dev)  ((uint32_t) ((dev)>>32))
-#define DEV_MINOR(dev)  ((uint32_t) (dev))
-
-static inline Dev_t device_id(uint32_t major, uint32_t minor) 
-{
-	return (((Dev_t) major) << 32) | ((Dev_t) minor);
-}
-
-
 /**
 	@brief Types of File System Entity (FSE).
 
@@ -615,9 +636,9 @@ static inline Dev_t device_id(uint32_t major, uint32_t minor)
 	driver.
 */
 typedef enum {
-	FSE_DIR,
-	FSE_FILE,
-	FSE_DEV
+	FSE_DIR,	/**< Directory */
+	FSE_FILE,	/**< Regular file */
+	FSE_DEV		/**< Device special file */
 } Fse_type;
 
 
@@ -1065,100 +1086,6 @@ typedef enum {
 	   	- **@c EINVAL** the shutdown mode @c how is illegal.
 */
 int ShutDown(Fid_t sock, shutdown_mode how);
-
-
-
-/*******************************************
- *
- * System information
- *
- *******************************************/
-
-/**
-  @brief The max. size of args returned by a procinfo structure.
-  */
-#define PROCINFO_MAX_ARGS_SIZE (128)
-
-/**
-	@brief The max size of wchan returned by a procinfo structure.
- */
-#define PROCINFO_MAX_WCHAN_SIZE 14
-
-/**
-	@brief The status of a process as reported by procinfo.
- */
-enum procinfo_status {
-	PROCINFO_ZOMBIE,	/**< @brief The process is a zombie */
-	PROCINFO_RUNNABLE,	/**< @brief The process main task is runnable */
-	PROCINFO_STOPPED	/**< @brief The process main task is stopped */
-};
-
-/**
-	@brief A struct containing process-related information for a non-free
-	pid.
-
-	This structure is returned by information streams.
-	@see OpenInfo
-  */
-typedef struct procinfo
-{
-	Pid_t pid;	    /**< @brief The pid of the process. */
-	Pid_t ppid;     /**< @brief The parent pid of the process.
-
-                This is equal to NOPROC for parentless procs. */
-  
-  	enum procinfo_status status; /**< @brief Process status. */
-
-	/**
-		@brief The wait channel for this process.
-
-		If the process status is @c PROCINFO_STOPPED, return the wait channel of
-		the main task. Else, this is the empty string.
-	 */
-  	char wchan[PROCINFO_MAX_WCHAN_SIZE];
-	
-  	unsigned long thread_count;  /**< Current no of threads. */
-	
-  	Task main_task;  /**< @brief The main task of the process. */
-	
-	/** @brief Argument length of main task. 
-
-		Note that this is the real argument length, 
-		not just the length of the @c args field, which is
-		limited at @c PROCINFO_MAX_ARGS_SIZE. */
-	int argl;
-
-	/** @brief Argument of the main task (possibly truncated).
-
-	This fields holds up to @c PROCINFO_MAX_ARGS_SIZE bytes of the argument of the main task. 
-    If the task's argument is longer (as designated by the @c argl field), the
-    bytes contained in this field are just the prefix.  */
-	char args[PROCINFO_MAX_ARGS_SIZE]; 
-} procinfo;
-
-
-/**
-	@brief Open a kernel information stream.
-
-	This is a read-only stream that returns a sequence of 
-	@c procinfo structures,
-	each packed into a block of size @c sizeof(procinfo).
-
-	Each procinfo structure contains information pertaining to some
-	used PCB (active or zombie) during the time of the stream. 
-
-	There is no guarantee of the timeliness of the information.
-	A best-effort approach to return relevant system information is
-	made. 
-
-	@returns a file id on success, or NOFILE on error. Possible reasons
-		for error are:
-        - **@c EMFILE** The maximum number of per-process file descriptors has been reached.
-        - **@c ENFILE** The maximum number of system-wide files has been reached.
-
- */
-Fid_t OpenInfo();
-
 
 
 

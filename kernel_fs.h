@@ -5,8 +5,6 @@
 #include "tinyos.h"
 #include "kernel_io.h"
 
-
-
 /*----------------------------------
  *
  * Path management
@@ -15,28 +13,11 @@
 
 typedef char pathcomp_t[MAX_NAME_LENGTH+1];
 
-
-
-
-/* These two types are just placeholders for actual void pointers */
-
-#if !defined(MOUNT)
-struct GENERIC_MOUNT { void* ptr; };
-#define MOUNT struct GENERIC_MOUNT
-#endif
-
-
-/* A bunch of flags for the fields of interest in a call to Status */
-#define STAT_DEV	(1<<0)
-#define STAT_INO	(1<<1)
-#define STAT_TYPE	(1<<2)
-#define STAT_NLINK	(1<<3)
-#define STAT_RDEV	(1<<4)
-#define STAT_SIZE	(1<<5)
-#define STAT_BLKSZ	(1<<6)
-#define STAT_BLKNO	(1<<7)
-#define STAT_ALL	((1<<8)-1)
-#define STAT_NAME	(1<<8)
+/*
+	A pointer type for mount objects. This is wrapped into a struct for type checking,
+	although this may be superfluous!
+ */
+typedef struct MOUNT { void* ptr; } MOUNT;
 
 
 /**
@@ -87,25 +68,14 @@ struct GENERIC_MOUNT { void* ptr; };
 
 	### Scanning directories ###
 
-	A read-only stream can be obtained on a directory. This stream will return the names contained
-	in the directory. The stream will be a sequence of bytes obtained by concatenating an encoded
-	name for each directory entry.  Each name will be prefixed by two hexadecimal ASCII digits, denoting
-	the length of the subsequent name and will be suffixed by the byte 0. 
-
-	For example, assume that a directory contains three entries, named 'foo', 'subdir' and 'Big Text File'.
-	Then, the contents of the stream will be
-	\code	
-	"01.*02..*03foo*06subdir*0DBig Text File*"
-	\endcode  
-	where '*' in the above stands for the 0 byte.
-
-	Note that the 
+	To get a listing of directory entries, a read-only stream can be obtained by calling \c Open on a directory. 
+	In order to implement this is a uniform manner for all file systems, the file system can use the @ref dir_list
+	facility.
 
 	### API notes ###
 
 	All file system operations return an integer. If the operation succeeded, the return is 0.
 	If the operation failed, the return is an error code that can be passed to @c set_errcode.
-
 
 	@see enum Fse_type
 	@see inode_t
@@ -218,7 +188,7 @@ struct FSystem_type
 	/** @brief Create a new file system entity in a directory.
 
 		Create a new object in @c dir, called @c name. If successful, store
-		the inode of the new object in @c newdir. The new i-node will be unpinned.
+		the inode of the new object in @c newino. The new i-node will be unpinned.
 
 		File system objects include the following:
 		- directories
@@ -251,7 +221,6 @@ struct FSystem_type
  	*/
 	int (*Create)(MOUNT mnt, inode_t dir, const pathcomp_t name, Fse_type type, inode_t* newino, void* data);
 
-
 	/**
 		@brief Search a directory for a particular entry by name, possibly creating it.
 
@@ -272,7 +241,6 @@ struct FSystem_type
 		- @c EIO     An I/O error occurred while accessing the file system
 	 */
 	int (*Fetch)(MOUNT mnt, inode_t dir, const pathcomp_t name, inode_t* ino, int createflag);
-
 
 	/**
 		@brief Open a stream on an inode. 
@@ -301,7 +269,6 @@ struct FSystem_type
 		- @c EIO     An I/O error occurred while accessing the file system
 	*/
 	int (*Open)(MOUNT mnt, inode_t ino, int flags, void** obj, file_ops** ops);
-
 	
 	/**
 		@brief Add a hard link to an i-node.
@@ -373,35 +340,23 @@ struct FSystem_type
 		@brief Return the status information of an i-node.
 
 		Return status information on an i-node. The information is returned in
-		the fields of object \c status. The \c which flag indicates the information
-		actually requested.
+		the fields of object \c status (if non-`NULL`).
 
-		For some file systems, actually returning some status information may be
-		expensive. Therefore, the \c which flag designates that only some information
-		may be needed.
-
-		The constant \c STAT_ALL returns the full \c struct Stat information, to the best of the
-		file system's ability.
-
-		In addition, if the \c STAT_NAME flag is provided  (note: it is not included 
-		in \c STAT_ALL), and @c ino is a directory, then the name of this directory is
-		stored in @c name. 
+		In addition, if \c name is non-`NULL` and @c ino is a directory, 
+		then the name of this directory is stored in @c name. If \c name
+		is non-`NULL` but @c ino is not a directory, an error is returned.
 
 		@param mnt the mount object
 		@param ino the i-node whose status is returned
 		@param status the object where the status will be stored
 		@param name a path where the name of the directory will be stored, or @c NULL
-		@param which a bitwise-OR of flags 
 		@return 0 on success, or an error code. Possible errors:
 		- @c ENOENT @c ino is not a valid i-node
-		- @c ENOTDIR @c ino is not a directory but @c STAT_NAME was included in @c which
-		- @c EINVAL an invalid flag was specified in flags
+		- @c ENOTDIR @c ino is not a directory but @c name was non-NULL
 	 */
-	int (*Status)(MOUNT mnt, inode_t ino, struct Stat* status, pathcomp_t name, int which);
+	int (*Status)(MOUNT mnt, inode_t ino, struct Stat* status, pathcomp_t name);
 
 };
-
-
 
 /*----------------------------------
  *
@@ -423,14 +378,6 @@ __attribute__((constructor)) \
 static void __add_ ## fsys ##_to_file_system_table() { register_file_system(&fsys); }
 
 
-/**
-	@brief Return a all file system names.
-
-	This function returns a `NULL`-terminated array of strings containing
-	all file system names.
- */
-const char* const * get_filesystems();
-
 
 /**
 	@brief Return a filesystem by name, or NULL if not found.
@@ -446,35 +393,46 @@ FSystem* get_fsys(const char* fsys_name);
 
 #define MOUNT_MAX 32
 
+/**
+	@brief Contol block for mounted filesystems
+
+	This control block contains information descibing a mounted
+	filesystem's location in the File System Tree. 
+
+	Also, it holds the pointer to the \c MOUNT control block 
+	returned by the @ref Mount() operation; the @c fsmount field.
+ */
 struct FsMount
 {
-	/* Counts use of this mount (by Inode handles) */
+	/** @brief Counts uses of this mount (by Inode handles) */
 	unsigned int use_count;
 
-	/* The file system */
+	/** @brief  The file system driver */
 	FSystem* fsys;
 
-	/* The underlying device */
+	/** @brief The underlying device */
 	Dev_t device;
 
-	/* Inode on top of which we mounted. This is NULL for the root mount only. */
+	/** @brief I-node handle on top of which we mounted. This is NULL for the root mount only. */
 	Inode* mount_point;
 
-	/* Inode of our root directory */
+	/** @brief  I-node of our root directory */
 	inode_t root_dir;
 
-	/* List of all submounts */
+	/** @brief  List of all submounts */
 	rlnode submount_list;
-	rlnode submount_node;  /* Intrusive node */
+	rlnode submount_node;  /**< @brief  Intrusive node */
 
-	/* This is data returned by the file system for this mount */
+	/** @brief The mount control block created by the driver */
 	MOUNT fsmount;
 };
 
 
-extern FsMount mount_table[MOUNT_MAX];
-FsMount* mount_acquire();
+/** @brief The mount table.
 
+	This array provides storage for all mount objects.
+ */
+extern FsMount mount_table[MOUNT_MAX];
 
 
 /*----------------------------------
@@ -487,20 +445,21 @@ FsMount* mount_acquire();
 /**
 	@brief Handle to an i-node.
 
-	I-node handles make operations on i-nodes more convenient. The main
-	benefits of @c Inode handles are:
-	- Each i-node is kept together with the mounted file system it belong to
-	- Each @c Inode handle holds its i-node pinned, therefore it is assurred that
-	  the i-node will not be deleted as long as a handle exists on it. To 
-	  implement this, the handle employs reference counting.
+	I-node handles make operations on i-nodes more convenient. A handle holds together
+	both the \c FsMount object and the i-node id of the i-node.
 
-	It is important to ensure that there is a unique @c Inode handle for each i-node.
-	This is ensured by using a hash table to register @c Inode handles. 
+	In addition, each @c Inode handle holds its i-node pinned, therefore it is assurred that
+	the i-node will not be deleted as long as a handle exists on it. Handles employ reference 
+	counting, using functions @c pin_inode, @c repin_inode and @c unpin_inode.
 
 	To obtain an @c Inode handle we use the @ref pin_inode() call. Once a handle is
 	obtained it can be re-pinned using @ref repin_inode() and unpinned using @ref unpin_inode().
 	The handle keeps a count of the number of pins and is only released when the number
 	of pins drops to zero.
+
+	@see pin_inode()
+	@see repin_inode()
+	@see unpin_inode()
 */
 typedef struct InodeHandle
 {
@@ -512,6 +471,47 @@ typedef struct InodeHandle
 	/** @brief Points to a mount whose mount point is this directory, or NULL */
 	struct FsMount* mounted;
 } Inode;
+
+
+/**
+	@brief Resolve a pathname into a directory and basename.
+	
+	If @c last is provided (!= \c NULL), this call splits the
+	pathname into two, as in dirname/last. It returns 
+	an \c Inode to dirname and makes \c last point to the last
+	component of pathname. 
+	Note: if the pathname ended in '/' (i.e., "/foo/bar/")
+	then \c *last will be set to \c NULL.
+
+	If last is NULL, this call returns the Inode corresponding
+	to the full pathname.
+
+	In both cases, if there is an error the returned value is
+	NULL and set_errcode() has been called with the error code.
+
+	@param pathname a pathname to resolve
+	@param last pointer to a string
+	@return the Inode handle for the directory, or \c NULL for error
+ */
+Inode* resolve_pathname(const char* pathname, const char** last);
+
+
+/**
+	@brief Get the pathname for a directory.
+
+	The absolute pathname for @c dir is stored in \c buffer, which
+	is \c size bytes long. An error is returned if the name does not
+	fit in the buffer.
+
+	On success, 0 is returned. On error, -1 is returned and set_errcode() 
+	has been called with the error code.
+
+	@param dir directory i-node whose pathname is returned
+	@param buffer location where pathname is stored
+	@param size the size of \c buffer
+	@return 0 on success or -1 on failure
+ */	
+int get_pathname(Inode* dir, char* buffer, unsigned int size);
 
 
 /**
@@ -556,6 +556,7 @@ Inode* repin_inode(Inode* inode);
 	@ref set_errcode().
 
 	@param inode the \c Inode handle to unpin
+	@return 0 on success, or -1 on error.
  */
 int unpin_inode(Inode* inode);
 
@@ -573,32 +574,108 @@ int unpin_inode(Inode* inode);
 Inode* inode_if_pinned(FsMount* mnt, inode_t id);
 
 
-/*---------------------------------------------
- *
- * Directory listing
- *
- * A dir_list is an object that can be used to
- * make the contents of a directory available
- * to the kernel in a standard format.
- *
- *-------------------------------------------*/
+/** 
+	@brief Helper for directory listing streams.
+ 
+	A \c dir_list is an object that can be used to
+	make the contents of a directory available to the kernel 
+	in a standard format.
+ 
+ 	To use it, a file system implementation can add a \c dir_list
+ 	field to a stream object. The lifetime of a @c dir_list object
+ 	has two phases. First, in the **build** phase, directory names
+ 	are added to the object building the list. Then, in the **read** 
+ 	phase, the information is read back via the stream API.
+
+ 	For example:
+ 	\code
+	struct my_dir_stream {
+		...
+		dir_list dlist;
+	};
+	
+	// Initialize the dlist field 
+	dir_list_create(& s->dlist);
+
+	// Add data 
+	for(every directory entry in a directory) {
+		...
+		dir_list_add(&s->dlist,  entry_name);
+	}
+	dir_list_open(&s->dlist);  // Prepare for reading
+ 	\endcode
+	Functions @c dir_list_read, @c dir_list_seek and @c dir_list_close
+	can be called from inside the corresponding stream operations. 
+	For example:
+	\code
+	int my_dir_stream_read(void* obj, char* buffer, unisgned int size) {
+		my_dir_stream* s = obj;
+		...
+		return dir_list_read(&s->dlist, buffer, size);
+	}
+	\endcode
+  */
 
 typedef struct dir_listing 
 {
-	char* buffer;
-	size_t buflen;
+	char* buffer;	/**< @brief the data of the dir_lsit */
+	size_t buflen;	/**< @brief length of \c buffer */
 	union {
-		intptr_t pos;
-		void* builder;
+		intptr_t pos;	/**< @brief Current position during stream access */
+		void* builder;	/**< @brief Used while building the list */
 	};
 } dir_list;
 
+/**
+	@brief Initialize a \c dir_list to add contents
+ */
 void dir_list_create(dir_list* dlist);
+
+/**
+	@brief Add a directory entry to the list
+
+	@param dlist the listing
+	@param name the name of this directory entry
+ */
 void dir_list_add(dir_list* dlist, const char* name);
+
+/**
+	@brief Prepare \c dir_list for stream operations
+
+	This call ends the build phase and starts the read phase of the
+	\c dir_list object.
+
+	A call to \c dir_list_open should be made after all directory entries have
+	been added to the listing. After this call, it is possible
+	to call @c dir_list_read, @c dir_list_seek and @c dir_list_close
+	on the object.
+
+	@param dlist the listing
+ */
 void dir_list_open(dir_list* dlist);
 
+/**
+	@brief Read bytes from a dir list object
+
+	This call should be used in the implementation of \c Read for
+	directory streams
+ */
 int dir_list_read(dir_list* dlist, char* buf, unsigned int size);
+
+/**
+	@brief Release memory held by dir list object
+
+	This call should be used in the implementation of \c Release for
+	directory streams
+ */
 int dir_list_close(dir_list* dlist);
+
+/**
+	@brief Seek to a new location in a dir list object
+
+	This call should be used in the implementation of \c Seek for
+	directory streams
+ */
 intptr_t dir_list_seek(dir_list* dlist, intptr_t offset, int whence);
 
 
@@ -617,7 +694,7 @@ void initialize_filesys();
 
 
 /**
- 	@brief Finalize the file system data structures during boot.
+ 	@brief Finalize the file system data structures during shutdown.
  */
 void finalize_filesys();
 

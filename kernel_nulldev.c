@@ -9,19 +9,24 @@
   ====================================*/
 
 
-/* There is just one null device stream object! */
-static struct {} nulldev;
+/* There are just 2 device stream object, /dev/null and /dev/zero */
+static struct nulldev_cb { uint minor; } nulldev[2] = {{0}, {1}};
 
 /*
 	The null device always returns zeros
  */
 int nulldev_read(void* dev, char *buf, unsigned int size)
 {
+	uint minor = *(uint*)dev;
 	/*
 		The null device always returns zeros
 	 */
-	memset(buf, 0, size);
-	return size;
+	if(minor == 1) {
+		memset(buf, 0, size);  /* /dev/zero returns zeros */
+		return size;
+	} 
+	/* /dev/null is always empty */
+	return 0;
 }
 
 
@@ -50,18 +55,19 @@ int nulldev_close(void* dev)
  */
 void* nulldev_open(uint minor)
 {
-	return &nulldev;
+	return &nulldev[minor];
 }
 
 void nulldev_init()
 {
 	device_publish("null", DEV_NULL, 0);
+	device_publish("zero", DEV_NULL, 1);
 }
 
 /* The DCB for the null device */
 static DCB nulldev_dcb = {
 	.type = DEV_NULL,
-	.devnum = 1,
+	.devnum = 2,
 	.Init = nulldev_init,
 	.Open = nulldev_open,
 	.dev_fops = {

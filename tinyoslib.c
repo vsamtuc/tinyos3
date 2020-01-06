@@ -117,6 +117,12 @@ void tinyos_restore_stdio()
 }
 
 
+void PError(const char* msg)
+{
+	char ebuf[164];
+	printf("%s: %s\n", msg, strerror_r(GetError(), ebuf, 164));
+}
+
 
 static int exec_wrapper(int argl, void* args)
 {
@@ -138,25 +144,18 @@ static int exec_wrapper(int argl, void* args)
 	return prog(argc, argv);
 }
 
-
-int ParseProcInfo(procinfo* pinfo, Program* prog, int argc, const char** argv )
+int ParseProgArgs(Task task, int argl, void* args, Program* prog, int argc, const char** argv)
 {
-	if(pinfo->main_task != exec_wrapper)
+	if(task != exec_wrapper)
 		/* We do not recognize the format! */
 		return -1;
 
-	if(pinfo->argl > PROCINFO_MAX_ARGS_SIZE) 
-		/* The full argument is not available */
-		return -1;
-
-	int argl = pinfo->argl;
-	void* args = pinfo->args;
-
 	/* unpack the program pointer */
+	assert(argl >= sizeof(prog));
 	if(prog) memcpy(&prog, args, sizeof(prog));
 
-	argl -= sizeof(Program*);
-	args += sizeof(Program*);
+	argl -= sizeof(prog);
+	args += sizeof(prog);
 
 	/* unpack the string vector */
 	size_t N = argscount(argl, args);

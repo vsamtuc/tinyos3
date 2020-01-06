@@ -76,7 +76,7 @@ int serial_read(void* dev, char *buf, unsigned int size)
 		else if(count==0) {
 			kernel_wait(&dcb->rx_ready);
 		}
-		else
+	else
 			break;
 	}
 

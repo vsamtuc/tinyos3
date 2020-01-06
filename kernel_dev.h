@@ -9,6 +9,7 @@
 
 #include "util.h"
 #include "bios.h"
+#include "tinyos.h"
 #include "kernel_io.h"
 
 /**
@@ -42,20 +43,6 @@
   @{ 
 */
 
-
-/**
-  @brief The device type.
-	
-  The device type of a device determines the driver used.
-
-  When new 
-*/
-enum Device_type
-{ 
-	DEV_NULL,    /**< @brief Null device */
-	DEV_SERIAL,  /**< @brief Serial device */
-	DEV_MAX      /**< @brief placeholder for maximum device number */
-};
 
 
 /**
@@ -118,7 +105,7 @@ typedef struct device_control_block
 
 	This is an array of device control blocks, one for each device type.
   */
-extern DCB* device_table[DEV_MAX];
+extern DCB* device_table[MAX_DEV];
 
 /**
 	@brief Add a new device type to the device table.

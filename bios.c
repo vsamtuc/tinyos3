@@ -277,17 +277,17 @@ static inline void raise_interrupt(Core* core, Interrupt intno)
 static void dispatch_interrupts(Core* core)
 {
 	for(int intno = 0; intno < maximum_interrupt_no; intno++) {
-		if(core->int_disabled) break; /* will continue at
-										 cpu_interrupt_enable()*/
+		if(core->int_disabled) 
+			/* will continue at cpu_interrupt_enable()*/
+			break; 
+
 		sig_atomic_t pending = 
 			atomic_exchange_explicit(& core->intpending[intno], 0, 
 										memory_order_relaxed);
 		if(pending) {
 			core->irq_delivered[intno]++;
 			interrupt_handler* handler =  core->intvec[intno];
-			if(handler != NULL) { 
-				handler();
-			}			
+			if(handler != NULL) handler();	/* Call it */
 		}
 	}	
 }

@@ -70,16 +70,16 @@ inline static int i_truncate(Inode* inode, intptr_t length)
 	return i_fsys(inode)->Truncate(i_fsmount(inode), i_id(inode), length);
 }
 
-inline static int i_status(Inode* inode, struct Stat* st, pathcomp_t name, int which)
+inline static int i_status(Inode* inode, struct Stat* st, pathcomp_t name)
 {
-	return i_fsys(inode)->Status(i_fsmount(inode), i_id(inode), st, name, which);
+	return i_fsys(inode)->Status(i_fsmount(inode), i_id(inode), st, name);
 }
 
 /* Return the FSE type of an i-node */
 inline static Fse_type i_type(Inode* inode)
 {
 	struct Stat s;
-	int rc = i_status(inode, &s, NULL, STAT_TYPE);
+	int rc = i_status(inode, &s, NULL);
 	assert(rc==0);
 	return s.st_type;
 }
@@ -245,18 +245,6 @@ void register_file_system(FSystem* fsys)
 }
 
 
-const char* const * get_filesystems()
-{
-	static const char* fsnames[FSYS_MAX+1];
-	int p=0;
-
-	for(unsigned i=0; i<FSYS_MAX; i++)
-		if(file_system_table[i] != NULL)
-			fsnames[p++] = file_system_table[i]->name;
-	return fsnames;
-}
-
-
 FSystem* get_fsys(const char* fsname)
 {
 	for(unsigned i=0; i<FSYS_MAX; i++)
@@ -378,8 +366,7 @@ Inode* dir_parent(Inode* dir)
 int dir_name(Inode* dir, pathcomp_t name)
 {
 	Inode* bdir AUTO_UNPIN = dir_back(dir);
-	struct Stat st;
-	return i_status(bdir, &st, name, STAT_NAME);
+	return i_status(bdir, NULL, name);
 }
 
 
@@ -565,7 +552,7 @@ int dir_umount(Inode* mpoint)
 	NULL and set_errcode() has been called with the correct 
 	error code.
 */
-Inode* lookup_pathname(const char* pathname, const char** last)
+Inode* resolve_pathname(const char* pathname, const char** last)
 {
 	int pathlen = strlen(pathname);
 	if(pathlen > MAX_PATHNAME) { set_errcode(ENAMETOOLONG); return NULL; }
@@ -650,6 +637,53 @@ Inode* lookup_pathname(const char* pathname, const char** last)
 
 
 
+int get_pathname(Inode* dir, char* buffer, unsigned int size)
+{	
+	char* buf = buffer;
+	unsigned int sz = size;
+
+	int bprintf(const char* str) {
+		unsigned int len = strlen(str);
+		if(len>=sz) {
+			set_errcode(ERANGE);
+			return -1;
+		} else {
+			strcpy(buf, str);
+			buf+=len;
+			sz -= len;
+			return 0;
+		}
+	}
+
+	int print_path_rec(Inode* dir, int level) {
+		/* Get your parent */
+		Inode* parent AUTO_UNPIN = dir_parent(dir);
+		if(parent==NULL) return -1;
+		if(parent == dir) {
+			/* We are the root */
+			return  (level == 0) ? bprintf("/") : 0;
+		} else {
+			/* We are just a normal dir */
+			int rc = print_path_rec(parent, level+1);
+			if(rc!=0) return rc;
+
+			pathcomp_t comp;
+			rc = dir_name(dir, comp);
+			if(rc!=0) return -1;
+
+			if(bprintf("/")!=0) return -1;
+			return bprintf(comp);
+		}
+	}
+
+	return print_path_rec(dir, 0);
+}
+
+
+
+
+
+
 /*=========================================================
 
 
@@ -680,7 +714,7 @@ Fid_t sys_Open(const char* pathname, int flags)
 
 	/* Take the path */
 	const char* last;
-	Inode* dir AUTO_UNPIN = lookup_pathname(pathname, &last);
+	Inode* dir AUTO_UNPIN = resolve_pathname(pathname, &last);
 	if(dir==NULL) {
         FCB_unreserve(1, &fid, &fcb);		
 		return NOFILE;
@@ -731,10 +765,10 @@ Fid_t sys_Open(const char* pathname, int flags)
 int sys_Stat(const char* pathname, struct Stat* statbuf)
 {	
 	/* Look it up */
-	Inode* inode AUTO_UNPIN = lookup_pathname(pathname, NULL);
+	Inode* inode AUTO_UNPIN = resolve_pathname(pathname, NULL);
 	if(inode==NULL) return -1;
 
-	int rc = i_status(inode, statbuf, NULL, STAT_ALL);
+	int rc = i_status(inode, statbuf, NULL);
 	if(rc) { set_errcode(rc); return -1; }
 	return 0;
 }
@@ -746,12 +780,12 @@ int sys_Link(const char* pathname, const char* newpath)
 {
 	/* Check new path */
 	const char* last;
-	Inode* newdir AUTO_UNPIN = lookup_pathname(newpath, &last);
+	Inode* newdir AUTO_UNPIN = resolve_pathname(newpath, &last);
 
 	if(newdir == NULL) return -1;
 	if(last==NULL || dir_name_exists(newdir, last)) { set_errcode(EEXIST); return -1; }
 
-	Inode* old AUTO_UNPIN = lookup_pathname(pathname, NULL);
+	Inode* old AUTO_UNPIN = resolve_pathname(pathname, NULL);
 	if(old==NULL) return -1;
 
 	/* They must be in the same FS */
@@ -770,7 +804,7 @@ int sys_Link(const char* pathname, const char* newpath)
 int sys_Unlink(const char* pathname)
 {
 	const char* last;
-	Inode* dir AUTO_UNPIN = lookup_pathname(pathname, &last);
+	Inode* dir AUTO_UNPIN = resolve_pathname(pathname, &last);
 
 	if(dir==NULL) return -1;
 	if(last==NULL) { set_errcode(EISDIR); return -1; }
@@ -792,7 +826,7 @@ int sys_Unlink(const char* pathname)
 int sys_MkDir(const char* pathname)
 {
 	const char* last;
-	Inode* dir AUTO_UNPIN = lookup_pathname(pathname, &last);
+	Inode* dir AUTO_UNPIN = resolve_pathname(pathname, &last);
 
 	if(dir==NULL) return -1;
 	if(last==NULL || dir_name_exists(dir, last)) { set_errcode(EEXIST); return -1; }
@@ -806,7 +840,7 @@ int sys_MkDir(const char* pathname)
 int sys_RmDir(const char* pathname)
 {
 	const char* last;
-	Inode* dir AUTO_UNPIN = lookup_pathname(pathname, &last);
+	Inode* dir AUTO_UNPIN = resolve_pathname(pathname, &last);
 	if(dir==NULL) { return -1; }
 	if(last==NULL) { set_errcode(ENOENT); return -1; }
 	if(strcmp(last,".")==0) { set_errcode(EINVAL); return -1; }	
@@ -820,50 +854,12 @@ int sys_RmDir(const char* pathname)
 int sys_GetCwd(char* buffer, unsigned int size)
 {
 	Inode* curdir = CURPROC->cur_dir;
-	
-	char* buf = buffer;
-	unsigned int sz = size;
-
-	int bprintf(const char* str) {
-		unsigned int len = strlen(str);
-		if(len>=sz) {
-			set_errcode(ERANGE);
-			return -1;
-		} else {
-			strcpy(buf, str);
-			buf+=len;
-			sz -= len;
-			return 0;
-		}
-	}
-
-	int print_path_rec(Inode* dir, int level) {
-		/* Get your parent */
-		Inode* parent AUTO_UNPIN = dir_parent(dir);
-		if(parent==NULL) return -1;
-		if(parent == dir) {
-			/* We are the root */
-			return  (level == 0) ? bprintf("/") : 0;
-		} else {
-			/* We are just a normal dir */
-			int rc = print_path_rec(parent, level+1);
-			if(rc!=0) return rc;
-
-			pathcomp_t comp;
-			rc = dir_name(dir, comp);
-			if(rc!=0) return -1;
-
-			if(bprintf("/")!=0) return -1;
-			return bprintf(comp);
-		}
-	}
-
-	return print_path_rec(curdir, 0);
+	return get_pathname(curdir, buffer, size);
 }
 
 int sys_ChDir(const char* pathname)
 {
-	Inode* dir AUTO_UNPIN = lookup_pathname(pathname, NULL);
+	Inode* dir AUTO_UNPIN = resolve_pathname(pathname, NULL);
 	if(dir==NULL)  return -1;
 	if(i_type(dir)!=FSE_DIR) {
 		set_errcode(ENOTDIR);
@@ -885,7 +881,7 @@ int sys_Mount(Dev_t device, const char* mount_point, const char* fstype, unsigne
 	FSystem* fsys = get_fsys(fstype);
 	if(fsys==NULL) { set_errcode(ENODEV); return -1; }
 
-	Inode* mpoint AUTO_UNPIN = lookup_pathname(mount_point, NULL);
+	Inode* mpoint AUTO_UNPIN = resolve_pathname(mount_point, NULL);
 	if(mpoint==NULL) return -1;
 	if(i_type(mpoint) != FSE_DIR) { set_errcode(ENOTDIR); return -1; }
 	if(mpoint->mounted) { set_errcode(EBUSY); return -1; }
@@ -902,7 +898,7 @@ int sys_Umount(const char* mount_point)
 	assert(mount_point != NULL);
 
 	/* Look up the mount point */
-	Inode* mpoint AUTO_UNPIN = lookup_pathname(mount_point, NULL);
+	Inode* mpoint AUTO_UNPIN = resolve_pathname(mount_point, NULL);
 	if(mpoint==NULL) return -1;
 
 	Inode* bmpoint AUTO_UNPIN = dir_back(mpoint);
@@ -921,7 +917,7 @@ int sys_Umount(const char* mount_point)
 int sys_StatFs(const char* pathname, struct StatFs* statfs)
 {
 	if(statfs == NULL) return set_errcode(EFAULT), -1;
-	Inode* inode AUTO_UNPIN = lookup_pathname(pathname, NULL);
+	Inode* inode AUTO_UNPIN = resolve_pathname(pathname, NULL);
 	if(inode==NULL) return -1;
 
 	FsMount* mnt = i_mnt(inode);

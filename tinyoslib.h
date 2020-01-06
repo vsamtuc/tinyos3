@@ -9,8 +9,16 @@
 	@file tinyoslib.h
 	@brief TinyOS standard library header file.
 
-	Small non-kernel routines for wrapping tinyos functionality go here.
+	Non-kernel routines for wrapping tinyos functionality.
   */
+
+
+/**
+	@brief Print an error message to standard output
+
+	@param msg A prefix to the error message.
+ */
+void PError(const char* msg);
 
 
 /**
@@ -59,30 +67,34 @@ Fid_t Dup(Fid_t oldfid);
 /**
 	@brief Try to reclaim the arguments of a process.
 
-	Given a @ref procinfo object returned by a @ref OpenInfo stream, 
+	Given \c task and its arguments \c argl and \c args,
 	if this process was executed by @ref Execute, try to reclaim the
 	arguments passed to it.
 
-	If the process was not executed by @ref Execute, or if its arguments 
-	were too long, this effort may fail, in which case -1 is returned. 
+	If the process was not executed by @ref Execute, this effort may fail, 
+	in which case -1 is returned. 
 
-	Else, the @c pinfo argument buffer defined by `(pinfo->argl, pinfo->args)` 
-	is parsed. Let it contain @c N arguments. Then,
-	- if @c prog is non-NULL, `*prog` is filled with a pointer to the function
-	  executed by @c Execute
-	- if @c argv is non-NULL, it is assumed that it points to an array of strings,
-	  of size argc. Then, min(argc, N) locations of this array are initialized
-	  from the arguments of @c pinfo.
-	- finally, N is returned.
+	Else, the arguments are parsed:
 
-	@param pinfo the procinfo object to process.
+	- If \c prog is non-NULL, the location of the executable function is
+	stored in it.
+
+	- The number of arguments, say N, is returned.
+
+	- If \c argv is non-\c NULL, it must point to an array of strings 
+	(const char*) of size \c argc. The first \c min(N,argc) elements of this
+	array are set to positions inside args, corresponding to the arguments
+	of the program.
+
+	@param task the task executed by this program (is used to determine the format of the args)
 	@param prog if not NULL, the location to hold the program's address.
 	@param argc the length of parameter @c argv
 	@param argv if not NULL, a string vector of size argc
-	@returns if @c pinfo is successfully parsed, the number of arguments is returned,
+	@returns if successfully parsed, the number of arguments is returned,
 	    else -1 is returned.
 */
-int ParseProcInfo(procinfo* pinfo, Program* prog, int argc, const char** argv );
+int ParseProgArgs(Task task, int argl, void* args, Program* prog, int argc, const char** argv );
+
 
 
 /**

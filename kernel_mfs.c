@@ -161,7 +161,7 @@ static memfs_inode* memfs_create_dir(memfs_mnt* mnt, memfs_inode* dir, const pat
 
 	rinode->pinned = 0;
 	rinode->type = FSE_DIR;
-	rinode->lnkcount = 0;  /* This corresponds to the '.' entry */
+	rinode->lnkcount = 0;
 
 	rdict_init(&rinode->dentry_dict, 8);
 
@@ -273,10 +273,9 @@ file_ops MEMFS_DIR = {
 };
 
 
-
 /*------------------------------
 
-	File implementation
+	Regular File implementation
 
  -------------------------------*/
 
@@ -539,7 +538,7 @@ file_ops MEMFS_FILE = {
 
 /*------------------------------
 
-	Generic API
+	FSystem API
 
  -------------------------------*/
 
@@ -662,38 +661,40 @@ static int memfs_truncate(MOUNT _mnt, inode_t _inode, intptr_t length)
 	return memfs_truncate_file(mnt, inode, length);
 }
 
-static int memfs_status(MOUNT _mnt, inode_t _inode, struct Stat* st, pathcomp_t name, int which)
+static int memfs_status(MOUNT _mnt, inode_t _inode, struct Stat* st, pathcomp_t name)
 {
 	DEF_ARGS(mnt,inode);
 
-	if(which & STAT_DEV) st->st_dev = 0;
-	if(which & STAT_INO) st->st_ino = _inode;
+	if(name!=NULL) {
+		if(inode->type == FSE_DIR)
+			strncpy(name, inode->name, MAX_NAME_LENGTH+1);
+		else
+			return ENOTDIR;
+	}
 
-	if(which & STAT_TYPE) 	st->st_type = inode->type;
-	if(which & STAT_NLINK) 	st->st_nlink = inode->lnkcount - inode->pinned;
+	if(st != NULL) {
+		st->st_dev = 0;
+		st->st_ino = _inode;
+		st->st_type = inode->type;
+		st->st_nlink = inode->lnkcount - inode->pinned;
 
-	/* Opt: the above are the generic attributes. Check if we need to
-		proceed. */
-	which &= ~(STAT_DEV|STAT_INO|STAT_TYPE|STAT_NLINK);
-	if(which==0) return 0;
+		st->st_rdev = NO_DEVICE;
+		st->st_blksize = MEMFS_BLKSIZE;
 
-	if(which & STAT_RDEV) st->st_rdev = NO_DEVICE;
-	if(which & STAT_BLKSZ) st->st_blksize = MEMFS_BLKSIZE;
-
-	switch(inode->type) {
+		switch(inode->type) {
 		case FSE_FILE:
-			if(which & STAT_SIZE) st->st_size = inode->size;
-			if(which & STAT_BLKNO) st->st_blocks = inode->nblocks;
-			if(which & STAT_NAME) return ENOTDIR;
+			st->st_size = inode->size;
+			st->st_blocks = inode->nblocks;
 			break;
 		case FSE_DIR:
-			if(which & STAT_SIZE)  st->st_size = inode->dentry_dict.size;
-			if(which & STAT_BLKNO) st->st_blocks = 0;
-			if(which & STAT_NAME) memcpy(name, inode->name, MAX_NAME_LENGTH+1);
+			st->st_size = inode->dentry_dict.size;
+			st->st_blocks = 0;
 			break;
 		default:
 			assert(0);
+		}
 	}
+
 	return 0;
 }
 

@@ -1,5 +1,4 @@
 
-#include <stddef.h>
 #include "kernel_pipe.h"
 #include "kernel_proc.h"
 #include "kernel_cc.h"

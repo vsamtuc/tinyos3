@@ -11,15 +11,21 @@
  ********************************************/
 
 
-/***********************************
+/*********************************************
 
-  The device table
+  The device directory.
 
-***********************************/
+  This is a dictionary mapping string names to
+  devices. This is the main way in which 
+  user code interacts with devices, and is much
+  more user-friendly than device numbers.
 
-DCB* device_table[DEV_MAX];
+  The contents of the device directory are
+  accessed through the 'devfs' file system.
 
+ *******************************************/
 
+/* A node in the device directory */
 typedef struct device_advert
 {
 	char* name;
@@ -50,6 +56,7 @@ static void dev_adv_free(rlnode* n)
 	free(adv);
 }
 
+/* The directory rdict */
 static rdict dev_directory;
 
 
@@ -68,20 +75,28 @@ void device_retract(const char* devname)
 }
 
 
+/***********************************
+
+  The device table
+
+***********************************/
+
+DCB* device_table[MAX_DEV];
+
 void initialize_devices()
 {
+	/* Init device directory */
 	rdict_init(&dev_directory, 0);
 
 	/*
 		Iterate through the device table and initialize each
 		device type.
 	 */	
-	for(int d=0; d<DEV_MAX; d++) {
+	for(int d=0; d<MAX_DEV; d++) {
 		if(device_table[d]) {
 			void (*devinit)() = device_table[d]->Init;
 			if(devinit) devinit();
 		}
-		else fprintf(stderr, "Device type %d is not initialized\n",d);
 	}
 }
 
@@ -89,12 +104,11 @@ void initialize_devices()
 void finalize_devices()
 {
 	/* Run finalizers */
-	for(int d=0; d<DEV_MAX; d++) {
+	for(int d=0; d<MAX_DEV; d++) {
 		if(device_table[d]) {
 			void (*devfini)() = device_table[d]->Fini;
 			if(devfini) devfini();
 		}
-		else fprintf(stderr, "Device type %d is not finalized\n",d);
 	}
 
 	/* Destroy the device directory */
@@ -110,9 +124,16 @@ void register_device(DCB* dcb)
 
 int device_open(uint major, uint minor, void** obj, file_ops** ops)
 {
-	if(major >= DEV_MAX) { set_errcode(ENXIO); return -1; }
+	/* Check limits */
+	if(major >= MAX_DEV || device_table[major]==NULL) { set_errcode(ENXIO); return -1; }
 	if(minor >= device_table[major]->devnum) { set_errcode(ENXIO); return -1; }
-	*obj = device_table[major]->Open(minor);
+
+	/* Check that open succeeds */
+	void* devstream = device_table[major]->Open(minor);
+	if(devstream == NULL) { set_errcode(ENXIO); return -1; }
+
+	/* Return stream */
+	*obj = devstream;
 	*ops = &device_table[major]->dev_fops;
 	return 0;
 }
@@ -126,7 +147,7 @@ uint device_no(uint major)
 /****************************************************
 
   The device file system. This is a really minimal
-  file system that depends on the device_publish/device_retract
+  file system that depends on the device directory
   facility to show all devices as special nodes in
   a directory.
 
@@ -249,30 +270,35 @@ int devfs_fetch(MOUNT _mnt, inode_t _dir, const pathcomp_t name, inode_t* id, in
 }
 
 
-int devfs_status(MOUNT _mnt, inode_t _ino, struct Stat* st, pathcomp_t name, int which)
+int devfs_status(MOUNT _mnt, inode_t _ino, struct Stat* st, pathcomp_t name)
 {
-	st->st_dev = 0;
-	st->st_ino = _ino;
-
 	if(_ino == (inode_t) NO_DEVICE) {
+		if(name != NULL) name[0]='\0';
+		if(st == NULL) return 0;
+
+		st->st_dev = 0;
+		st->st_ino = _ino;
 		st->st_type = FSE_DIR;
 		st->st_nlink = 2;
 		st->st_rdev = NO_DEVICE;
 		st->st_size = dev_directory.size;
 		st->st_blksize = 1024;
 		st->st_blocks = 0;
-		if(name != NULL) name[0]='\0';
+		return 0;
+	} else {
+		if(name != NULL) return ENOTDIR;
+		if(st == NULL) return 0;
+
+		st->st_dev = 0;
+		st->st_ino = _ino;
+		st->st_type = FSE_DEV;
+		st->st_nlink = 1;
+		st->st_rdev = (Dev_t) _ino;
+		st->st_size = 0;
+		st->st_blksize = 1024;
+		st->st_blocks = 0;		
 		return 0;
 	}
-
-	st->st_type = FSE_DEV;
-	st->st_nlink = 1;
-	st->st_rdev = (Dev_t) _ino;
-	st->st_size = 0;
-	st->st_blksize = 1024;
-	st->st_blocks = 0;
-	
-	return 0;
 }
 
 

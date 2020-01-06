@@ -14,12 +14,6 @@
 #include "util.h"
 
 
-void PError(const char* msg)
-{
-	char ebuf[64];
-	printf("%s: %s\n", msg, strerror_r(GetError(), ebuf, 64));
-}
-
 
 int Shell(size_t,const char**);
 int RunTerm(size_t,const char**);
@@ -47,6 +41,8 @@ int util_stat(size_t, const char**);
 int util_statfs(size_t, const char**);
 int util_ln(size_t, const char**);
 int util_rm(size_t, const char**);
+int util_ps(size_t, const char**);
+int util_df(size_t, const char**);
 int util_cat(size_t, const char**);
 int util_kill(size_t, const char**);
 int util_mount(size_t, const char**);
@@ -65,7 +61,6 @@ COMMANDS[]  =
 	{"fibo", Fibonacci, 1, "Compute a fibonacci number."},
 	{"cap", Capitalize, 0, "Copy stdin to stdout, capitalizing all letters"},
 	{"lcase", LowerCase, 0, "Copy stdin to stdout, lower-casing all letters"},
-	{"wc", WordCount, 0, "Count and print lines, words and chars of stdin"},
 	{"lenum", LineEnum, 0, "Copy stdin to stdout, adding line numbers"},
 	{"more", More, 0, "more [<n>] (default: <n>=20). Read the input <n> lines at a time."},	
 	{"symposium", Symposium_proc, 2, "Dining Philosophers(processes): symposium  <philosophers> <bites>"},
@@ -73,9 +68,10 @@ COMMANDS[]  =
 	{"hanoi", Hanoi, 1, "The towers of Hanoi."},
 	{"rserver", RemoteServer, 0, "A server for remote execution."},
 	{"rcli", RemoteClient, 1, "Remote client: rcli <cmd> [<args...>]."},
-	{"echo", Echo, 0, "echo [<args...>], send the <args...> to stdout"},
 
 	/* Unix-like file system utilities */
+	{"wc", WordCount, 0, "Count and print lines, words and chars of stdin"},
+	{"echo", Echo, 0, "echo [<args...>], send the <args...> to stdout"},
 	{"mkdir", util_mkdir, 1, "Make a new directory"},
 	{"rmdir", util_rmdir, 1, "Remove a directory"},
 	{"ls", util_ls, 0, "Show the contents of a directory"},
@@ -85,6 +81,9 @@ COMMANDS[]  =
 	{"rm", util_rm, 1, "Unlink a file"},
 	{"cat", util_cat, 0, "Concatenate a list of files"},
 	{"kill", util_kill, 1, "Kill a process"},
+
+	{"ps", util_ps, 0, "Process list"},
+	{"df", util_df, 0, "Report file system "},
 
 	{"mount", util_mount, 2, "Mount a file system to some location"},
 	{"umount", util_umount, 1, "Unmount a file system"},
@@ -202,45 +201,6 @@ int SystemInfo(size_t argc, const char** argv)
 {
 	printf("Number of cores         = %d\n", cpu_cores());
 	printf("Number of serial devices= %d\n", bios_serial_ports());
-	Fid_t finfo = OpenInfo();
-	if(finfo!=NOFILE) {
-		/* Print per-process info */
-		procinfo info;
-		printf("%5s %5s %-16s %8s %20s\n",
-			"PID", "PPID", "Status", "Threads", "Main program"
-			);
-		/* Read in next piece of info */		
-		while(Read(finfo, (char*) &info, sizeof(info)) > 0) {
-			Program prog=NULL;
-			const char* argv[10];
-			int argc = ParseProcInfo(&info, &prog, 10, argv);
-
-			const char* pname = "-";
-			if(argc>=1)  {
-				pname = argv[0];
-			} else if(argc==-1) {
-				/* Try to give some known names */
-				if(info.pid==1) pname = "init";
-			}
-
-			char status[17];
-			switch(info.status) {
-				case PROCINFO_ZOMBIE: sprintf(status,"ZOMBIE"); break;
-				case PROCINFO_RUNNABLE: sprintf(status,"RUNNABLE"); break;
-				case PROCINFO_STOPPED:
-				snprintf(status,17,"S:%-14s", info.wchan); break;
-			}
-
-			printf("%5d %5d %-16s %8u %20s\n",
-				info.pid,
-				info.ppid,
-				status,
-				info.thread_count,
-				pname
-				);
-		}
-	}
-	printf("\n");
 	return 0;
 }
 
@@ -1108,6 +1068,96 @@ int util_cat(size_t argc, const char** argv)
 	return 0;
 }
 
+
+int util_df(size_t argc, const char** argv)
+{
+	check_help(argc, argv,
+"Usage: df\n"
+"Show a list of the current mounted file systems.\n"
+ 	);
+
+	Fid_t mtab = Open("/dev/mnttab", OPEN_RDONLY);
+	if(mtab==NOFILE) { PError(argv[0]); return 1; }
+
+	FILE* fmtab = fidopen(mtab,"r");
+	char* mpoint = NULL;
+	size_t mplen = 0;
+	printf("%-7s %-8s %10s %10s %-4s %s\n", 
+		"Device", "Filesys", "Blocks", "Used", "Use%", "Mounted on");
+	while(! feof(fmtab)) {
+		int rc = getline(&mpoint, &mplen, fmtab);
+		if(rc<1) break;
+		mpoint[rc-1] = '\0';  /* Eat the newline */
+
+		struct StatFs st;
+		if(StatFs(mpoint, &st)!=0) { PError(mpoint); continue; }
+
+		char usage[20];
+		if(st.fs_blocks)
+			snprintf(usage,20, "%3.0f%%", 
+				(100.0*st.fs_bused)/(st.fs_blocks));
+		else
+			snprintf(usage,20,"-");
+
+		printf("%3u/%-3u %-8s %10u %10u %4s %s\n", 
+			DEV_MAJOR(st.fs_dev), DEV_MINOR(st.fs_dev),
+			st.fs_fsys, 
+			st.fs_blocks, st.fs_bused, usage,
+			mpoint);
+	}
+	free(mpoint);
+	return 0;
+}
+
+int util_ps(size_t argc, const char** argv)
+{
+	check_help(argc, argv,
+"Usage: ps\n"
+"Show a list of the current processes.\n"
+ 	);
+
+	Fid_t pi = Open("/dev/procinfo", OPEN_RDONLY);
+	if(pi==NOFILE) { PError(argv[0]); return 1; }
+	FILE* fpi = fidopen(pi,"r");
+	printf("%-5s %-5s %-18s %s\n", "PID", "PPID", "Status(wchan)", "Cmdline");
+	while(! feof(fpi)) {
+		Pid_t pid=0, ppid=0;
+		char status, wchan[16]="none";
+		Task task = NULL;
+		unsigned int argl = 0;
+
+		int rc = fscanf(fpi,"%u:%u:%c:%16[0-9A-Za-z_-]:%p:%u:", &pid, &ppid, &status, wchan, &task, &argl);
+		if(rc==EOF) break;
+		assert(rc == 6);
+
+		printf("%5d %5d %c %-16s ", pid, ppid, status, wchan);
+
+		char args[argl];
+		if(argl != 0) {	
+			char format[12];
+			sprintf(format,"%%%uc\\n", argl);
+			int rc2 = fscanf(fpi, format, args);
+			assert(rc2==1);
+		}
+
+		int argc = ParseProgArgs(task, argl,args, NULL, 0, NULL);
+		if(argc>=0) {
+			Program prog = NULL;
+			const char* argv[argc];
+			ParseProgArgs(task,argl,args, &prog, argc, argv);
+			for(unsigned int j=0;j<argc; j++) 
+				printf("%s ",argv[j]);
+		} else {
+			printf("-");
+		}
+
+		printf("\n");
+	}
+
+	fclose(fpi);
+	return 0;
+}
+
 int util_mount(size_t argc, const char** argv)
 {
 	checkargs(2);
@@ -1446,6 +1496,9 @@ finished:
  */
 int boot_shell(int argl, void* args)
 {
+	CHECK(MkDir("/dev"));
+	CHECK(Mount(0, "/dev", "devfs", 0, NULL));
+
 	int nshells = (GetTerminalDevices()>0) ? GetTerminalDevices() : 1;
 
 	/* Find the shell */

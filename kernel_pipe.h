@@ -1,6 +1,7 @@
 #ifndef __KERNEL_PIPE_H
 #define __KERNEL_PIPE_H
 
+#include <stddef.h>
 #include "kernel_sched.h"
 
 typedef struct ring_buffer {
