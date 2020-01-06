@@ -18,7 +18,6 @@ static ssize_t tinyos_fid_read(void *cookie, char *buf, size_t size)
 
 static ssize_t tinyos_fid_write(void *cookie, const char *buf, size_t size)
 {
-#if 1 
 	/* There is a bug in the custom stream code where it is assumed that all
 	   the bytes given will be written. Therefore, we cannot simply pass the
 	   arguments to Write(). Instead, we should write as much as we can, until 
@@ -32,10 +31,6 @@ static ssize_t tinyos_fid_write(void *cookie, const char *buf, size_t size)
 		nbytes += ret;
 	}
 	return nbytes;
-#else
-	int ret = Write(*(Fid_t*)cookie, buf, size);
-	return (ret<0) ? 0 : ret;
-#endif
 }
 
 

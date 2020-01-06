@@ -12,9 +12,6 @@
 	They can be used to run without terminals.
 */
 
-extern FILE *saved_in, *saved_out;
-
-
 static int stdio_read(void* __this, char *buf, unsigned int size)
 {
 	size_t ret;
@@ -44,6 +41,9 @@ file_ops __stdio_ops = {
 	.Write = stdio_write,
 	.Release = stdio_close
 };
+
+
+
 
 void tinyos_pseudo_console()
 {

@@ -2,14 +2,14 @@
 #include "kernel_proc.h"
 
 
-/*=========================================================
+/* =========================================================
 
-	Root file system
+	Memory-based file system
     -----------------
 
-	This is a minimal file system that is useful as a base 
-	for mount points. All contents of this filesystem are 
-	lost at reboot.
+	This is a simple file system that uses memory to store
+	its data. All contents of this filesystem are lost at 
+	reboot.
 
   =========================================================*/
 
