@@ -35,6 +35,12 @@ typedef int Pid_t;		/* The PID type  */
 */
 typedef unsigned long timeout_t;
 
+/**
+	@brief An integer type for wall-clock time.
+
+	Counts the number of micro-seconds since 1/1/1970
+ */
+typedef uint64_t timestamp_t;
 
 /** @brief The invalid PID */
 #define NOPROC (-1)
@@ -522,10 +528,7 @@ enum Open_flags
 	The stream returned by \c Open supports  operations depending on the type of underlying
 	file system element that was specified by \c pathname. The following rules apply.
 
-	- **Directories:** A directory can be opened only for reading. It is not allowed to
-	  create a directory via \c Open(). The stream returned by a directory is a sequence
-	  of 0-terminated strings, each string being the name of one member of the directory.
-	  Besides @ref Read(), the only other method callable on a directory stream is @ref Seek().
+	- **Directories:** A directory cannot be opened. But see @ref OpenDir().
 
 	- **Devices** Opening a device returns a stream sending and receiving from some device, such
 	  as the serial device. The actual semantics of I/O operations depend onthe particular device.
@@ -566,13 +569,47 @@ enum Open_flags
    - **@c ENAMETOOLONG** The pathname exceeds the limits of the operating system.
    - **@c ENOENT ** The pathname does not exist and creation was not requested.
    - **@c EEXIST ** The pathname does exist and \c OPEN_EXCL|OPEN_CREATE was specified.
-   - **@c EISDIR ** The pathname is a directory and the flags was not equal to \c OPEN_RDONLY.
+   - **@c EISDIR ** The pathname is a directory.
    - **@c ENODEV ** The pathname is a device special file and the actual device it describes does not exist.
    - **@c EROFS ** The filesystem is read-only and write access was requested.
    - **@c ENOMEM ** The kernel memory limit has been exceeded.
    - **@c ENOSPC ** The filesystem has no more roof for a new file
  */
 Fid_t Open(const char* pathname, int flags);
+
+
+/**
+	@brief  Open a directory to list its contents.
+
+	Return a stream which can be used to retrieve the names of the elements contained in
+	a directory. The stream supports the \c Read and \c Seek operations. However, the 
+	byte stream is encoded. To retrieve each element separately, use the library function
+	@ref ReadDir.
+
+	Seeking at random places in a directory will confuse \c ReadDir. However, positions
+	returned by `Seek(fd,0,1)` between calls to \c ReadDir can later be restored. For example:
+	\code
+	intptr_t pos = Seek(fd,0,1);
+	ReadDir(fd, buffer);
+	Seek(fd, pos, 0); // Restore the position
+	\endcode
+
+	@param pathname is the pathname to be opened
+	@param flags is a bit-wise OR of values of @ref enum Open_flags
+	@returns an fid of a new stream, or \c NOFILE in case of error. 
+	   Possible errors are:	   
+   - **@c EMFILE** The maximum number of per-process file descriptors has been reached.
+   - **@c ENFILE** The maximum number of system-wide files has been reached.
+   - **@c ENAMETOOLONG** The pathname exceeds the limits of the operating system.
+   - **@c ENOENT ** The pathname does not exist and creation was not requested.
+   - **@c EEXIST ** The pathname does exist and \c OPEN_EXCL|OPEN_CREATE was specified.
+   - **@c EISDIR ** The pathname is a directory.
+   - **@c ENODEV ** The pathname is a device special file and the actual device it describes does not exist.
+   - **@c EROFS ** The filesystem is read-only and write access was requested.
+   - **@c ENOMEM ** The kernel memory limit has been exceeded.
+   - **@c ENOSPC ** The filesystem has no more roof for a new file
+ */
+Fid_t OpenDir(const char* pathname);
 
 
 /**
@@ -630,6 +667,10 @@ struct Stat {
 	uintptr_t 		st_size;		/**< @brief Total size in bytes */
 	uintptr_t 		st_blksize;		/**< @brief Block size for file system I/O */
 	uintptr_t 		st_blocks;		/**< @brief Number of blocks allocated */
+
+	timestamp_t		st_change;		/**< @brief Timestamp of last change to i-node */
+	timestamp_t		st_modify;		/**< @brief Timestamp of last update to file content */
+	timestamp_t		st_access;		/**< @brief Timestamp of last access to file content */
 };
 
 

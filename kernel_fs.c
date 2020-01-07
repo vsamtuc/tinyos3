@@ -38,6 +38,12 @@ inline static int i_open(Inode* inode, int flags, void** obj, file_ops** ops)
 	return i_fsys(inode)->Open(i_fsmount(inode), i_id(inode), flags, obj, ops);
 }
 
+/* Wraps Open */
+inline static int i_listdir(Inode* inode, struct dir_list* dlist)
+{
+	return i_fsys(inode)->ListDir(i_fsmount(inode), i_id(inode), dlist);
+}
+
 /* Wraps Fetch */
 inline static int i_fetch(Inode* dir, const pathcomp_t name, inode_t* id, int creat)
 {
@@ -676,6 +682,102 @@ int get_pathname(Inode* dir, char* buffer, unsigned int size)
 
 
 
+/*---------------------------------------------
+ *
+ * Directory listing
+ *
+ * A dir_list is an object that can be used to
+ * make the contents of a directory available
+ * to the kernel in a standard format.
+ *
+ *-------------------------------------------*/
+
+typedef struct dir_list
+{
+	char* buffer;	/**< @brief the data of the dir_lsit */
+	size_t buflen;	/**< @brief length of \c buffer */
+	union {
+		intptr_t pos;	/**< @brief Current position during stream access */
+		void* builder;	/**< @brief Used while building the list */
+	};
+} dir_list;
+
+
+void dir_list_create(dir_list* dlist)
+{
+	dlist->buffer = NULL;
+	dlist->buflen = 0;
+	dlist->builder = open_memstream(& dlist->buffer, & dlist->buflen);
+}
+
+void dir_list_add(dir_list* dlist, const char* name)
+{
+	FILE* mfile = dlist->builder;
+	unsigned int len = strlen(name);
+	assert(len < 256);
+    fprintf(mfile, "%02x%s%c", len, name, 0);                  
+}
+
+void dir_list_open(dir_list* dlist)
+{
+	FILE* mfile = dlist->builder;
+	fclose(mfile);
+	dlist->pos = 0;	
+}
+
+int dir_list_read(void* _s, char* buf, unsigned int size)
+{
+	dir_list* s = _s;
+	if(size==0) return 0;
+	if(s->pos >= s->buflen) return 0;
+
+	size_t remaining_bytes = s->buflen - s->pos;
+	size_t txbytes = (remaining_bytes < size) ? remaining_bytes : size ;
+
+	memcpy(buf, s->buffer+s->pos, txbytes);
+	s->pos += txbytes;
+
+	return txbytes;
+}
+
+intptr_t dir_list_seek(void* _s, intptr_t offset, int whence)
+{
+	dir_list* s = _s;
+	intptr_t newpos;
+	switch(whence) {
+	        case SEEK_SET:
+	                newpos = 0; break;
+	        case SEEK_CUR: 
+	                newpos = s->pos; break;
+	        case SEEK_END:
+	                newpos = s->buflen; break;
+	        default:
+	                set_errcode(EINVAL);
+	                return -1;
+	}
+
+	newpos += offset;
+	if(newpos <0 || newpos>= s->buflen) {
+	                set_errcode(EINVAL);
+	                return -1;              
+	}
+	s->pos = newpos;
+	return newpos;
+}
+
+int dir_list_close(void* _dlist)
+{
+	dir_list* dlist = _dlist;
+	free(dlist->buffer);
+	free(dlist);
+	return 0;
+}
+
+static file_ops dir_list_ops = {
+	.Read = dir_list_read,
+	.Seek = dir_list_seek,
+	.Release = dir_list_close
+};
 
 
 /*=========================================================
@@ -685,7 +787,6 @@ int get_pathname(Inode* dir, char* buffer, unsigned int size)
 
 
   =========================================================*/
-
 
 
 
@@ -754,6 +855,41 @@ Fid_t sys_Open(const char* pathname, int flags)
 	return fid;
 }
 
+
+Fid_t sys_OpenDir(const char* pathname)
+{
+	Fid_t fid;
+	FCB* fcb;
+
+	/* Try to reserve ids */
+	if(! FCB_reserve(1, &fid, &fcb)) {
+		return NOFILE;
+	}
+	/* RESOURCE: Now we have reserved fid/fcb pair */
+
+	Inode* dir AUTO_UNPIN = resolve_pathname(pathname, NULL);
+	if(dir==NULL) {
+        FCB_unreserve(1, &fid, &fcb);		
+		return NOFILE;
+	}
+
+	dir_list* dlist = xmalloc(sizeof(dir_list));
+	dir_list_create(dlist);
+
+	int rc = i_listdir(dir, dlist);
+	dir_list_open(dlist);
+
+	if(rc) {
+		dir_list_close(dlist);
+        FCB_unreserve(1, &fid, &fcb);
+        set_errcode(rc);
+		return NOFILE;		
+	}
+
+	fcb->streamobj = dlist;
+	fcb->streamfunc = &dir_list_ops;
+	return fid;
+}
 
 
 int sys_Stat(const char* pathname, struct Stat* statbuf)
@@ -934,82 +1070,6 @@ int sys_StatFs(const char* pathname, struct StatFs* statfs)
 
 
 
-/*---------------------------------------------
- *
- * Directory listing
- *
- * A dir_list is an object that can be used to
- * make the contents of a directory available
- * to the kernel in a standard format.
- *
- *-------------------------------------------*/
-
-void dir_list_create(dir_list* dlist)
-{
-	dlist->buffer = NULL;
-	dlist->buflen = 0;
-	dlist->builder = open_memstream(& dlist->buffer, & dlist->buflen);
-}
-
-void dir_list_add(dir_list* dlist, const char* name)
-{
-	FILE* mfile = dlist->builder;
-	unsigned int len = strlen(name);
-	assert(len < 256);
-    fprintf(mfile, "%02x%s%c", len, name, 0);                  
-}
-
-void dir_list_open(dir_list* dlist)
-{
-	FILE* mfile = dlist->builder;
-	fclose(mfile);
-	dlist->pos = 0;	
-}
-
-int dir_list_read(dir_list* s, char* buf, unsigned int size)
-{
-	if(size==0) return 0;
-	if(s->pos >= s->buflen) return 0;
-
-	size_t remaining_bytes = s->buflen - s->pos;
-	size_t txbytes = (remaining_bytes < size) ? remaining_bytes : size ;
-
-	memcpy(buf, s->buffer+s->pos, txbytes);
-	s->pos += txbytes;
-
-	return txbytes;
-}
-
-intptr_t dir_list_seek(dir_list* s, intptr_t offset, int whence)
-{
-	intptr_t newpos;
-	switch(whence) {
-	        case SEEK_SET:
-	                newpos = 0; break;
-	        case SEEK_CUR: 
-	                newpos = s->pos; break;
-	        case SEEK_END:
-	                newpos = s->buflen; break;
-	        default:
-	                set_errcode(EINVAL);
-	                return -1;
-	}
-
-	newpos += offset;
-	if(newpos <0 || newpos>= s->buflen) {
-	                set_errcode(EINVAL);
-	                return -1;              
-	}
-	s->pos = newpos;
-	return newpos;
-}
-
-int dir_list_close(dir_list* dlist)
-{
-	free(dlist->buffer);
-	return 0;
-}
-
 
 
 /*========================================================
@@ -1050,6 +1110,7 @@ static int root_Unlink(MOUNT mnt, inode_t dir, const pathcomp_t name) { return E
 
 /* Reference to DEVFS driver */
 extern FSystem DEVFS;
+extern timestamp_t boot_timestamp;
 
 static int root_Truncate(MOUNT mnt, inode_t fino, intptr_t length) { 
 	return (fino==ROOT)? EISDIR : DEVFS.Truncate(mnt, fino, length);
@@ -1059,7 +1120,6 @@ static int root_StatFs(MOUNT mnt, struct StatFs* statfs) {
 	*statfs = (struct StatFs){ 0, ROOT, "rootfs", 0, 0, 0, 0 };
 	return 0;
 }
-
 
 static int root_Fetch(MOUNT mnt, inode_t dir, const pathcomp_t name, inode_t* ino, int createflag)
 { 
@@ -1074,26 +1134,24 @@ static int root_Fetch(MOUNT mnt, inode_t dir, const pathcomp_t name, inode_t* in
 	return DEVFS.Fetch(mnt, dir, name, ino, createflag);
 }
 
-static dir_list root_dlist = { .buffer = "01.\0" "02..\0" "03dev\0" , .buflen=15, .pos = 0 };
-static int root_dlist_close(void* obj) { free(obj); return 0; }
-static file_ops root_dir_ops = {
-	.Read = (void*)dir_list_read,
-	.Seek = (void*)dir_list_seek,
-	.Release = root_dlist_close
-};
 
 static int root_Open(MOUNT mnt, inode_t ino, int flags, void** obj, file_ops** ops)
 { 
 	if(ino!=ROOT) return DEVFS.Open(mnt, ino, flags, obj, ops);
-	if(flags!=OPEN_RDONLY) return EISDIR;
-	dir_list* dlist = xmalloc(sizeof(dir_list));
-	*dlist = root_dlist;
-	*obj = dlist;
-	*ops = &root_dir_ops;
+	return EISDIR;
+}
+
+static int root_ListDir(MOUNT mnt, inode_t ino, struct dir_list* dlist)
+{
+	if(ino!=ROOT) return DEVFS.ListDir(mnt, ino, dlist);
+	dir_list_add(dlist, ".");
+	dir_list_add(dlist, "..");
+	dir_list_add(dlist, "dev");
 	return 0;
 }
 
-static struct Stat root_stat = { 0, ROOT, FSE_DIR, 2, 0, 2, 0, 0 };
+static struct Stat root_stat = { .st_dev=0, .st_ino=ROOT, .st_type=FSE_DIR, 
+	.st_nlink=3, .st_rdev=0, .st_size=3, .st_blksize=0, .st_blocks=0 };
 
 static int root_Status(MOUNT mnt, inode_t ino, struct Stat* status, pathcomp_t name) {
 	if(ino!=ROOT && ino!=NO_DEVICE) return DEVFS.Status(mnt, ino, status, name);
@@ -1102,7 +1160,10 @@ static int root_Status(MOUNT mnt, inode_t ino, struct Stat* status, pathcomp_t n
 		if(name) strncpy(name, "dev", MAX_NAME_LENGTH);
 		return rc;
 	}
-	if(status) { *status = root_stat; }
+	if(status) { 
+		*status = root_stat;
+		status->st_access = status->st_modify = status->st_change = boot_timestamp;
+	}
 	if(name) { strncpy(name, "", MAX_NAME_LENGTH+1); }
 	return 0;
 }
@@ -1118,6 +1179,7 @@ static FSystem root_fsys = {
 	.Create = root_Create,
 	.Fetch = root_Fetch,
 	.Open = root_Open,
+	.ListDir = root_ListDir,
 	.Truncate = root_Truncate,
 	.Link = root_Link,
 	.Unlink = root_Unlink,

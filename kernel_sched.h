@@ -127,7 +127,6 @@ typedef struct thread_control_block {
 
 	TimerDuration wakeup_time; 	/**< @brief The absolute time this thread will be woken up 
 								by the scheduler after a timeout */
-	int cancel;					/**< @brief Flag to request that the thread be cancelled. */
 
 	rlnode sched_node; 	/**< @brief Node to use when queueing in the scheduler lists */
 	rlnode wqueue_node;	/**< @brief Node to use when waiting on a wait_queue */

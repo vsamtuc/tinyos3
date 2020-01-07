@@ -20,7 +20,6 @@
 
 
 extern FSystem MEM_FSYS;
-extern file_ops MEMFS_DIR;
 extern file_ops MEMFS_FILE;
 
 
@@ -61,6 +60,8 @@ typedef struct memfs_inode
 	Fse_type type;  		/* type */ 
 	unsigned int lnkcount;  /* links to this, includes dir entries and stream handles */
 
+	timestamp_t acc, chg, mod; /* time stamps */
+
 	union {
 		/* directory-related */
 		struct { 
@@ -81,8 +82,8 @@ typedef struct memfs_inode
 
 
 /* Forward declaration */
+static memfs_inode* memfs_alloc_node(memfs_mnt* mnt, Fse_type type);
 static int memfs_free_node(memfs_mnt* mnt, memfs_inode* ino);
-
 
 /* Incr/dect link counts. When lnkcount becomes 0, the i-node is deleted */
 
@@ -98,6 +99,20 @@ static inline int memfs_declink(memfs_mnt* mnt, memfs_inode* ino)
 		return memfs_free_node(mnt, ino);
 	return 0;
 }
+
+
+#define ACC 1
+#define MOD 2
+#define CHG 4
+
+static void mark_tstamp(memfs_inode* ino, int flags)
+{
+	timestamp_t ts = bios_clock();
+	if(flags & ACC) ino->acc = ts;
+	if(flags & MOD) ino->mod = ts;
+	if(flags & CHG) ino->chg = ts;
+}
+
 
 /*------------------------------------------------------
 	Directory implementation
@@ -157,11 +172,7 @@ static inline int dentry_remove(memfs_mnt* mnt, memfs_inode* dir, struct dentry_
 
 static memfs_inode* memfs_create_dir(memfs_mnt* mnt, memfs_inode* dir, const pathcomp_t name)
 {
-	memfs_inode* rinode = xmalloc(sizeof(memfs_inode));
-
-	rinode->pinned = 0;
-	rinode->type = FSE_DIR;
-	rinode->lnkcount = 0;
+	memfs_inode* rinode = memfs_alloc_node(mnt, FSE_DIR);
 
 	rdict_init(&rinode->dentry_dict, 8);
 
@@ -191,87 +202,6 @@ static int memfs_free_dir(memfs_mnt* mnt, memfs_inode* rinode)
 }
 
 
-/*
-	This stream object is used to provide the list of directory names
-	to a process.
- */
-struct memfs_dir_stream
-{
-	dir_list dlist;
-	memfs_mnt* mnt;
-	memfs_inode* inode;	/* The directory inode */
-};
-
-
-/*
-	Return a stream from which the list of current directory member names can be read.
- */
-static int memfs_open_dir(memfs_mnt* mnt, memfs_inode* inode, int flags, void** obj, file_ops** ops)
-{
-	/* The flag must be exactly OPEN_RDONLY */
-	if(flags != OPEN_RDONLY) return EISDIR;
-
-	/* Create the stream object */
-	struct memfs_dir_stream* s = xmalloc(sizeof(struct memfs_dir_stream));
-
-	/* Build the stream contents */
-	dir_list_create(& s->dlist);
-
-	void add_dentry_to_dlist(rlnode* p) {
-		struct dentry_node* dn = p->obj;
-		dir_list_add(& s->dlist, dn->name);
-	}
-
-	rdict_apply(& inode->dentry_dict, add_dentry_to_dlist);
-	dir_list_open(& s->dlist);
-
-	/* Initialize the rest */
-	s->mnt = mnt;
-	s->inode = inode;
-
-	/* Take a handle on the directory */
-	memfs_inclink(mnt, inode);
-	mnt->busy_count ++;
-
-	/* Return the right values */
-	*obj = s;
-	*ops = &MEMFS_DIR;
-
-	return 0;
-}
-
-int memfs_read_dir(void* this, char* buf, unsigned int size)
-{
-	struct memfs_dir_stream* s = this;
-	return dir_list_read(& s->dlist, buf, size);
-}
-
-intptr_t memfs_seek_dir(void* this, intptr_t offset, int which)
-{
-	struct memfs_dir_stream* s = this;
-	return dir_list_seek(& s->dlist, offset, which);
-}
-
-static int memfs_close_dir(void* this)
-{
-	struct memfs_dir_stream* s = this;
-	dir_list_close(& s->dlist);
-
-	/* Release handle on directory */
-	memfs_declink(s->mnt, s->inode);
-	s->mnt->busy_count --;
-
-	free(s);
-	return 0;
-}
-
-
-file_ops MEMFS_DIR = {
-	.Read = memfs_read_dir,
-	.Seek = memfs_seek_dir,
-	.Release = memfs_close_dir
-};
-
 
 /*------------------------------
 
@@ -279,12 +209,9 @@ file_ops MEMFS_DIR = {
 
  -------------------------------*/
 
-static memfs_inode* memfs_create_file()
+static memfs_inode* memfs_create_file(memfs_mnt* mnt)
 {
-	memfs_inode* rinode = xmalloc(sizeof(memfs_inode));
-	rinode->pinned = 0;
-	rinode->type = FSE_FILE;
-	rinode->lnkcount = 0;
+	memfs_inode* rinode = memfs_alloc_node(mnt, FSE_FILE);
 
 	rinode->size = 0;
 	rinode->nblocks = 0;
@@ -568,7 +495,6 @@ static int memfs_create(MOUNT _mnt, inode_t _dir, const pathcomp_t name, Fse_typ
 	};
 	dentry_add(mnt, dir, name, rinode);
 	*newino = (inode_t) rinode;
-	mnt->num_inodes ++;
 
 	return 0;
 }
@@ -680,6 +606,9 @@ static int memfs_status(MOUNT _mnt, inode_t _inode, struct Stat* st, pathcomp_t 
 
 		st->st_rdev = NO_DEVICE;
 		st->st_blksize = MEMFS_BLKSIZE;
+		st->st_access = inode->acc;
+		st->st_modify = inode->mod;
+		st->st_change = inode->chg;
 
 		switch(inode->type) {
 		case FSE_FILE:
@@ -698,6 +627,19 @@ static int memfs_status(MOUNT _mnt, inode_t _inode, struct Stat* st, pathcomp_t 
 	return 0;
 }
 
+
+static memfs_inode* memfs_alloc_node(memfs_mnt* mnt, Fse_type type)
+{
+	memfs_inode* inode = xmalloc(sizeof(memfs_inode));
+	mnt->num_inodes ++;
+
+	inode->pinned = 0;
+	inode->type = type;
+	inode->lnkcount = 0;
+	mark_tstamp(inode, ACC|MOD|CHG);
+
+	return inode;
+}
 
 
 static int memfs_free_node(memfs_mnt* mnt, memfs_inode* inode)
@@ -725,13 +667,37 @@ static int memfs_open(MOUNT _mnt, inode_t _inode, int flags, void** obj, file_op
 			return memfs_open_file(mnt, inode, flags, obj, ops);
 
 		case FSE_DIR:
-			return memfs_open_dir(mnt, inode, flags, obj, ops);
+			return EISDIR;
 
-		default:
+		default:  /* Not yet implemented */
 			assert(0);
 			return EIO;
 	};
 }
+
+
+/*
+	Return a stream from which the list of current directory member names can be read.
+ */
+static int memfs_list_dir(MOUNT _mnt, inode_t _inode, struct dir_list* dlist)
+{
+	DEF_ARGS(mnt,inode);
+
+	/* Check */
+	if(inode->type != FSE_DIR) return ENOTDIR;
+	if(dir_is_unlinked(inode)) return ENOENT;
+
+	/* Build the stream contents */
+	void add_dentry_to_dlist(rlnode* p) {
+		struct dentry_node* dn = p->obj;
+		dir_list_add(dlist, dn->name);
+	}
+
+	rdict_apply(& inode->dentry_dict, add_dentry_to_dlist);
+
+	return 0;
+}
+
 
 
 
@@ -862,6 +828,7 @@ FSystem MEM_FSYS = {
 	.Create = memfs_create,
 	.Fetch = memfs_fetch,
 	.Open = memfs_open,
+	.ListDir = memfs_list_dir,
 	.Truncate = memfs_truncate,
 	.Link = memfs_link,
 	.Unlink = memfs_unlink,

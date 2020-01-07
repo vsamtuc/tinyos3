@@ -33,7 +33,7 @@ typedef struct info_device_control_block
 
 
 /*
-	Create a series of 
+	Print one "line" for each ACTIVE or ZOMBIE PCB in the process table.
  */
 void write_procinfo(FILE* f)
 {
@@ -69,7 +69,7 @@ void write_procinfo(FILE* f)
 }
 
 /*
-	Return a sequence of strings where each line is a path with a mounted file system on
+	Return a sequence of strings where each line is a path with a mounted file system.
  */
 void write_mnttab(FILE* f)
 {
@@ -78,7 +78,7 @@ void write_mnttab(FILE* f)
 		FsMount* mnt = & mount_table[i];
 		if(mnt->fsys == NULL) continue;
 		if(get_pathname(mnt->mount_point, mpath, MAX_PATHNAME)==0) {
-			fprintf(f, "%s\n", mpath);
+			fprintf(f, "%s %u %s\n", mpath, mnt->device, mnt->fsys->name);
 		}
 	}
 }

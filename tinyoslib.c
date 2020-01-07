@@ -124,6 +124,36 @@ void PError(const char* msg, ...)
 }
 
 
+
+int GetTimestamp(timestamp_t* ts)
+{
+	Fid_t fclk = Open("/dev/clock", OPEN_RDONLY);
+	if(fclk==NOFILE) return -1;
+
+	int rc = Read(fclk, (void*)ts, sizeof(timestamp_t));
+	if(rc!=sizeof(timestamp_t)) return -1;
+
+	return 0;
+}
+
+void LocalTime(timestamp_t ts, struct tm* tm, unsigned long* usec)
+{
+	time_t tsec = ts/1000000;
+	(void) localtime_r(&tsec, tm);
+	if(usec) *usec = ts % 1000000;	
+}
+
+
+int GetTimeOfDay(struct tm* tm, unsigned long* usec)
+{
+	timestamp_t ts;
+	if(GetTimestamp(&ts)) return -1;
+	LocalTime(ts, tm, usec);
+	return 0;
+}
+
+
+
 static int exec_wrapper(int argl, void* args)
 {
 	/* unpack the program pointer */

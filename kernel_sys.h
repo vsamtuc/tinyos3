@@ -38,6 +38,7 @@ SYSCALL(ThreadDetach, int, (Tid_t tid), (tid))\
 SYSCALLV(ThreadExit, (int exitval), (exitval))\
 \
 SYSCALL(Open, Fid_t, (const char* pathname, int flags), (pathname, flags))\
+SYSCALL(OpenDir, Fid_t, (const char* pathname), (pathname))\
 SYSCALL(Stat, int, (const char* pathname, struct Stat* statbuf), (pathname, statbuf))\
 SYSCALL(Link, int, (const char* pathname, const char* newpath), (pathname, newpath))\
 SYSCALL(Unlink, int, (const char* pathname), (pathname))\

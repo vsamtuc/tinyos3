@@ -185,7 +185,6 @@ void initialize_TCB(TCB* tcb, PCB* pcb, Thread_type type)
 
 	/* Init other attributes */
 	tcb->wakeup_time = NO_TIMEOUT;
-	tcb->cancel = 0;
 	rlnode_init(&tcb->sched_node, tcb);
 	rlnode_init(& tcb->wqueue_node, tcb);
 	tcb->wqueue = NULL;

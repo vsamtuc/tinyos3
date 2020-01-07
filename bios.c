@@ -315,7 +315,11 @@ static void sigusr1_handler(int signo, siginfo_t* si, void* ctx)
 static TimerDuration get_coarse_time()
 {
 	struct timespec curtime;
+#if 0
 	CHECK(clock_gettime(CLOCK_REALTIME, &curtime));
+#else
+	CHECK(clock_gettime(CLOCK_REALTIME_COARSE, &curtime));
+#endif
 	return curtime.tv_nsec / 1000l + ((long long) curtime.tv_sec) *1000000ll;
 }
 

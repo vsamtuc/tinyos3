@@ -869,6 +869,8 @@ int util_ls(size_t argc, const char** argv)
 	}
 	if(nonopt==0) { list[0]="."; nlist=1; }
 
+	struct tm cur_time;
+	GetTimeOfDay(&cur_time, NULL);	
 
 	void ls_print(const char* name) {
 		if(!opt_all && name[0]=='.') return;  /* hidden files */
@@ -885,7 +887,17 @@ int util_ls(size_t argc, const char** argv)
 				case FSE_FILE: T="file"; break;
 				case FSE_DEV: T="dev"; break;
 			}
-			printf("%4s %5d %8zu ", T, st.st_nlink, st.st_size);
+			//  generate short time field for mtime
+			char mtime_buf[32];
+
+			struct tm tmtime;
+			LocalTime(st.st_modify, &tmtime, NULL);
+			if(tmtime.tm_year == cur_time.tm_year)
+				strftime(mtime_buf, 32, "%b %d %R", &tmtime);
+			else
+				strftime(mtime_buf, 32, "%b %d   %Y", &tmtime);
+
+			printf("%4s  %2d %6zu  %s  ", T, st.st_nlink, st.st_size, mtime_buf);
 		}
 
 		/* print name */
@@ -908,7 +920,7 @@ int util_ls(size_t argc, const char** argv)
 
 	for(int i=0; i<nfiles;i++) ls_print(files[i]);
 	for(int i=0; i<nlist; i++) {
-		Fid_t fdir = Open(list[i], OPEN_RDONLY);
+		Fid_t fdir = OpenDir(list[i]);
 		if(fdir==NOFILE) { PError(list[i]); continue; }
 		if(nfiles > 0 || i>0) printf("\n");
 		if(nfiles > 0 || nlist>1) printf("%s:\n", list[i]);
@@ -943,6 +955,14 @@ int util_stat(size_t argc, const char** argv)
 		}
 	}
 
+	void print_time(const char* label, timestamp_t ts) {
+		time_t T = ts / 1000000;
+		long usec = ts % 1000000;
+		struct tm tm;
+		char tbuf[64];
+		strftime(tbuf, 64, "%F %T", localtime_r(&T, &tm));
+		printf("%s: %s.%06lu\n", label, tbuf, usec);
+	}
 
 	for(int i=1; i<argc; i++) {
 		struct Stat st;
@@ -959,8 +979,11 @@ int util_stat(size_t argc, const char** argv)
 
 		if(st.st_type==FSE_DEV)
 			printf("\tDevice type: %3u/%-3u", DEV_MAJOR(st.st_rdev), DEV_MINOR(st.st_rdev));
-
 		printf("\n");
+
+		print_time("Access", st.st_access);
+		print_time("Modify", st.st_modify);
+		print_time("Change", st.st_change);
 	}
 	return 0;	
 }
@@ -1117,20 +1140,17 @@ int util_date(size_t argc, const char** argv)
 "Show the current date and time.\n"
  	);
 
-	TimerDuration t = 0;
+	/* Break down the time */
+	struct tm tm;
+	unsigned long usec;
+	int rc = GetTimeOfDay(&tm, &usec);
+	if(rc) { PError("%s: reading clock: ",argv[0]); return 1; }
 
-	Fid_t fclk = Open("/dev/clock", OPEN_RDONLY);
-	if(fclk==NOFILE) {
-		PError("%s: opening clock: ",argv[0]);
-		return 1;
-	}
-	if(Read(fclk, (void*) &t, sizeof(t))!=sizeof(t)) {
-		PError("%s: reading clock: ",argv[0]);
-		return 1;		
-	}
-	time_t T = t/1000000;
-	char buf[32];
-	printf("%s", ctime_r(&T, buf));
+	/* Print it */
+	char buf[64];
+	strftime(buf, 64, "%c", &tm);
+
+	printf("%s %7lu usec\n", buf, usec);
 	return 0;
 }
 

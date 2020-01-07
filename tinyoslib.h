@@ -163,5 +163,48 @@ void BarrierSync(barrier* bar, unsigned int n);
 int ReadDir(int dirfid, char* buffer, unsigned int size);
 
 
+/**
+	@brief Return a timestamp for the current time
+	
+	Read the current timestamp from /dev/clock and store it in \c ts.
+
+	@param ts the location where the timestamp is stored
+	@return 0 on success and -1 on failure. In case of failure,
+	  GetError() returns the error code.
+ */
+int GetTimestamp(timestamp_t* ts);
+
+
+struct tm;
+/**
+	@brief Convert a timestamp to broken-down time.
+
+	The conversion is made to local time.
+	Since `timestamp_t` has a resolution of microseconds, the time
+	in \c tm is the number of seconds, leaving some remainder.
+	If \c usec is not \c NULL, the remaining micro-seconds not 
+	included in \c tm are stored there.
+
+	@param ts the timestamp to convert
+	@param tm the location where the broken-down time is stored.
+	@param usec the location where the microsecond remainder is stored, or \c NULL
+ */
+void LocalTime(timestamp_t ts, struct tm* tm, unsigned long* usec);
+
+/**
+	@brief Return broken-down current time
+	
+	Read the current time from /dev/clock and break it down into 
+	a location. The current time is read using @ref GetTimeOfDay.
+	Conversion is made via @ref LocalTime.
+
+	@param tm the location where the broken-down time is stored.
+	@param usec the location where the microsecond remainder is stored, or \c NULL
+	@return 0 on success and -1 on failure. In case of failure,
+	  GetError() returns the error code.
+ */
+int GetTimeOfDay(struct tm* tm, unsigned long* usec);
+
+
 
 #endif

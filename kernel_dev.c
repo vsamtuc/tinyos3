@@ -83,10 +83,16 @@ void device_retract(const char* devname)
 
 DCB* device_table[MAX_DEV];
 
+/* This is initialized at the time devices are */
+TimerDuration boot_timestamp;
+
 void initialize_devices()
 {
 	/* Init device directory */
 	rdict_init(&dev_directory, 0);
+
+	/* Take down the time of boot */
+	boot_timestamp = bios_clock();
 
 	/*
 		Iterate through the device table and initialize each
@@ -158,7 +164,7 @@ uint device_no(uint major)
 extern FSystem DEVFS;
 
 /* Mount a file system of this type. */
-int devfs_mount(MOUNT* mnt, Dev_t dev, unsigned int param_no, mount_param* param_vec)
+static int devfs_mount(MOUNT* mnt, Dev_t dev, unsigned int param_no, mount_param* param_vec)
 {
     if(dev!=NO_DEVICE && dev!=0) return ENXIO;
     mnt->ptr = NULL;
@@ -166,10 +172,10 @@ int devfs_mount(MOUNT* mnt, Dev_t dev, unsigned int param_no, mount_param* param
 }
 
 /* Unmount a particular mount always succeeds */
-int devfs_umount(MOUNT mnt) { return 0; }
+static int devfs_umount(MOUNT mnt) { return 0; }
 
 
-int devfs_statfs(MOUNT mnt, struct StatFs* statfs)
+static int devfs_statfs(MOUNT mnt, struct StatFs* statfs)
 { 
 	statfs->fs_dev = 0;
 	statfs->fs_root = (inode_t) NO_DEVICE;
@@ -185,59 +191,36 @@ int devfs_statfs(MOUNT mnt, struct StatFs* statfs)
 
 
 /* This is a read-only file system */
-int devfs_create(MOUNT _mnt, inode_t _dir, const pathcomp_t name, Fse_type type, inode_t* newino, void* data)
+static int devfs_create(MOUNT _mnt, inode_t _dir, const pathcomp_t name, Fse_type type, inode_t* newino, void* data)
 { return EROFS; }
-int devfs_link(MOUNT _mnt, inode_t _dir, const pathcomp_t name, inode_t id)
+static int devfs_link(MOUNT _mnt, inode_t _dir, const pathcomp_t name, inode_t id)
 {  return EROFS; }
-int devfs_unlink(MOUNT _mnt, inode_t _dir, const pathcomp_t name)
+static int devfs_unlink(MOUNT _mnt, inode_t _dir, const pathcomp_t name)
 { return EROFS; }
 
 
 /* These always succeed */
-int devfs_pin(MOUNT _mnt, inode_t _ino) { return 0; }
-int devfs_unpin(MOUNT _mnt, inode_t _ino) { return 0; }
-int devfs_flush(MOUNT _mnt, inode_t _ino) { return 0; }
+static int devfs_pin(MOUNT _mnt, inode_t _ino) { return 0; }
+static int devfs_unpin(MOUNT _mnt, inode_t _ino) { return 0; }
+static int devfs_flush(MOUNT _mnt, inode_t _ino) { return 0; }
 
-
-static int __release_devfs_dir_list(void* this)
+static int devfs_listdir(MOUNT _mnt, inode_t _ino, struct dir_list* dlist)
 {
-	dir_list* dlist = this;
-	int ret = dir_list_close(dlist);
-	free(this);
-	return ret;
-}	
+	if(_ino != (inode_t) NO_DEVICE) return ENOTDIR;
 
-
-static file_ops devfs_dir_list_ops = {
-	.Read = (void*) dir_list_read,
-	.Seek = (void*) dir_list_seek,
-	.Release = __release_devfs_dir_list
-};
-
-int devfs_open(MOUNT _mnt, inode_t _ino, int flags, void** obj, file_ops** ops)
-{
-	if(_ino == (inode_t) NO_DEVICE) {
-		/* Return a stream listing the contents of dev_directory */
-		if(flags != OPEN_RDONLY) return EISDIR;
-
-		dir_list* dlist = xmalloc(sizeof(dir_list));
-		dir_list_create(dlist);
-
-		void dir_list_add_dev(rlnode* n) {
-			dev_advert* adv = n->obj;
-			dir_list_add(dlist, adv->name);
-		}
-
-		rdict_apply(& dev_directory, dir_list_add_dev);
-
-		dir_list_open(dlist);
-		*obj = dlist;
-		*ops = & devfs_dir_list_ops;
-
-		return 0;
+	void dir_list_add_dev(rlnode* n) {
+		dev_advert* adv = n->obj;
+		dir_list_add(dlist, adv->name);
 	}
 
-	/* The case of a Dev_t */
+	rdict_apply(& dev_directory, dir_list_add_dev);
+	return 0;
+}
+
+
+static int devfs_open(MOUNT _mnt, inode_t _ino, int flags, void** obj, file_ops** ops)
+{
+	if(_ino == (inode_t) NO_DEVICE) return EISDIR;
 	Dev_t dev = (Dev_t) _ino;
 	if(device_open(DEV_MAJOR(dev), DEV_MINOR(dev), obj, ops)==0)
 		return 0;
@@ -245,13 +228,13 @@ int devfs_open(MOUNT _mnt, inode_t _ino, int flags, void** obj, file_ops** ops)
 		return ENODEV;
 }
 
-int devfs_truncate(MOUNT _mnt, inode_t _ino, intptr_t length)
+static int devfs_truncate(MOUNT _mnt, inode_t _ino, intptr_t length)
 {
 	if(_ino != (inode_t) NO_DEVICE) return 0;
 	else return EISDIR;
 }
 
-int devfs_fetch(MOUNT _mnt, inode_t _dir, const pathcomp_t name, inode_t* id, int creat)
+static int devfs_fetch(MOUNT _mnt, inode_t _dir, const pathcomp_t name, inode_t* id, int creat)
 {
 	if(_dir != (inode_t) NO_DEVICE) return ENOTDIR;
 
@@ -270,35 +253,32 @@ int devfs_fetch(MOUNT _mnt, inode_t _dir, const pathcomp_t name, inode_t* id, in
 }
 
 
-int devfs_status(MOUNT _mnt, inode_t _ino, struct Stat* st, pathcomp_t name)
+static int devfs_status(MOUNT _mnt, inode_t _ino, struct Stat* st, pathcomp_t name)
 {
 	if(_ino == (inode_t) NO_DEVICE) {
 		if(name != NULL) name[0]='\0';
 		if(st == NULL) return 0;
 
-		st->st_dev = 0;
-		st->st_ino = _ino;
 		st->st_type = FSE_DIR;
 		st->st_nlink = 2;
 		st->st_rdev = NO_DEVICE;
 		st->st_size = dev_directory.size;
-		st->st_blksize = 1024;
-		st->st_blocks = 0;
-		return 0;
 	} else {
 		if(name != NULL) return ENOTDIR;
 		if(st == NULL) return 0;
 
-		st->st_dev = 0;
-		st->st_ino = _ino;
 		st->st_type = FSE_DEV;
 		st->st_nlink = 1;
 		st->st_rdev = (Dev_t) _ino;
 		st->st_size = 0;
-		st->st_blksize = 1024;
-		st->st_blocks = 0;		
-		return 0;
 	}
+
+	st->st_dev = 0;
+	st->st_ino = _ino;
+	st->st_blksize = 1024;
+	st->st_blocks = 0;
+	st->st_change = st->st_modify = st->st_access = boot_timestamp;
+	return 0;
 }
 
 
@@ -311,6 +291,7 @@ FSystem DEVFS = {
 	.Unpin = devfs_unpin,
 	.Flush = devfs_flush,
 	.Open = devfs_open,
+	.ListDir = devfs_listdir,
 	.Truncate = devfs_truncate,
 	.Fetch = devfs_fetch,
 	.Link = devfs_link,

@@ -13,6 +13,21 @@
 
 typedef char pathcomp_t[MAX_NAME_LENGTH+1];
 
+/** 
+	@brief Helper for directory listing streams.
+ 
+	A \c dir_list is an object that can be used to
+	make the contents of a directory available to the kernel 
+	in a standard format.
+
+	The \c OpenDir system call creates this object and passes it
+	to the \c ListDir method of a file system. The file system
+	can use \c dir_list_add to add each directory entry name.
+
+	@see dir_list_add
+  */
+struct dir_list;
+
 /*
 	A pointer type for mount objects. This is wrapped into a struct for type checking,
 	although this may be superfluous!
@@ -266,14 +281,42 @@ struct FSystem_type
 		@param flags 
 		@return 0 on success, or an error code. Possible errors:
 		- @c ENOENT  @c ino i-node does not exist
-		- @c EISDIR  The pathname is a directory and the flags was not equal to \c OPEN_RDONLY.
-   		- @c ENODEV  The pathname is a device special file and the actual device it describes does not exist.
+		- @c EISDIR  The inode is a directory and the flags was not equal to \c OPEN_RDONLY.
+   		- @c ENODEV  The inode is a device special file and the actual device it describes does not exist.
 		- @c EROFS   The filesystem is read-only and write access was requested.
 		- @c ENOMEM  The kernel memory limit has been exceeded.
 		- @c ENOSPC  The filesystem has no more roof for a new file
 		- @c EIO     An I/O error occurred while accessing the file system
 	*/
 	int (*Open)(MOUNT mnt, inode_t ino, int flags, void** obj, file_ops** ops);
+
+
+	/**
+		@brief Create a directory listing. 
+	
+		Return a stream object and a @c file_ops object that can be used to initialize
+		a File Control Block (FCB) so that standard stream operations (e.g., @c Read(),
+		@c Write(), etc) can be performed.
+
+		The @c flags argument is a bitwise-OR of @c Open_flags enumeration constants. Only
+		the status flags are supported.
+
+		It is not necessary for @c ino to be pinned for this call to succeed. Once a stream
+		is opened on an i-node, it retains the i-node (effectively pinning it) until the file
+		handle is closed.
+
+		@see enum Open_flags
+		@param mnt the mount object
+		@param ino the i-node to open a stream on
+		@param dlist the directory listing object
+		@return 0 on success, or an error code. Possible errors:
+		- @c ENOENT  @c ino i-node does not exist
+		- @c ENOTDIR  The inode is not adirectory
+		- @c ENOMEM  The kernel memory limit has been exceeded.
+		- @c EIO     An I/O error occurred while accessing the file system
+	*/
+	int (*ListDir)(MOUNT mnt, inode_t ino, struct dir_list* dlist);
+
 	
 	/**
 		@brief Add a hard link to an i-node.
@@ -589,62 +632,7 @@ int unpin_inode(Inode* inode);
 Inode* inode_if_pinned(FsMount* mnt, inode_t id);
 
 
-/** 
-	@brief Helper for directory listing streams.
- 
-	A \c dir_list is an object that can be used to
-	make the contents of a directory available to the kernel 
-	in a standard format.
- 
- 	To use it, a file system implementation can add a \c dir_list
- 	field to a stream object. The lifetime of a @c dir_list object
- 	has two phases. First, in the **build** phase, directory names
- 	are added to the object building the list. Then, in the **read** 
- 	phase, the information is read back via the stream API.
 
- 	For example:
- 	\code
-	struct my_dir_stream {
-		...
-		dir_list dlist;
-	};
-	
-	// Initialize the dlist field 
-	dir_list_create(& s->dlist);
-
-	// Add data 
-	for(every directory entry in a directory) {
-		...
-		dir_list_add(&s->dlist,  entry_name);
-	}
-	dir_list_open(&s->dlist);  // Prepare for reading
- 	\endcode
-	Functions @c dir_list_read, @c dir_list_seek and @c dir_list_close
-	can be called from inside the corresponding stream operations. 
-	For example:
-	\code
-	int my_dir_stream_read(void* obj, char* buffer, unisgned int size) {
-		my_dir_stream* s = obj;
-		...
-		return dir_list_read(&s->dlist, buffer, size);
-	}
-	\endcode
-  */
-
-typedef struct dir_listing 
-{
-	char* buffer;	/**< @brief the data of the dir_lsit */
-	size_t buflen;	/**< @brief length of \c buffer */
-	union {
-		intptr_t pos;	/**< @brief Current position during stream access */
-		void* builder;	/**< @brief Used while building the list */
-	};
-} dir_list;
-
-/**
-	@brief Initialize a \c dir_list to add contents
- */
-void dir_list_create(dir_list* dlist);
 
 /**
 	@brief Add a directory entry to the list
@@ -652,46 +640,7 @@ void dir_list_create(dir_list* dlist);
 	@param dlist the listing
 	@param name the name of this directory entry
  */
-void dir_list_add(dir_list* dlist, const char* name);
-
-/**
-	@brief Prepare \c dir_list for stream operations
-
-	This call ends the build phase and starts the read phase of the
-	\c dir_list object.
-
-	A call to \c dir_list_open should be made after all directory entries have
-	been added to the listing. After this call, it is possible
-	to call @c dir_list_read, @c dir_list_seek and @c dir_list_close
-	on the object.
-
-	@param dlist the listing
- */
-void dir_list_open(dir_list* dlist);
-
-/**
-	@brief Read bytes from a dir list object
-
-	This call should be used in the implementation of \c Read for
-	directory streams
- */
-int dir_list_read(dir_list* dlist, char* buf, unsigned int size);
-
-/**
-	@brief Release memory held by dir list object
-
-	This call should be used in the implementation of \c Release for
-	directory streams
- */
-int dir_list_close(dir_list* dlist);
-
-/**
-	@brief Seek to a new location in a dir list object
-
-	This call should be used in the implementation of \c Seek for
-	directory streams
- */
-intptr_t dir_list_seek(dir_list* dlist, intptr_t offset, int whence);
+void dir_list_add(struct dir_list* dlist, const char* name);
 
 
 
