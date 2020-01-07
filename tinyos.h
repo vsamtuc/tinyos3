@@ -452,6 +452,7 @@ enum Device_type
 	DEV_NULL,	/**< @brief Null device, Zero device */
 	DEV_INFO,	/**< @brief Info pseudo-devices */
 	DEV_SERIAL,	/**< @brief Serial device */
+	DEV_CLOCK,  /**< @brief Clock device */
 	MAX_DEV = 256 /**< @brief placeholder for maximum device number */
 };
 

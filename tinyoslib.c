@@ -120,7 +120,7 @@ void PError(const char* msg, ...)
 	va_end(ap);
 
 	char ebuf[164];
-	printf(": %s\n", msg, strerror_r(GetError(), ebuf, 164));
+	printf(": %s\n", strerror_r(GetError(), ebuf, 164));
 }
 
 

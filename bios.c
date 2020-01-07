@@ -316,7 +316,7 @@ static TimerDuration get_coarse_time()
 {
 	struct timespec curtime;
 	CHECK(clock_gettime(CLOCK_REALTIME, &curtime));
-	return curtime.tv_nsec / 1000l + curtime.tv_sec*1000000l;
+	return curtime.tv_nsec / 1000l + ((long long) curtime.tv_sec) *1000000ll;
 }
 
 

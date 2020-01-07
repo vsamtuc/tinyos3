@@ -47,7 +47,7 @@ int util_cat(size_t, const char**);
 int util_kill(size_t, const char**);
 int util_mount(size_t, const char**);
 int util_umount(size_t, const char**);
-
+int util_date(size_t, const char**);
 
 struct { const char * cmdname; Program prog; uint nargs; const char* help; } 
 COMMANDS[]  = 
@@ -81,6 +81,7 @@ COMMANDS[]  =
 	{"rm", util_rm, 1, "Unlink a file"},
 	{"cat", util_cat, 0, "Concatenate a list of files"},
 	{"kill", util_kill, 1, "Kill a process"},
+	{"date", util_date, 0, "Print the current date and time"},
 
 	{"ps", util_ps, 0, "Process list"},
 	{"df", util_df, 0, "Report file system "},
@@ -182,9 +183,8 @@ int RunTerm(size_t argc, const char** argv)
 	/* Change our own terminal, so that the child inherits it. */
 	const char* term = argv[1];
 	Fid_t termfid = Open(term, OPEN_RDWR);
-
 	if(termfid==NOFILE) {
-		PError("Error: Terminal '%s' is not valid: ", term);
+		PError("Error opening '%s': ", term);
 		return 1;
 	}
 	if(termfid!=0) {
@@ -856,16 +856,18 @@ int util_ls(size_t argc, const char** argv)
 		}
 	}
 
+	int nonopt = 0;
 	for(int i=1; i<argc;i++) {
 		if(argv[i][0]=='-' && argv[i][1]!='\0') set_options(argv[i]+1);
 		else { 
+			nonopt++;
 			int rc = Stat(argv[i], &st);
 			if(rc==-1) { PError(argv[i]); continue; }
 			if(st.st_type==FSE_DIR) { list[nlist++] = argv[i]; }
 			else { files[nfiles++] = argv[i]; }
 		}
 	}
-	if(nlist==0 && nfiles==0) { list[0]="."; nlist=1; }
+	if(nonopt==0) { list[0]="."; nlist=1; }
 
 
 	void ls_print(const char* name) {
@@ -908,6 +910,7 @@ int util_ls(size_t argc, const char** argv)
 	for(int i=0; i<nlist; i++) {
 		Fid_t fdir = Open(list[i], OPEN_RDONLY);
 		if(fdir==NOFILE) { PError(list[i]); continue; }
+		if(nfiles > 0 || i>0) printf("\n");
 		if(nfiles > 0 || nlist>1) printf("%s:\n", list[i]);
 
 		char name[MAX_NAME_LENGTH+1];
@@ -1105,6 +1108,32 @@ int util_df(size_t argc, const char** argv)
 	free(mpoint);
 	return 0;
 }
+
+
+int util_date(size_t argc, const char** argv)
+{
+	check_help(argc, argv,
+"Usage: date\n"
+"Show the current date and time.\n"
+ 	);
+
+	TimerDuration t = 0;
+
+	Fid_t fclk = Open("/dev/clock", OPEN_RDONLY);
+	if(fclk==NOFILE) {
+		PError("%s: opening clock: ",argv[0]);
+		return 1;
+	}
+	if(Read(fclk, (void*) &t, sizeof(t))!=sizeof(t)) {
+		PError("%s: reading clock: ",argv[0]);
+		return 1;		
+	}
+	time_t T = t/1000000;
+	char buf[32];
+	printf("%s", ctime_r(&T, buf));
+	return 0;
+}
+
 
 int util_ps(size_t argc, const char** argv)
 {
