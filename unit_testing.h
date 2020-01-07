@@ -170,7 +170,7 @@
 	the keyboard the given string.
     Here is their usage in a test:
     @code
-	file1 = OpenTerminal(1);     // open terminal 1
+	file1 = Open("/dev/serial2", OPEN_RDWR);     // open terminal 1
 
 	sendme(1, "hello");
 

@@ -9,7 +9,6 @@
 #define MAX_FILES MAX_PROC
 
 FCB FT[MAX_FILES];
-//rlnode FCB_freelist;
 FCB* FCB_freelist;
 
 
@@ -24,35 +23,22 @@ FCB* acquire_FCB()
 		fcb->streamfunc = NULL;
 	}
 	return fcb;
-#if 0
-  if(! is_rlist_empty(& FCB_freelist)) {
-    FCB* fcb = rlist_pop_front(& FCB_freelist)->fcb;
-    fcb->refcount = 0;
-    return fcb;
-  }
-  else
-    return NULL;
-#endif
 }
 
 void release_FCB(FCB* fcb)
 {
-	//rlist_push_back(& FCB_freelist, & fcb->freelist_node);
 	fcb->streamobj = FCB_freelist;
 	FCB_freelist = fcb;
 }
 
 void initialize_files()
 {
-  //rlnode_init(&FCB_freelist,NULL);
 	FCB_freelist = NULL;
 	for(int i=0;i<MAX_FILES;i++) {
 
-	FT[i].refcount = 0;
-	//rlnode_init(& FT[i].freelist_node, &FT[i]);
-	//rlist_push_back(&FCB_freelist, & FT[i].freelist_node);
-	release_FCB(&FT[i]);	
-  }
+		FT[i].refcount = 0;
+		release_FCB(&FT[i]);	
+	}
 }
 
 
@@ -129,9 +115,6 @@ void FCB_unreserve(size_t num, Fid_t *fid, FCB** fcb)
 		release_FCB(fcb[i]);
     }
 }
-
-
-
 
 
 
@@ -290,42 +273,39 @@ int sys_Dup2(int oldfd, int newfd)
 
 
 
-unsigned int sys_GetTerminalDevices()
+/*
+  Copy file descriptor oldfd.
+
+  This call returns 0 on success and -1 on failure.
+  Possible reasons for failure:
+  - Either oldfd or newfd is invalid.
+ */
+int sys_Dup(int oldfd)
 {
-	return device_no(DEV_SERIAL);
-}
+	if(oldfd<0 || oldfd>=MAX_FILEID) {
+		set_errcode(EBADF);
+		return NOFILE;	
+	}
 
+	FCB* old = get_fcb(oldfd);
 
-/**
-  Open a stream for the given device.
-  */
-Fid_t open_stream(uint major, unsigned int minor)
-{
-	Fid_t fid;
-	FCB* fcb;
-
-
-	if(! FCB_reserve(1, &fid, &fcb)) {
+	if(old==NULL) {
+		set_errcode(EBADF);
 		return NOFILE;
 	}
-  
-	if(device_open(major, minor, & fcb->streamobj, &fcb->streamfunc)) {
-		FCB_unreserve(1, &fid, &fcb);
-		return NOFILE;
+
+	Fid_t newfd = 0;
+	while(newfd<MAX_FILEID && get_fcb(newfd)!=NULL)
+		newfd++;
+	if(newfd==MAX_FILEID) {
+		set_errcode(EMFILE);
 	}
-  
-	return fid;
+
+	CURPROC->FIDT[newfd] = old;
+	FCB_incref(old);
+
+	return newfd;
 }
 
 
-int sys_OpenNull()
-{
-	return open_stream(DEV_NULL, 0);
-}
-
-
-Fid_t sys_OpenTerminal(unsigned int termno)
-{
-	return open_stream(DEV_SERIAL, termno);
-}
 

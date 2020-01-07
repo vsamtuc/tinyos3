@@ -307,7 +307,22 @@ FsMount* mount_acquire()
 	the same concept. 
   =========================================================*/
 
-/* Return a new pin to dir's front */
+static inline int replace_inode(Inode** ilval, Inode* newval) {
+	Inode* oldval = *ilval;
+	*ilval = newval;
+	return oldval ? unpin_inode(oldval) : 0;
+}
+
+/* Return 1 if dir corresponds to a mount point, either front or back */
+int dir_is_mount_point(Inode* dir) 
+{
+	if(dir->mounted) return 1;
+	FsMount* mnt = i_mnt(dir);
+	if(mnt->mount_point && mnt->root_dir == i_id(dir)) return 1;
+	return 0;
+}
+
+/* Return a pin to dir's front, consuming dir */
 Inode* dir_front(Inode* dir)
 {
 	if(dir->mounted)
@@ -316,7 +331,8 @@ Inode* dir_front(Inode* dir)
 		return repin_inode(dir);
 }
 
-/* Return new pin to dir's back */
+
+/* Return new pin to dir's back  */
 Inode* dir_back(Inode* dir) 
 {
 	FsMount* mnt = i_mnt(dir);
@@ -325,6 +341,7 @@ Inode* dir_back(Inode* dir)
 	else
 		return repin_inode(dir);
 }
+
 
 /*
 	Get a new pin on the parent of dir.
@@ -339,23 +356,8 @@ Inode* dir_parent(Inode* dir)
 		return NULL;
 	}
 
-	return pin_inode(i_mnt(bdir), par_id);
-#if 0
-	/* See if we are root */
-	if(par_id == i_id(dir)) {
-		/* Yes, we are a root in our file system.
-		  Take the parent of our mount point */
-		if(mnt->mount_point == NULL) {
-			/* Aha, we are **THE** root */
-			repin_inode(dir);
-			return dir;
-		} 
-		else
-			return dir_parent(mnt->mount_point);
-	}
-	/* We are no root, just pin the parent */
-	return pin_inode(mnt, par_id);
-#endif
+	Inode* parent AUTO_UNPIN = pin_inode(i_mnt(bdir), par_id);
+	return dir_front(parent);
 }
 
 /* 
@@ -371,8 +373,10 @@ int dir_name(Inode* dir, pathcomp_t name)
 
 
 /* Return true if the name exists in the directory */
-int dir_name_exists(Inode* dir, const pathcomp_t name)
+int dir_name_exists(Inode* _dir, const pathcomp_t name)
 {
+	assert(i_type(_dir)==FSE_DIR);
+	Inode* dir AUTO_UNPIN = dir_front(_dir);
 	if(strcmp(name, ".")==0 || strcmp(name, "..")==0) return 1;
 	inode_t id;
 	return i_fetch(dir, name, &id, 0) == 0;
@@ -404,37 +408,26 @@ int dir_name_exists(Inode* dir, const pathcomp_t name)
  */
 Inode* dir_fetch(Inode* dir, const pathcomp_t name, int creat)
 {
-	/* Check the easy case */
+	/* Check the easy cases */
 	if(strcmp(name, "..")==0) 
 		return dir_parent(dir);
 
-	Inode* inode = NULL;
+	if(strcmp(name, ".")==0) 
+		return dir_front(dir);
 
-	if(strcmp(name, ".")==0) {
-		repin_inode(dir);
-		inode = dir;
-	} else {
-		inode_t id;
+	/* Take the front */
+	Inode* fdir AUTO_UNPIN = dir_front(dir);
 
-		/* Do a lookup */
-		int rc = i_fetch(dir, name, &id, creat);
-		if(rc != 0) { set_errcode(rc); return NULL; }
+	/* Do the lookup */
+	inode_t id;
+	int rc = i_fetch(fdir, name, &id, creat);
+	if(rc != 0) { set_errcode(rc); return NULL; }
 
-		/* Pin the fetched i-node */
-		inode = pin_inode(i_mnt(dir), id);
-		if(inode==NULL) return NULL;
-	}
+	/* Pin the fetched i-node */
+	Inode* inode AUTO_UNPIN = pin_inode(i_mnt(dir), id);
+	if(inode==NULL) return NULL;
 	
-	/* Check to see if inode has a mounted directory on it, and
-	   if so, take that. */
-	if(inode->mounted != NULL) {
-		FsMount* mnt = inode->mounted;
-		unpin_inode(inode);
-		inode = pin_inode(mnt, mnt->root_dir);
-		if(inode==NULL) return NULL;
-	}
-
-	return inode;
+	return dir_front(inode);
 }
 
 
@@ -445,11 +438,12 @@ Inode* dir_fetch(Inode* dir, const pathcomp_t name, int creat)
  */
 Inode* dir_create(Inode* dir, const pathcomp_t name, Fse_type type, void* data)
 {
-	FsMount* mnt = i_mnt(dir);
+	Inode* fdir AUTO_UNPIN = dir_front(dir);
+	FsMount* mnt = i_mnt(fdir);
 	FSystem* fsys = mnt->fsys;
 	inode_t new_id;
 
-	int rc = fsys->Create(mnt->fsmount, i_id(dir), name, type, &new_id, data);
+	int rc = fsys->Create(mnt->fsmount, i_id(fdir), name, type, &new_id, data);
 	if(rc != 0) { set_errcode(rc); return NULL; }
 	return pin_inode(mnt, new_id);
 }
@@ -458,11 +452,17 @@ Inode* dir_create(Inode* dir, const pathcomp_t name, Fse_type type, void* data)
 /*
 	Mount a file system on mpoint. Return 0 on success or an error code.
  */
-int dir_mount(Inode* mpoint, Dev_t device, FSystem* fsys, unsigned int pmc, mount_param* pmv)
+int dir_mount(Inode* mpt, Dev_t device, FSystem* fsys, unsigned int pmc, mount_param* pmv)
 {
+	assert(mpt);
+	assert(fsys);
 	/* TODO: check that the device is not busy */
 
 	/* TODO 2: Check that the device and fstype agree */
+
+	/* Take the mpoint back (if not null) */
+	Inode* mpoint AUTO_UNPIN = dir_back(mpt);
+	if(mpoint->mounted) return EBUSY;
 
 	/* Get the mount record */
 	FsMount* mnt = mount_acquire();
@@ -470,23 +470,22 @@ int dir_mount(Inode* mpoint, Dev_t device, FSystem* fsys, unsigned int pmc, moun
 
 	int rc = fsys->Mount(& mnt->fsmount, device, pmc, pmv);
 	if(rc==0) {
-		/* Link mount point and mount object */
-		if(mpoint) {
-			mnt->mount_point = repin_inode(mpoint);
-			mpoint->mounted = mnt;
-			/* Add new system to submounts of mount_point's mount */
-			FsMount* pmnt = i_mnt(mpoint);
-			rlist_push_back(& pmnt->submount_list, & mnt->submount_node);
-		} else 
-			mnt->mount_point = NULL;
-
-		/* Cache the mounted fs root */
 		struct StatFs sfs;
-		fsys->StatFs(mnt->fsmount, &sfs);
+		fsys->StatFs(mnt->fsmount, &sfs); /* This does not fail */
+		assert(strcmp(sfs.fs_fsys, fsys->name)==0);
+
+		/* Init fields of mnt */
+		mnt->device = device;
+		mnt->fsys = fsys;
 		mnt->root_dir = sfs.fs_root;
 
-		/* This assignment makes the FsMount object reserved! */
-		mnt->fsys = fsys;
+		/* Link mount point and mount object */
+		mnt->mount_point = repin_inode(mpoint);
+		mpoint->mounted = mnt;
+
+		/* Add new mount to submounts of mount_point's mount */
+		FsMount* pmnt = i_mnt(mpoint);
+		rlist_push_back(& pmnt->submount_list, & mnt->submount_node);
 	}
 	return rc;
 }
@@ -494,18 +493,17 @@ int dir_mount(Inode* mpoint, Dev_t device, FSystem* fsys, unsigned int pmc, moun
 
 /*
 	Unmounts the mount at 'mpoint', if not busy, returns 0 on success,
-	or an error code on failure. 
-
-	If mpoint is NULL, the root file system is unmounted.
+	or an error code on failure.
  */
 int dir_umount(Inode* mpoint)
 {
-	assert(mpoint==NULL || mpoint->mounted != NULL);
+	assert(mpoint!=NULL && mpoint->mounted != NULL);
 
-	FsMount* mnt = mpoint ? mpoint->mounted : mount_table;
+	FsMount* mnt = mpoint->mounted;
 	if(mnt->use_count) return EBUSY;
 
 	assert(is_rlist_empty(& mnt->submount_list));
+	assert(mnt->mount_point == mpoint);
 
 	int rc = mnt->fsys->Unmount(mnt->fsmount);
 	if(rc==0) {
@@ -625,12 +623,8 @@ Inode* resolve_pathname(const char* pathname, const char** last)
 			/* one last hop */
 			if(! advance()) return NULL;
 		}	
-	} else {
-		if(*base!='\0') 
-			*last = base;
-		else
-			*last = NULL;
-	}
+	} else 
+		*last = base;
 
 	return inode;
  }
@@ -719,7 +713,7 @@ Fid_t sys_Open(const char* pathname, int flags)
         FCB_unreserve(1, &fid, &fcb);		
 		return NOFILE;
 	}
-	if(last == NULL) 
+	if(*last == '\0') 
 		/* The pathname ended in '/', fix it! */
 		last = ".";
 
@@ -783,16 +777,13 @@ int sys_Link(const char* pathname, const char* newpath)
 	Inode* newdir AUTO_UNPIN = resolve_pathname(newpath, &last);
 
 	if(newdir == NULL) return -1;
-	if(last==NULL || dir_name_exists(newdir, last)) { set_errcode(EEXIST); return -1; }
+	if(*last=='\0' || dir_name_exists(newdir, last)) { set_errcode(EEXIST); return -1; }
 
 	Inode* old AUTO_UNPIN = resolve_pathname(pathname, NULL);
 	if(old==NULL) return -1;
 
 	/* They must be in the same FS */
-	if(i_mnt(old) != i_mnt(newdir)) {
-		set_errcode(EXDEV);
-		return -1;
-	}
+	if(i_mnt(old) != i_mnt(newdir)) { set_errcode(EXDEV); return -1; }
 
 	int rc = i_link(newdir, last, i_id(old));
 	if(rc) { set_errcode(rc); return -1; }
@@ -807,7 +798,7 @@ int sys_Unlink(const char* pathname)
 	Inode* dir AUTO_UNPIN = resolve_pathname(pathname, &last);
 
 	if(dir==NULL) return -1;
-	if(last==NULL) { set_errcode(EISDIR); return -1; }
+	if(*last=='\0') { set_errcode(EISDIR); return -1; }
 
 	Inode* inode AUTO_UNPIN = dir_fetch(dir, last, 0);
 
@@ -829,7 +820,7 @@ int sys_MkDir(const char* pathname)
 	Inode* dir AUTO_UNPIN = resolve_pathname(pathname, &last);
 
 	if(dir==NULL) return -1;
-	if(last==NULL || dir_name_exists(dir, last)) { set_errcode(EEXIST); return -1; }
+	if(*last=='\0' || dir_name_exists(dir, last)) { set_errcode(EEXIST); return -1; }
 	if(i_type(dir)!=FSE_DIR) { set_errcode(ENOTDIR); return -1; }
 
 	Inode* newdir AUTO_UNPIN = dir_create(dir, last, FSE_DIR, NULL);
@@ -839,23 +830,38 @@ int sys_MkDir(const char* pathname)
 
 int sys_RmDir(const char* pathname)
 {
-	const char* last;
-	Inode* dir AUTO_UNPIN = resolve_pathname(pathname, &last);
+	Inode* dir AUTO_UNPIN = resolve_pathname(pathname, NULL);
 	if(dir==NULL) { return -1; }
-	if(last==NULL) { set_errcode(ENOENT); return -1; }
-	if(strcmp(last,".")==0) { set_errcode(EINVAL); return -1; }	
-	if(! dir_name_exists(dir,last)) { set_errcode(ENOENT); return -1; }
+	if(i_type(dir)!=FSE_DIR) { set_errcode(ENOTDIR); return -1; }
 
-	int rc = i_unlink(dir, last);
+	if(dir_is_mount_point(dir)) { set_errcode(EBUSY); return -1; }
+
+	Inode* parent AUTO_UNPIN = dir_parent(dir);
+	if(parent==NULL) return 0; /* dir is already deleted! */
+
+	/* Parent is a mount point! dir is on the back! */
+	if(i_mnt(dir) != i_mnt(parent)) {
+		assert(dir_is_mount_point(parent) && parent->mounted == NULL);
+		replace_inode(&parent, dir_back(parent));
+	}
+	assert(i_mnt(dir) == i_mnt(parent));
+
+	pathcomp_t name;
+	int rc = dir_name(dir, name);
+	assert(rc==0);
+
+	rc = i_unlink(parent, name);
 	if(rc) { set_errcode(rc); return -1; }
 	return 0;
 }
+
 
 int sys_GetCwd(char* buffer, unsigned int size)
 {
 	Inode* curdir = CURPROC->cur_dir;
 	return get_pathname(curdir, buffer, size);
 }
+
 
 int sys_ChDir(const char* pathname)
 {
@@ -884,7 +890,6 @@ int sys_Mount(Dev_t device, const char* mount_point, const char* fstype, unsigne
 	Inode* mpoint AUTO_UNPIN = resolve_pathname(mount_point, NULL);
 	if(mpoint==NULL) return -1;
 	if(i_type(mpoint) != FSE_DIR) { set_errcode(ENOTDIR); return -1; }
-	if(mpoint->mounted) { set_errcode(EBUSY); return -1; }
 
 	int rc = dir_mount(mpoint, device, fsys, paramc, paramv);
 	if(rc) { set_errcode(rc); return -1; }
@@ -1006,6 +1011,121 @@ int dir_list_close(dir_list* dlist)
 }
 
 
+
+/*========================================================
+  Rootfs is a minimal read-only file system, whose only
+  element is the root node. 
+
+  Used as the first system, on which mounting can be done.
+
+  Rootfs exposes /dev which is also stateless, but without
+  actually mounting it! It just redirects calls to it.
+ ---------------------------------------------------------*/
+
+/* 
+	These calls are trivial 
+*/
+static int root_Mount(MOUNT* mnt, Dev_t dev, 
+			unsigned int param_no, mount_param* param_vec)
+{ return 0; }
+
+static int root_Unmount(MOUNT mnt) { return 0; }
+
+static int root_Pin(MOUNT mnt, inode_t ino) { return 0; }
+static int root_Unpin(MOUNT mnt, inode_t ino) { return 0; }
+static int root_Flush(MOUNT mnt, inode_t ino) { return 0; }
+
+static int root_Create(MOUNT mnt, inode_t dir, const pathcomp_t name, Fse_type type, inode_t* newino, void* data)
+{ return EROFS; }
+static int root_Link(MOUNT mnt, inode_t dir, const pathcomp_t name, inode_t ino) { return EROFS; }
+static int root_Unlink(MOUNT mnt, inode_t dir, const pathcomp_t name) { return EROFS; }
+
+/*
+	Devfs uses all legal Dev_t values as well as NO_DEVICE for inodes.
+	The root of rootfs can then be (MAX_DEV)<<16|0, which is not a
+	legal i-node for devfs!
+ */
+
+#define ROOT ((inode_t)((MAX_DEV)<<16))
+
+/* Reference to DEVFS driver */
+extern FSystem DEVFS;
+
+static int root_Truncate(MOUNT mnt, inode_t fino, intptr_t length) { 
+	return (fino==ROOT)? EISDIR : DEVFS.Truncate(mnt, fino, length);
+}
+
+static int root_StatFs(MOUNT mnt, struct StatFs* statfs) {
+	*statfs = (struct StatFs){ 0, ROOT, "rootfs", 0, 0, 0, 0 };
+	return 0;
+}
+
+
+static int root_Fetch(MOUNT mnt, inode_t dir, const pathcomp_t name, inode_t* ino, int createflag)
+{ 
+	if(dir==ROOT) {
+		if((strcmp(name,".")==0 || strcmp(name,"..")==0) ) { *ino=ROOT; return 0; } 
+		if(strcmp(name,"dev")==0) { *ino = NO_DEVICE; return 0; }
+		return (createflag) ? EROFS : ENOENT;
+	}
+	if(dir==NO_DEVICE) {
+		if(strcmp(name,"..")==0) { *ino=ROOT; return 0; }
+	}
+	return DEVFS.Fetch(mnt, dir, name, ino, createflag);
+}
+
+static dir_list root_dlist = { .buffer = "01.\0" "02..\0" "03dev\0" , .buflen=15, .pos = 0 };
+static int root_dlist_close(void* obj) { free(obj); return 0; }
+static file_ops root_dir_ops = {
+	.Read = (void*)dir_list_read,
+	.Seek = (void*)dir_list_seek,
+	.Release = root_dlist_close
+};
+
+static int root_Open(MOUNT mnt, inode_t ino, int flags, void** obj, file_ops** ops)
+{ 
+	if(ino!=ROOT) return DEVFS.Open(mnt, ino, flags, obj, ops);
+	if(flags!=OPEN_RDONLY) return EISDIR;
+	dir_list* dlist = xmalloc(sizeof(dir_list));
+	*dlist = root_dlist;
+	*obj = dlist;
+	*ops = &root_dir_ops;
+	return 0;
+}
+
+static struct Stat root_stat = { 0, ROOT, FSE_DIR, 2, 0, 2, 0, 0 };
+
+static int root_Status(MOUNT mnt, inode_t ino, struct Stat* status, pathcomp_t name) {
+	if(ino!=ROOT && ino!=NO_DEVICE) return DEVFS.Status(mnt, ino, status, name);
+	if(ino==NO_DEVICE) {
+		int rc = DEVFS.Status(mnt, ino, status, NULL);
+		if(name) strncpy(name, "dev", MAX_NAME_LENGTH);
+		return rc;
+	}
+	if(status) { *status = root_stat; }
+	if(name) { strncpy(name, "", MAX_NAME_LENGTH+1); }
+	return 0;
+}
+
+static FSystem root_fsys = {
+	.name = "rootfs",
+	.Mount = root_Mount,
+	.Unmount = root_Unmount,
+
+	.Pin = root_Pin,
+	.Unpin = root_Unpin,
+	.Flush = root_Flush,
+	.Create = root_Create,
+	.Fetch = root_Fetch,
+	.Open = root_Open,
+	.Truncate = root_Truncate,
+	.Link = root_Link,
+	.Unlink = root_Unlink,
+	.Status = root_Status,
+	.StatFs = root_StatFs
+};
+
+
 /*=========================================================
 
 
@@ -1029,11 +1149,14 @@ void initialize_filesys()
 	/* Init inode_table and root_node */
 	rdict_init(&inode_table, MAX_PROC);
 
-	/* FsMount the memfs as the root filesystem */
-	FSystem* rfsys = get_fsys("memfs");
-	int rc = dir_mount(NULL, NO_DEVICE, rfsys, 0, NULL);
-	assert(rc==0);
-	if(rc!=0) abort();
+	/* Init mount_table[0] with the root filesystem */
+	mount_table[0].use_count = 0;
+	mount_table[0].fsys = &root_fsys;
+	mount_table[0].device = 0;
+	mount_table[0].mount_point = NULL;
+	mount_table[0].root_dir = ROOT;
+	mount_table[0].fsmount = (MOUNT){ NULL};
+
 }
 
 
@@ -1047,7 +1170,7 @@ int umount_all(FsMount* mnt)
 		if(rc) return rc;
 	}
 	Inode* mpoint = mnt->mount_point;
-	return dir_umount(mpoint);
+	return mpoint ? dir_umount(mpoint) : 0;
 }
 
 

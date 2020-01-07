@@ -74,14 +74,12 @@ void write_procinfo(FILE* f)
 void write_mnttab(FILE* f)
 {
 	char mpath[MAX_PATHNAME];
-	for(uint i=0; i< MOUNT_MAX; i++) {
+	for(uint i=1; i< MOUNT_MAX; i++) {
 		FsMount* mnt = & mount_table[i];
 		if(mnt->fsys == NULL) continue;
-		Inode* mpoint = pin_inode(mnt, mnt->root_dir);
-		if(get_pathname(mpoint, mpath, MAX_PATHNAME)==0) {
+		if(get_pathname(mnt->mount_point, mpath, MAX_PATHNAME)==0) {
 			fprintf(f, "%s\n", mpath);
 		}
-		unpin_inode(mpoint);
 	}
 }
 

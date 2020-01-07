@@ -45,6 +45,7 @@ file_ops __stdio_ops = {
 
 
 
+
 void tinyos_pseudo_console()
 {
 	Fid_t fid[2];

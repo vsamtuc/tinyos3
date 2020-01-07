@@ -37,10 +37,6 @@ SYSCALL(ThreadJoin, int, (Tid_t tid, int* exitval), (tid, exitval))\
 SYSCALL(ThreadDetach, int, (Tid_t tid), (tid))\
 SYSCALLV(ThreadExit, (int exitval), (exitval))\
 \
-SYSCALL(GetTerminalDevices, unsigned int, (), ())\
-SYSCALL(OpenTerminal, Fid_t, (unsigned int termno), (termno))\
-SYSCALL(OpenNull, Fid_t, (), ())\
-\
 SYSCALL(Open, Fid_t, (const char* pathname, int flags), (pathname, flags))\
 SYSCALL(Stat, int, (const char* pathname, struct Stat* statbuf), (pathname, statbuf))\
 SYSCALL(Link, int, (const char* pathname, const char* newpath), (pathname, newpath))\
@@ -50,7 +46,8 @@ SYSCALL(RmDir, int, (const char* pathname), (pathname))\
 SYSCALL(ChDir, int, (const char* pathname), (pathname))\
 SYSCALL(GetCwd, int, (char* buffer, unsigned int size), (buffer, size))\
 \
-SYSCALL(Mount, int, (Dev_t dev, const char* mpoint, const char* fstype, unsigned int paramc, mount_param* paramv),(dev,mpoint,fstype,paramc, paramv))\
+SYSCALL(Mount, int, (Dev_t dev, const char* mpoint, const char* fstype, unsigned int paramc, mount_param* paramv), \
+	(dev,mpoint,fstype,paramc, paramv))\
 SYSCALL(Umount, int, (const char* mpoint),(mpoint))\
 SYSCALL(StatFs, int, (const char* mpoint, struct StatFs* statfs), (mpoint, statfs))\
 \
@@ -58,6 +55,7 @@ SYSCALL(Read,int,(Fid_t fd, char *buf, unsigned int size), (fd,buf,size))\
 SYSCALL(Write,int,(Fid_t fd, const char *buf, unsigned int size), (fd,buf,size))\
 SYSCALL(Seek, intptr_t, (int fid, intptr_t offset, int whence), (fid, offset, whence))\
 SYSCALL(Close,int,(Fid_t fd),(fd))\
+SYSCALL(Dup, Fid_t, (Fid_t oldfd), (oldfd))\
 SYSCALL(Dup2,int, (Fid_t oldfd, Fid_t newfd), (oldfd,newfd))\
 \
 SYSCALL(Pipe, int, (pipe_t* pipe), (pipe))\

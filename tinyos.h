@@ -435,7 +435,6 @@ void ThreadExit(int exitval);
  *
  *******************************************/
 
-
 /**
 	@brief Device id.
 
@@ -457,51 +456,21 @@ enum Device_type
 };
 
 
-
+/** @brief An invalid device id  */
 #define NO_DEVICE ((Dev_t) -1)
+
+/** @brief Extract the major number from a device id  */
 #define DEV_MAJOR(dev)  ((uint16_t) ((dev)>>16))
+
+/** @brief Extract the major number from a device id  */
 #define DEV_MINOR(dev)  ((uint16_t) (dev))
 
+/** @brief Combine a major and minor number into a device id  */
 static inline Dev_t device_id(uint16_t major, uint16_t minor) 
 {
 	return (((Dev_t) major) << 16) | ((Dev_t) minor);
 }
 
-
-
-/** @brief Return the number of terminal devices available. 
-
-  Terminals are numbered starting from 0. 
- */
-unsigned int GetTerminalDevices();
-
-/** @brief Open a stream on terminal device 'termno'.
-
-  @param termno the terminal number to open
-  @return the file ID of the new descriptor
-    On success, OpenTerminal returns the file id for a new file for this 
-   terminal. On error, it returns @c NOFILE. Possible errors are:
-   - **@c ENODEV** The terminal device does not exist.
-   - **@c EMFILE** The maximum number of per-process file descriptors has been reached.
-   - **@c ENFILE** The maximum number of system-wide files has been reached.
-
- */
-Fid_t OpenTerminal(unsigned int termno);
-
-
-/** @brief Open a stream on the null device.
-
-  The null device is a virtual device representing an "infinite"
-  sequence of 0 bytes.  Every read on this device returns the
-  requested number of 0s. Also, every write to this device has
-  no effecf.
-
-  @return On success, OpenNull returns the file id for a new file for this 
-  terminal. On error, it returns NOFILE. Possible errors are:
-   - **@c EMFILE** The maximum number of per-process file descriptors has been reached.
-   - **@c ENFILE** The maximum number of system-wide files has been reached.
-*/
-Fid_t OpenNull();
 
 
 /*******************************************

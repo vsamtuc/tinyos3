@@ -173,20 +173,20 @@ int RunTerm(size_t argc, const char** argv)
 {
 	checkargs(2);
 
-	int term = getint(1);
 	int prog = getprog(2);
-
-	if(term<0 || term>=GetTerminalDevices()) {
-		printf("The terminal provided is not valid: %d\n", term);
-		return 1;
-	}
 	if(prog<0) {
 		printf("The program provided is not valid: %s\n", argv[2]);
 		return 2;		
 	}
 
 	/* Change our own terminal, so that the child inherits it. */
-	int termfid = OpenTerminal(term);
+	const char* term = argv[1];
+	Fid_t termfid = Open(term, OPEN_RDWR);
+
+	if(termfid==NOFILE) {
+		PError("Error: Terminal '%s' is not valid: ", term);
+		return 1;
+	}
 	if(termfid!=0) {
 		Dup2(termfid, 0);
 		Close(termfid);
@@ -912,10 +912,7 @@ int util_ls(size_t argc, const char** argv)
 
 		char name[MAX_NAME_LENGTH+1];
 		int rc;
-#if 0
-		printf("Type Links     Size Name\n"
-			   "------------------------\n");
-#endif
+
 		while( (rc=ReadDir(fdir, name, MAX_NAME_LENGTH+1)) > 0)
 		{
 			ls_print(name);
@@ -1237,14 +1234,6 @@ int process_builtin(int argc, const char** argv)
 }
 
 
-static inline Fid_t savefid(Fid_t fsaved)
-{
-	Fid_t savior = OpenNull();
-	assert(savior!=NOFILE);
-	Dup2(fsaved, savior);
-	return savior;
-}
-
 
 int process_line(int argc, const char** argv)
 {
@@ -1496,43 +1485,38 @@ finished:
  */
 int boot_shell(int argl, void* args)
 {
-	CHECK(MkDir("/dev"));
-	CHECK(Mount(0, "/dev", "devfs", 0, NULL));
-
-	int nshells = (GetTerminalDevices()>0) ? GetTerminalDevices() : 1;
+	//CHECK(MkDir("/dev"));
+	//CHECK(Mount(0, "/dev", "devfs", 0, NULL));
 
 	/* Find the shell */
 	int shprog = getprog_byname("sh");
+	int nshells = 0;
 
-	if(GetTerminalDevices()) {
-		fprintf(stderr, "Switching standard streams\n");
-		tinyos_replace_stdio();
-		for(int i=0; i<nshells; i++) {
-			int fdin = OpenTerminal(i);
-			if(fdin!=0) {  Dup2(fdin, 0 ); Close(fdin);  }
-			int fdout = OpenTerminal(i);
-			if(fdout!=1) {  Dup2(fdout, 1 ); Close(fdout);  }
-			Execute(COMMANDS[shprog].prog, 1, & COMMANDS[shprog].cmdname );
-			Close(0);
-		}
-		while( WaitChild(NOPROC, NULL)!=NOPROC ); /* Wait for all children */
-		tinyos_restore_stdio();
-	} else {
-		fprintf(stderr, "Switching standard streams to pseudo console\n");
-		tinyos_replace_stdio();
+	fprintf(stderr, "Switching standard streams\n");
+	tinyos_replace_stdio();
 
-		for(int i=0; i<nshells; i++) {
-			Close(0); Close(1);
-			tinyos_pseudo_console();
-			Execute(COMMANDS[shprog].prog, 1, & COMMANDS[shprog].cmdname );
-		}
-		while( WaitChild(NOPROC, NULL)!=NOPROC ); /* Wait for all children */
+	for(int i=1; i<=4; i++) {
+		char termpath[32];
+		snprintf(termpath,32,"/dev/serial%d",i);
 
-		tinyos_restore_stdio();
+		Fid_t fd = Open(termpath, OPEN_RDWR);
+		if(fd==NOFILE) continue;
 
-		//Execute(COMMANDS[shprog].prog, 1, & COMMANDS[shprog].cmdname );
-		//while( WaitChild(NOPROC, NULL)!=NOPROC ); /* Wait for all children */
+		if(fd!=0) { Dup2(fd,0); Close(fd); }
+		Dup2(0,1);
+
+		Execute(COMMANDS[shprog].prog, 1, & COMMANDS[shprog].cmdname );
+		nshells++;
 	}
+
+	if(nshells==0) {
+		Close(0); Close(1);
+		tinyos_pseudo_console();
+		Execute(COMMANDS[shprog].prog, 1, & COMMANDS[shprog].cmdname );		
+	}
+
+	while( WaitChild(NOPROC, NULL)!=NOPROC ); /* Wait for all children */
+	tinyos_restore_stdio();
 
 	return 0;
 }

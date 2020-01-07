@@ -18,7 +18,7 @@
 
 	@param msg A prefix to the error message.
  */
-void PError(const char* msg);
+void PError(const char* fmtmsg,...);
 
 
 /**

@@ -25,6 +25,16 @@
  *
  */
 
+int GetTerminalDevices()
+{
+	return bios_serial_ports();
+}
+
+Fid_t OpenTerminal(uint i) {
+	char termpath[32];
+	snprintf(termpath,32,"/dev/serial%d", i+1);
+	return Open(termpath, OPEN_RDWR);
+}
 
 /*
 	test_boot
@@ -525,7 +535,7 @@ BOOT_TEST(test_dup2_error_on_invalid_fid,
 {
 	ASSERT_ERRNO(Dup2(NOFILE, 3)==-1, EBADF);
 	ASSERT_ERRNO(Dup2(MAX_FILEID, 3)==-1, EBADF);
-	Fid_t fid = OpenNull(0);
+	Fid_t fid = Open("/",OPEN_RDONLY);
 	FATAL_ASSERT(fid!=NOFILE);
 	ASSERT_ERRNO(Dup2(fid, NOFILE)==-1, EBADF);
 	ASSERT_ERRNO(Dup2(fid, MAX_FILEID)==-1, EBADF);
@@ -745,21 +755,22 @@ BOOT_TEST(test_null_device,
 	)
 {
 
-	void test_read(Fid_t fid)
-	{
-		char z[] = "zavarakatranemia";
-		char z1[] = "\0\0\0\0\0\0\0\0\0\0anemia";
-		ASSERT(Read(fid, z, 10)==10);
-		ASSERT(memcmp(z,z1, 17)==0);
-	}
+	char z[] = "zavarakatranemia";
+	char z1[] = "\0\0\0\0\0\0\0\0\0\0anemia";
 
-	Fid_t fn = OpenNull();
+	Fid_t fn = Open("/dev/null", OPEN_RDWR);
 	ASSERT(fn!=-1);
-
-	test_read(fn);
+	ASSERT(Read(fn, z, 10)==0);
 	ASSERT(Write(fn, NULL, 123456)==123456);
-
 	ASSERT(Close(fn)==0);
+
+	Fid_t fz = Open("/dev/zero", OPEN_RDWR);
+	ASSERT(Read(fz, z, 10)==10);
+	ASSERT(Write(fz, NULL, 123456)==123456);
+	ASSERT(memcmp(z,z1, 17)==0);
+
+	ASSERT(Close(fz)==0);
+
 	return 0;
 }
 
@@ -869,7 +880,6 @@ BOOT_TEST(test_write_to_many_terminals,
 
 		checked_write(term[i], message);
 	}
-
 
 	return 0;
 }
@@ -1304,11 +1314,7 @@ BOOT_TEST(test_pipe_single_producer,
 	/* First, make pipe.read be zero. We cannot just Dup, because we may close pipe.write */
 	if(pipe.read != 0) {
 		if(pipe.write==0) {
-			/* Get a null stream! */
-			Fid_t fid = OpenNull();
-			FATAL_ASSERT(fid!=NOFILE);
-			Dup2(0, fid);
-			pipe.write = fid;
+			pipe.write = Dup(0);
 		}
 		Dup2(pipe.read, 0);
 		Close(pipe.read);
@@ -1340,11 +1346,7 @@ BOOT_TEST(test_pipe_multi_producer,
 	/* First, make pipe.read be zero. We cannot just Dup, because we may close pipe.write */
 	if(pipe.read != 0) {
 		if(pipe.write==0) {
-			/* Get a null stream! */
-			Fid_t fid = OpenNull();
-			FATAL_ASSERT(fid!=NOFILE);
-			Dup2(0, fid);
-			pipe.write = fid;
+			pipe.write = Dup(0);
 		}
 		Dup2(pipe.read, 0);
 		Close(pipe.read);
@@ -1439,10 +1441,7 @@ BOOT_TEST(test_pipe_reads_writes, "Test that the consumer reads what the produce
 	if(pipe.read != 0) {
 		if(pipe.write==0) {
 			/* Get a null stream! */
-			Fid_t fid = OpenNull();
-			FATAL_ASSERT(fid!=NOFILE);
-			Dup2(0, fid);
-			pipe.write = fid;
+			pipe.write = Dup(0);
 		}
 		Dup2(pipe.read, 0);
 		Close(pipe.read);
@@ -1574,7 +1573,7 @@ BOOT_TEST(test_listen_fails_on_bad_fid,
 	)
 {
 	ASSERT(Listen(7)==-1);
-	ASSERT(Listen(OpenNull())==-1);
+	ASSERT(Listen(Open("/dev/null",OPEN_RDONLY))==-1);
 	ASSERT(Listen(NOFILE)==-1);
 	ASSERT(Listen(MAX_FILEID)==-1);	
 	return 0;
@@ -1633,7 +1632,7 @@ BOOT_TEST(test_accept_fails_on_bad_fid,
 	)
 {
 	ASSERT(Accept(7)==-1);
-	ASSERT(Accept(OpenNull())==-1);
+	ASSERT(Accept(Open("/dev/null",OPEN_RDONLY))==-1);
 	ASSERT(Accept(NOFILE)==-1);
 	ASSERT(Accept(MAX_FILEID)==-1);
 	
@@ -1696,7 +1695,7 @@ BOOT_TEST(test_accept_fails_on_exhausted_fid,
 	ASSERT(Listen(lsock)==0);
 
 	/* If MAX_FILEID is odd, allocate an extra fid */
-	if( (MAX_FILEID & 1) == 1 )  OpenNull();
+	if( (MAX_FILEID & 1) == 1 )  Open("/dev/null", OPEN_RDONLY);
 
 	/* Allocate pairs of fids */
 	for(uint i=0;i< (MAX_FILEID-1)/2 ; i++) {		
@@ -1750,7 +1749,7 @@ BOOT_TEST(test_connect_fails_on_bad_fid,
 	)
 {
 	ASSERT(Accept(7)==-1);
-	ASSERT(Accept(OpenNull())==-1);
+	ASSERT(Accept(Open("/dev/null",OPEN_RDONLY))==-1);
 	ASSERT(Accept(NOFILE)==-1);
 	ASSERT(Accept(MAX_FILEID)==-1);
 

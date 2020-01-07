@@ -104,6 +104,7 @@ struct FSystem_type
 		 - @c EBUSY the device is already mounted
 		 - @c EINVAL the device does not have the right format
 		 - @c ENODEV the file system type is not supported
+		-  @c EIO an I/O error occurred while mounting the file system
 	*/
 	int (*Mount)(MOUNT* mnt, Dev_t dev, 
 				unsigned int param_no, mount_param* param_vec);
@@ -118,6 +119,7 @@ struct FSystem_type
 		@param mnt the mount object
 		@return 0 on success, or an error code. Possible errors:
 		- @c EBUSY cannot unmount because the file system is busy (has pinned i-nodes)
+		- @c EIO an I/O error occurred while accessing the file system
 	 */
 	int (*Unmount)(MOUNT mnt);
 
@@ -147,6 +149,7 @@ struct FSystem_type
 		@param ino the i-node to pin
 		@return 0 on success, or an error code. Possible errors:
 		- @c ENOENT the i-node does not exist
+		- @c EIO an I/O error occurred while accessing the file system
 	  */
 	int (*Pin)(MOUNT mnt, inode_t ino);
 
@@ -162,6 +165,7 @@ struct FSystem_type
 		@param ino the i-node to unpin
 		@return 0 on success, or an error code. Possible errors:
 		- @c ENOENT the i-node does not exist
+		- @c EIO an I/O error occurred while accessing the file system
 	  */
 	int (*Unpin)(MOUNT mnt, inode_t ino);
 
@@ -178,7 +182,7 @@ struct FSystem_type
 		@param mnt the mount object
 		@param ino the i-node to flush
 		@return 0 on success, or an error code. Possible errors:
-		- @c ENOENT the i-node does not exist
+		- @c ENOENT the @c ino i-node does not exist
 		- @c EINTR the operation was interrupted by a signal
 		- @c EIO an I/O error occurred while accessing the file system
 	 */
@@ -261,6 +265,7 @@ struct FSystem_type
 		@param ino the i-node to open a stream on
 		@param flags 
 		@return 0 on success, or an error code. Possible errors:
+		- @c ENOENT  @c ino i-node does not exist
 		- @c EISDIR  The pathname is a directory and the flags was not equal to \c OPEN_RDONLY.
    		- @c ENODEV  The pathname is a device special file and the actual device it describes does not exist.
 		- @c EROFS   The filesystem is read-only and write access was requested.
@@ -353,6 +358,7 @@ struct FSystem_type
 		@return 0 on success, or an error code. Possible errors:
 		- @c ENOENT @c ino is not a valid i-node
 		- @c ENOTDIR @c ino is not a directory but @c name was non-NULL
+		- @c EIO an I/O error occurred while accessing the file system
 	 */
 	int (*Status)(MOUNT mnt, inode_t ino, struct Stat* status, pathcomp_t name);
 
@@ -476,22 +482,31 @@ typedef struct InodeHandle
 /**
 	@brief Resolve a pathname into a directory and basename.
 	
-	If @c last is provided (!= \c NULL), this call splits the
-	pathname into two, as in dirname/last. It returns 
-	an \c Inode to dirname and makes \c last point to the last
-	component of pathname. 
+	If @c last is provided (`last != NULL`), this call splits the
+	pathname into two, as in dirname/basename. The call resolves
+	dirname to an \c Inode and makes `*last` point to the last
+	component of pathname, i.e., the basename.
 	Note: if the pathname ended in '/' (i.e., "/foo/bar/")
-	then \c *last will be set to \c NULL.
+	then \c *last will be the empty string.
 
 	If last is NULL, this call returns the Inode corresponding
 	to the full pathname.
 
 	In both cases, if there is an error the returned value is
 	NULL and set_errcode() has been called with the error code.
+	Errors are returned by calls to \c FSystem calls, Pin, Unpin
+	and Fetch.
 
 	@param pathname a pathname to resolve
-	@param last pointer to a string
-	@return the Inode handle for the directory, or \c NULL for error
+	@param last if not \c NULL, pointer to a string that will be set 
+	    to the last component \c pathname
+	@return the Inode handle for the directory, or \c NULL for error. 
+	  Possible errors are
+	  - ENAMETOOLONG  pathname or some component is too long
+	  - ENOENT   some component does not exist
+	  - ENOTDIR  some component is not a directory
+	  - EINVAL   some component contains illegal characters
+	  - EIO      an I/O error occurred
  */
 Inode* resolve_pathname(const char* pathname, const char** last);
 

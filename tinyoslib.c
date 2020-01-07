@@ -2,6 +2,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdarg.h>
 #include <assert.h>
 #include <stdio_ext.h>
 
@@ -86,7 +87,6 @@ void tinyos_replace_stdio()
 {
 	assert(saved_in == NULL);
 	assert(saved_out == NULL);
-	//if(GetTerminalDevices()==0) return;
 
 	FILE* termin = get_std_stream(0, "r");
 	FILE* termout = get_std_stream(1, "w");
@@ -112,10 +112,15 @@ void tinyos_restore_stdio()
 }
 
 
-void PError(const char* msg)
+void PError(const char* msg, ...)
 {
+	va_list ap;	
+	va_start(ap, msg);
+	vprintf(msg,ap);
+	va_end(ap);
+
 	char ebuf[164];
-	printf("%s: %s\n", msg, strerror_r(GetError(), ebuf, 164));
+	printf(": %s\n", msg, strerror_r(GetError(), ebuf, 164));
 }
 
 
@@ -186,22 +191,6 @@ int Execute(Program prog, size_t argc, const char** argv)
 	/* Execute the process */
 	return Spawn(exec_wrapper, argl, args);
 }
-
-
-Fid_t Dup(Fid_t oldfid)
-{
-	Fid_t newfid = OpenNull();
-	if(newfid!=NOFILE) {
-		if(Dup2(oldfid, newfid)==0) 
-			return newfid;
-		else {
-			Close(newfid);
-			return NOFILE;
-		}
-	} 
-	else return NOFILE;
-}
-
 
 
 void BarrierSync(barrier* bar, unsigned int n)

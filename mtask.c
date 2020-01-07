@@ -23,23 +23,15 @@ int boot_symposium(int argl, void* args)
 
   tinyos_replace_stdio();
 
-  if(GetTerminalDevices()>0) {
-    int fid = OpenTerminal(0);
-    if(fid!=NOFILE && fid!=0) {
-      Dup2(fid,0);
-      Close(fid);
-    }
-
-    /* Open standard output */
-    fid = OpenTerminal(0);
-    if(fid!=NOFILE && fid!=1) {
-      Dup2(fid,1);
-      Close(fid);
-    }
+  /* Open standard input and output */
+  Fid_t fid = Open("/dev/serial1", OPEN_RDWR);
+  if(fid != NOFILE) {
+    if(fid!=0) Dup2(fid,0);
+    if(fid!=1) Dup2(fid,1);
+    if(fid!=0 && fid!=1) Close(fid);
   } else {
     tinyos_pseudo_console();
   }
-  /* Open standard input */
 
   /* Just start task Symposium */
   Spawn(SymposiumOfProcesses, argl, args);

@@ -131,39 +131,9 @@ void MSG(const char* format, ...)
 
 
 
-
-
-
 /* 
 	Execution utilities
  */
-
-
-
-/*
-    Terminal proxy.
- 	---------------
-     
-    This class is used to test terminals. Usage in a test:
- 
-
-	term_proxy tp;
-	term_proxy_init(&tp, 1);     // test proxy terminal 1
-	file1 = OpenTerminal(1);     // open terminal 1
-
-	sendme(&tp, "hello");
-
-	char buffer[5];
-	Read(file1, buffer, 5); 
-	ASSERT( memcmp(buffer, "hello", 5) == 0 );
-
-
-	expect(&tp, "hi there");
-	Write(file1, "hi there", 8);
-
-	term_proxy_close(&tp);     // will signal errror if expect(...) failed.
- */
-
 
 /* Open a terminal fifo:  e.g.,  open_fifo("con",2) */
 int open_fifo(const char* name, uint n)
@@ -213,19 +183,12 @@ typedef struct term_proxy
 
 void* term_proxy_daemon(void*);
 
-#if 0
-void term_proxy_daemon_init(proxy_daemon* this, const char* fifoname, uint fifono, PatternProc proc)
-#endif
 
 void term_proxy_daemon_init(proxy_daemon* this, const char* fifoname, uint fifono, PatternProc proc)
 {
 	this->proc = proc;
 	this->complete = 0;
 
-#if 0
-	/* This is the old code */	
-	this->fd = open_fifo(fifoname, fifono);
-#endif
 	int pipefd[2];
 	CHECK(pipe(pipefd));
 	if(strcmp(fifoname,"kbd")==0) {
