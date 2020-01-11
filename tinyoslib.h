@@ -49,7 +49,7 @@ typedef int (*Program)(size_t argc, const char** argv);
 	By convention, argument argv[0] is assumed to be the program name, 
 	although any string is actually acceptable.
   */
-int Execute(Program prog, size_t argc, const char** argv);
+int Execute(Program prog, size_t argc, const char* const * argv);
 
 /**
 	@brief Duplicate a file id to a new file id.
@@ -205,6 +205,29 @@ void LocalTime(timestamp_t ts, struct tm* tm, unsigned long* usec);
  */
 int GetTimeOfDay(struct tm* tm, unsigned long* usec);
 
+
+struct tos_program {
+	void* code;
+	char magic[2];
+	char name[MAX_NAME_LENGTH];
+	const char* description;
+};
+
+#define REGISTER_PROGRAM(C, M, D)					\
+extern struct tos_program __start_tinyos_program;	\
+extern struct tos_program __stop_tinyos_program;	\
+static struct tos_program __descriptor_##C 			\
+    __attribute((__section__("tinyos_program")))	\
+    __attribute((__used__)) 						\
+ 	= { .code = &C, .magic=M, .name= #C, 			\
+ 		.description=D};							\
+
+
+#define PROGRAM_REGISTRY  \
+extern struct tos_program __start_tinyos_program;	\
+extern struct tos_program __stop_tinyos_program;	\
+struct tos_program* begin_programs = &__start_tinyos_program;	\
+struct tos_program* end_programs = &__stop_tinyos_program;		\
 
 
 #endif

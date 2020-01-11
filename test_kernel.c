@@ -6,22 +6,22 @@
 #include <string.h>
 #include <time.h>
 #include <setjmp.h>
+
+#include <dlfcn.h>
+
 #include "util.h"
 #include "bios.h"
 
 #include "unit_testing.h"
 #include "kernel_fs.h"
+#include "tinyoslib.h"
 
 
-BOOT_TEST(test_memfs_is_root, "Test that the memfs filesystem is mounted as root")
+BOOT_TEST(test_memfs_is_root, "Test that the devfs filesystem is mounted")
 {
-	FSystem* rootfs = get_fsys("memfs");
-	ASSERT(rootfs!=NULL);
+	struct StatFs st;
 
-	FsMount* mnt = & mount_table[0];
-
-	ASSERT(mnt->fsys == rootfs);
-	ASSERT(mnt->mount_point == NULL);
+	ASSERT(StatFs("/dev", &st)==0);
 
 	return 0;
 }
@@ -373,6 +373,83 @@ BOOT_TEST(test_dlink,"Test dynamic linking")
 }
 
 
+struct _pair { const char* name; Program prog; };
+
+void print_table(const char* tname, struct _pair* p)
+{
+	MSG("Table: %s\n", tname);
+	if(p==NULL) MSG("    NULL table\n");
+	while(p->prog) {
+		MSG("  Name: %s \n", p->name);
+		p++;
+	}
+}
+
+
+void execute_program(void* handle)
+{
+	Program test_program = dlsym(handle,"test_program");
+	FATAL_ASSERT_MSG(test_program, "dlerror: %s", dlerror());
+	ASSERT(Execute(test_program,0,NULL)!=NOPROC);
+	WaitChild(NOPROC,NULL);
+}
+
+
+void print_section(struct tos_program* start, struct tos_program* stop)
+{
+	MSG("REGISTERED:\n");
+	for(struct tos_program* p = start; p!= stop; p++) {
+		MSG("Name: %s\n", p->name);
+		Program prog = p->code;
+		Execute(prog, 0, NULL);
+
+		Dl_info dli;
+		int rc = dladdr(p->code, &dli);
+		if(rc==0)
+			MSG(" Info error: %s\n", dlerror());
+		else
+			MSG(" Info: fname=%s fbase=%p  sname=%s saddr=%p\n", 
+				dli.dli_fname, dli.dli_fbase, dli.dli_sname, dli.dli_saddr);
+
+
+		WaitChild(NOPROC, NULL);
+	}
+	MSG("END REGISTERED:\n");
+}
+
+void print_dlsection(void* handle2)
+{
+	ASSERT(dlsym(handle2,"__start_tinyos_program"));
+	struct tos_program** s2 = dlsym(handle2,"begin_programs");
+	struct tos_program** e2 = dlsym(handle2,"end_programs");
+	FATAL_ASSERT(s2);
+	FATAL_ASSERT(e2);
+	print_section(*s2, *e2);	
+}
+
+BOOT_TEST(test_load_shared,"Test that loading a shared object and executing a program from it works")
+{
+	FATAL_ASSERT(Mount(NO_DEVICE, "/", "memfs", 0, NULL)==0);
+	FATAL_ASSERT(MkDir("/dev")==0);
+	FATAL_ASSERT(Mount(NO_DEVICE, "/dev", "devfs", 0, NULL)==0);
+
+	void* handle = dlopen("./testprog.so", RTLD_NOW|RTLD_LOCAL);
+	FATAL_ASSERT_MSG(handle, "dlerror: %s", dlerror());
+
+	void* handle2 = dlopen("./testprog2.so", RTLD_NOW|RTLD_LOCAL);
+	FATAL_ASSERT_MSG(handle, "dlerror: %s", dlerror());
+
+	execute_program(handle);
+	execute_program(handle2);
+	
+	print_dlsection(handle);
+	print_dlsection(handle2);
+
+	ASSERT(dlclose(handle)==0);
+	ASSERT(dlclose(handle2)==0);
+
+	return 0;
+}
 
 
 
@@ -383,13 +460,13 @@ TEST_SUITE(fsystem_tests, "Filesystem tests")
 	&test_pathcomp,
 	&test_dlinker_binding,
 	&test_dlink,
+	&test_load_shared,
 	NULL
 };
 
 
 int main(int argc, char** argv)
 {
-
 	return register_test(&fsystem_tests) || 
 		run_program(argc, argv, &fsystem_tests);
 }

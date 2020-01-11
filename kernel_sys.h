@@ -24,7 +24,7 @@
 #define SYSCALLS \
 SYSCALL(GetError, int, (void), ())\
 SYSCALL(Spawn, int, (Task task, int argl, void* args), (task, argl, args))\
-SYSCALLV(Exec, (Task task, int argl, void* args), (task, argl, args))\
+SYSCALL(Exec, int, (const char* progname, char *const argv[], char* const envp[]), (progname, argv, envp))\
 SYSCALLV(Exit, (int exitval), (exitval))\
 SYSCALL(GetPid, int, (void), ())\
 SYSCALL(GetPPid, int, (void), ())\

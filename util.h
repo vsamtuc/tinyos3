@@ -1581,6 +1581,17 @@ static inline hash_value hash_rlnode_key(rlnode_key key)
 	(argl, args)
 */
 
+
+/**
+	@brief Get the length of a NULL-terminated vector of pointers 
+*/
+static inline size_t veclen(void* const * vec) {
+	size_t len=0;
+	while(*vec++) len++;
+	return len;
+}
+
+
 /**
 	@brief Return the total length of a string array.
 
@@ -1589,7 +1600,7 @@ static inline hash_value hash_rlnode_key(rlnode_key key)
 	@returns the total number of bytes in all the strings, including the
 	    terminating zeros.
 */
-static inline size_t argvlen(size_t argc, const char** argv)
+static inline size_t argvlen(size_t argc,  const char * const argv[])
 {
 	size_t l=0;
 	for(size_t i=0; i<argc; i++) {
@@ -1611,7 +1622,7 @@ static inline size_t argvlen(size_t argc, const char** argv)
 	@returns the length of the output argument buffer
 	@see argvlen
 */
-static inline size_t argvpack(void* args, size_t argc, const char** argv)
+static inline size_t argvpack(void* args, size_t argc, const char *const argv[])
 {
 	int argl=0;
 

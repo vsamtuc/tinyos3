@@ -48,6 +48,7 @@ int util_kill(size_t, const char**);
 int util_mount(size_t, const char**);
 int util_umount(size_t, const char**);
 int util_date(size_t, const char**);
+int util_exec(size_t, const char**);
 
 struct { const char * cmdname; Program prog; uint nargs; const char* help; } 
 COMMANDS[]  = 
@@ -82,6 +83,7 @@ COMMANDS[]  =
 	{"cat", util_cat, 0, "Concatenate a list of files"},
 	{"kill", util_kill, 1, "Kill a process"},
 	{"date", util_date, 0, "Print the current date and time"},
+	{"exec", util_exec, 1, "Execute a file"},
 
 	{"ps", util_ps, 0, "Process list"},
 	{"df", util_df, 0, "Report file system "},
@@ -1151,6 +1153,24 @@ int util_date(size_t argc, const char** argv)
 	strftime(buf, 64, "%c", &tm);
 
 	printf("%s %7lu usec\n", buf, usec);
+	return 0;
+}
+
+
+int util_exec(size_t argc, const char** argv)
+{
+	checkargs(1);
+	check_help(argc, argv,
+"Usage: exec\n"
+"Execute a file.\n"
+ 	);
+	assert(argc>=2);
+	const char * Args[argc-1];
+	memcpy(Args, argv+1, argc-2);
+	Args[argc-2] = NULL;
+
+	int rc = Exec(argv[1], Args, Args);
+	if(rc) { PError(argv[0]); return 1; }
 	return 0;
 }
 

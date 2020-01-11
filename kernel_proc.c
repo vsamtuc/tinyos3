@@ -5,6 +5,7 @@
 #include "kernel_proc.h"
 #include "kernel_streams.h"
 #include "kernel_fs.h"
+#include "kernel_exec.h"
 
 #ifndef NVALGRIND
 #include <valgrind/valgrind.h>
@@ -153,15 +154,8 @@ void process_exec(PCB* proc, Task call, int argl, void* args)
 {
 	/* Set the main thread's function */
 	proc->main_task = call;
-
-	/* Copy the arguments to new storage, owned by the new process */
 	proc->argl = argl;
-	if(args!=NULL) {
-		proc->args = malloc(argl);
-		memcpy(proc->args, args, argl);
-	}
-	else
-		proc->args=NULL;
+	proc->args = args;
 
 	if(call != NULL) {
 		proc->main_thread = spawn_thread(proc, start_main_thread);
@@ -175,10 +169,11 @@ void process_clear_exec_info(PCB* proc)
 	proc->argl = 0;
 	proc->args = NULL;
 	proc->main_task = NULL;
+	proc->errcode = 0;
 }
 
 
-void process_exit_thread()
+_Noreturn void process_exit_thread()
 {
 	/* We need to release the kernel lock before we die! */
 	kernel_unlock();
@@ -186,10 +181,15 @@ void process_exit_thread()
 }
 
 
-void sys_Exec(Task call, int argl, void* args)
+/* The system call */
+int sys_Exec(const char* pathname, char* const argv[], char* const envp[])
 {
+	struct exec_args XA;
+	int rc = exec_program(&XA, pathname, argv, envp, 0);
+	if(rc) { return -1; }
+
 	process_clear_exec_info(CURPROC);
-	process_exec(CURPROC, call, argl, args);
+	process_exec(CURPROC, XA.task, XA.argl, XA.args);
 	process_exit_thread();
 }
 
@@ -267,11 +267,18 @@ Pid_t sys_Spawn(Task call, int argl, void* args)
 	else
 		process_init_resources(newproc, CURPROC);
 
+	/* Copy the argument */
+	void* args_copy = NULL;
+	if(argl) {
+		args_copy = xmalloc(argl);
+		memcpy(args_copy, args, argl);
+	}
+
 	/* 
 	   This must be the last thing we do, because once we wakeup the new thread it may run! 
 	   So we need to have finished the initialization of the PCB.
 	 */
-	process_exec(newproc, call, argl, args);
+	process_exec(newproc, call, argl, args_copy);
 
 	return get_pid(newproc);
 }

@@ -3,6 +3,7 @@
 #define __TINYOS_H__
 
 #include <stdint.h>
+#include <stddef.h>
 
 /**
   @file tinyos.h
@@ -275,7 +276,7 @@ Pid_t Spawn(Task task, int argl, void* args);
 
 
 
-void Exec(Task task, int argl, void* args);
+int Exec(const char* progpath, char* const argv[], char* const envp[]);
 
 
 /** @brief Exit the current process.

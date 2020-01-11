@@ -15,7 +15,7 @@
   @{
 */ 
 
-#include "tinyos.h"
+#include "kernel_exec.h"
 #include "kernel_sched.h"
 
 /**

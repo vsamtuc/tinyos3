@@ -41,14 +41,16 @@ else
 CFLAGS+=  $(OPTFLAGS) $(PROFFLAGS) $(INCLUDE_PATH)
 endif
 
-LDFLAGS= $(PLFLAGS) $(BASICFLAGS)
-LIBS= -L. -lfcontext -lpthread -lrt -lm 
+LDFLAGS= $(PLFLAGS) $(BASICFLAGS) -rdynamic
+LIBS= -L. -lfcontext -lpthread -lrt -lm -ldl
 
 
 C_PROG= test_util.c test_bios.c test_kernel.c \
  	mtask.c tinyos_shell.c terminal.c \
  	validate_api.c \
  	$(EXAMPLE_PROG)
+
+T_PROG=testprog.so testprog2.so
 
 EXAMPLE_PROG= $(wildcard *_example*.c)
 
@@ -65,12 +67,13 @@ FIFOS= con0 con1 con2 con3 kbd0 kbd1 kbd2 kbd3
 
 .PHONY: all tests clean distclean doc shorthelp help depend
 
-all: libfcontext.a shorthelp mtask tinyos_shell terminal tests fifos examples
+all: libfcontext.a shorthelp mtask tinyos_shell terminal tests fifos examples modules
 
 tests: test_util validate_api test_example test_bios test_kernel
 
 examples: $(EXAMPLE_PROG:.c=) 
 
+modules: $(T_PROG)
 
 #
 # libfcontext.a
@@ -78,6 +81,15 @@ examples: $(EXAMPLE_PROG:.c=)
 libfcontext.a: make_x86_64_sysv_elf_gas.o jump_x86_64_sysv_elf_gas.o ontop_x86_64_sysv_elf_gas.o
 	$(AR) -crv $@ $^
 	$(RANLIB) $@
+
+#
+# Modules
+#
+testprog.so: testprog.o
+	$(CC) -shared -o $@ $^ $(LIBS)
+
+testprog2.so: testprog2.o
+	$(CC) -shared -o $@ $^ $(LIBS)
 
 #
 # Normal apps

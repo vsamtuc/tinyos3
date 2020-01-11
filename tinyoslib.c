@@ -200,7 +200,7 @@ int ParseProgArgs(Task task, int argl, void* args, Program* prog, int argc, cons
 
 
 
-int Execute(Program prog, size_t argc, const char** argv)
+int Execute(Program prog, size_t argc, const char* const * argv)
 {
 	/* We will pack the prog pointer and the arguments to 
 	  an argument buffer.

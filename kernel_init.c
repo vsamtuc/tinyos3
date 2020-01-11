@@ -8,6 +8,7 @@
 #include "kernel_sched.h"
 #include "kernel_proc.h"
 #include "kernel_dev.h"
+#include "kernel_exec.h"
 #include "kernel_streams.h"
 #include "kernel_sys.h"
 #include "kernel_fs.h"
@@ -22,11 +23,7 @@
 
 /* Parameters from the 'boot' call are passed to boot_tinyos()
    via static variables. */
-static struct {
-  Task init_task;
-  int argl;
-  void* args;
-} boot_rec;
+static struct exec_args boot_rec;
 
 
 /* Per-core boot function for tinyos */
@@ -42,7 +39,7 @@ void boot_tinyos_kernel()
     initialize_scheduler();
 
     /* The boot task is executed normally! */
-    if(sys_Spawn(boot_rec.init_task, boot_rec.argl, boot_rec.args)!=1)
+    if(sys_Spawn(boot_rec.task, boot_rec.argl, boot_rec.args)!=1)
       FATAL("The init process does not have PID==1");
   }
 
@@ -68,7 +65,7 @@ void boot_tinyos_kernel()
 
 void boot(vm_config* vmc, Task boot_task, int argl, void* args)
 {
-  boot_rec.init_task = boot_task;
+  boot_rec.task = boot_task;
   boot_rec.argl = argl;
   boot_rec.args = args;
 

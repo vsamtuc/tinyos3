@@ -254,22 +254,30 @@ void abort_test();
 /** @brief Like ASSERT but with a custom message. 
 	@see ASSERT
 */
-#define ASSERT_MSG(expr, format, ...) do{ if(!(expr)) \
- { FLAG_FAILURE++; if(FLAG_FAILURE < 50) \
- 	MSG("%s(%d): " format , __FILE__, __LINE__, ##  __VA_ARGS__ ); \
- 	else {\
- 		MSG("... Too many errors, ABORTING\n"); \
- 		abort_test(); \
- 	}\
-   } break; }while(0) \
+#define ASSERT_MSG(expr, format, ...) 										\
+	do{ if(!(expr)) { 														\
+		FLAG_FAILURE++; 													\
+		if(FLAG_FAILURE < 50)												\
+ 			MSG("%s(%d): " format , __FILE__, __LINE__, ##  __VA_ARGS__ );	\
+ 		else {																\
+ 			MSG("... Too many errors, ABORTING\n"); 						\
+ 			abort_test(); 													\
+ 		}																	\
+   	} break; 																\
+   } while(0) 																\
 
 /**
 	@brief Like @c FATAL_ASSERT but with a custom message.
 	@see FATAL_ASSERT
 	@see ASSERT
  */
- #define FATAL_ASSERT_MSG(expr, format, ...) do{ if(!(expr)) \
- { MSG("%s(%d): " format , __FILE__, __LINE__, ##  __VA_ARGS__ ); abort_test(); } }while(0)
+ #define FATAL_ASSERT_MSG(expr, format, ...)							\
+   do {																	\
+   	if(!(expr)) { 														\
+   		MSG("%s(%d): " format , __FILE__, __LINE__, ##  __VA_ARGS__ );	\
+   		abort_test();													\
+   	}																	\
+   }while(0)															\
 
 /** 
 	@brief Fail the test if an expression is false.
@@ -306,10 +314,13 @@ void abort_test();
  ASSERT_MSG(0, "FAILURE: %s \n", (failure_message))
 
 
-#define ASSERT_RELATION(p,q, opfmt, predexpr) do{ \
- 	__typeof(p) _1=(p); __typeof(q) _2=(q); \
- 	ASSERT_MSG( predexpr , "%s failed, %s == " opfmt ", %s == " opfmt "\n" , #predexpr,  #p, _1 , #q, _2); \
- }while(0)
+#define ASSERT_RELATION(p,q, opfmt, predexpr) 				\
+ do{														\
+ 	__typeof(p) _1=(p); __typeof(q) _2=(q);					\
+ 	ASSERT_MSG( predexpr , 									\
+ 		"%s failed, %s == " opfmt ", %s == " opfmt "\n" ,	\
+ 		#predexpr,  #p, _1 , #q, _2);						\
+ }while(0)													\
 
 
 /* 
