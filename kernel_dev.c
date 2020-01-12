@@ -28,7 +28,7 @@
 /* A node in the device directory */
 typedef struct device_advert
 {
-	char* name;
+	char name[MAX_NAME_LENGTH];
 	uint major, minor;
 	rlnode dnode;
 } dev_advert;
@@ -36,23 +36,22 @@ typedef struct device_advert
 static int dev_advert_eq(rlnode* node, rlnode_key key)
 {
 	dev_advert* adv = node->obj;
-	return strcmp(adv->name, key.str)==0;
+	return strncmp(adv->name, key.str, MAX_NAME_LENGTH)==0;
 }
 
 static rlnode* dev_adv_alloc(const char* devname, uint major, uint minor)
 {
 	dev_advert* adv = xmalloc(sizeof(dev_advert));
-	adv->name = strdup(devname);
+	strncpy(adv->name, devname, MAX_NAME_LENGTH);
 	adv->major = major;
 	adv->minor = minor;
-	rdict_node_init(& adv->dnode, adv, hash_string(devname));
+	rdict_node_init(& adv->dnode, adv, hash_nstring(adv->name, MAX_NAME_LENGTH));
 	return &adv->dnode;	
 }
 
 static void dev_adv_free(rlnode* n)
 {
 	dev_advert* adv = n->obj;
-	free(adv->name);
 	free(adv);
 }
 
@@ -68,7 +67,7 @@ void device_publish(const char* devname, uint major, uint minor)
 
 void device_retract(const char* devname)
 {
-	rlnode* n = rdict_lookup(&dev_directory, hash_string(devname), devname, dev_advert_eq);
+	rlnode* n = rdict_lookup(&dev_directory, hash_nstring(devname, MAX_NAME_LENGTH), devname, dev_advert_eq);
 	if(n==NULL) return;
 	rdict_remove(&dev_directory, n);
 	dev_adv_free(n);
@@ -242,7 +241,7 @@ static int devfs_fetch(MOUNT _mnt, inode_t _dir, const pathcomp_t name, inode_t*
 	if(strcmp(name,".")==0 || strcmp(name,"..")==0) { *id = _dir; return 0; }
 
 	/* Look up into dev_directory */
-	rlnode* n = rdict_lookup(& dev_directory, hash_string(name), name, dev_advert_eq);
+	rlnode* n = rdict_lookup(& dev_directory, hash_nstring(name, MAX_NAME_LENGTH), name, dev_advert_eq);
 	if(n==NULL) return creat ? EROFS : ENOENT;
 
 	/* Found device */

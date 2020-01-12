@@ -460,6 +460,7 @@ enum Device_type
 	DEV_INFO,	/**< @brief Info pseudo-devices */
 	DEV_SERIAL,	/**< @brief Serial device */
 	DEV_CLOCK,  /**< @brief Clock device */
+	DEV_DLL,	/**< @brief Dynamic linker device */
 	MAX_DEV = 256 /**< @brief placeholder for maximum device number */
 };
 

@@ -100,6 +100,10 @@ struct binfmt* get_binfmt(const char magic[2]);
 /**< @brief Initialize binary formats */
 void initialize_binfmt();
 
+/**< @brief Finalize binary formats */
+void finalize_binfmt();
+
+
 
 /** @} */
 

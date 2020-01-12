@@ -1549,6 +1549,26 @@ static inline hash_value hash_string(const char* str)
 
 
 /**
+	@brief Return a hash value for a string with maximum size
+
+	This call can be used with character arrays that may not be
+	0-terminated.
+ */
+static inline hash_value hash_nstring(const char* str, size_t n)
+{
+	/* This is from the Python string implementation */
+	if(n==0) return 0;
+	hash_value h = (*str) << 7;
+	while(*str && n--) {
+		h *= 1000003;
+		h ^= *str++;
+	}
+	return h;
+}
+
+
+
+/**
 	@brief Return a hash value for a sequence of bytes
  */
 static inline hash_value hash_buffer(const void* buffer, size_t size)

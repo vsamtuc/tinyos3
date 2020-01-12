@@ -535,7 +535,7 @@ BOOT_TEST(test_dup2_error_on_invalid_fid,
 {
 	ASSERT_ERRNO(Dup2(NOFILE, 3)==-1, EBADF);
 	ASSERT_ERRNO(Dup2(MAX_FILEID, 3)==-1, EBADF);
-	Fid_t fid = Open("/",OPEN_RDONLY);
+	Fid_t fid = OpenDir("/");
 	FATAL_ASSERT(fid!=NOFILE);
 	ASSERT_ERRNO(Dup2(fid, NOFILE)==-1, EBADF);
 	ASSERT_ERRNO(Dup2(fid, MAX_FILEID)==-1, EBADF);

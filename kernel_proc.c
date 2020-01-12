@@ -185,7 +185,7 @@ _Noreturn void process_exit_thread()
 int sys_Exec(const char* pathname, char* const argv[], char* const envp[])
 {
 	struct exec_args XA;
-	int rc = exec_program(&XA, pathname, argv, envp, 0);
+	int rc = exec_program(&XA, pathname, (void*)argv, envp, 0);
 	if(rc) { return -1; }
 
 	process_clear_exec_info(CURPROC);

@@ -57,7 +57,6 @@ COMMANDS[]  =
 	{"list", ListPrograms, 0, "List available programs programs."},
 	{"sysinfo", SystemInfo, 0, "Print some basic info about the current system."},
 	{"runterm", RunTerm, 2, "runterm <term> <prog>  <args...> : execute '<prog> <args...>' on terminal <term>."},
-	{"sh", Shell, 0, "Run a shell."},
 	{"repeat", Repeat, 2, "repeat <n> <prog> <args...>: execute '<prog> <args...>' <n> times."},
 	{"fibo", Fibonacci, 1, "Compute a fibonacci number."},
 	{"cap", Capitalize, 0, "Copy stdin to stdout, capitalizing all letters"},
@@ -71,6 +70,7 @@ COMMANDS[]  =
 	{"rcli", RemoteClient, 1, "Remote client: rcli <cmd> [<args...>]."},
 
 	/* Unix-like file system utilities */
+	{"sh", Shell, 0, "Run a shell."},
 	{"wc", WordCount, 0, "Count and print lines, words and chars of stdin"},
 	{"echo", Echo, 0, "echo [<args...>], send the <args...> to stdout"},
 	{"mkdir", util_mkdir, 1, "Make a new directory"},
@@ -874,9 +874,8 @@ int util_ls(size_t argc, const char** argv)
 	struct tm cur_time;
 	GetTimeOfDay(&cur_time, NULL);	
 
-	void ls_print(const char* name) {
-		if(!opt_all && name[0]=='.') return;  /* hidden files */
-		Stat(name, &st);
+	void ls_print(const char* fullpath, const char* name) {
+		if(Stat(fullpath, &st)!=0) { PError("stat(%s): ", fullpath); return; }
 
 		/* print size */
 		if(opt_size) printf("%3d ", (st.st_size+1023)/1024);
@@ -920,7 +919,7 @@ int util_ls(size_t argc, const char** argv)
 		printf("\n");
 	}
 
-	for(int i=0; i<nfiles;i++) ls_print(files[i]);
+	for(int i=0; i<nfiles;i++) ls_print(files[i], files[i]);
 	for(int i=0; i<nlist; i++) {
 		Fid_t fdir = OpenDir(list[i]);
 		if(fdir==NOFILE) { PError(list[i]); continue; }
@@ -928,11 +927,24 @@ int util_ls(size_t argc, const char** argv)
 		if(nfiles > 0 || nlist>1) printf("%s:\n", list[i]);
 
 		char name[MAX_NAME_LENGTH+1];
+		const size_t dirnamelen = strlen(list[i]);
 		int rc;
 
 		while( (rc=ReadDir(fdir, name, MAX_NAME_LENGTH+1)) > 0)
-		{
-			ls_print(name);
+		{	
+			if(!opt_all && name[0]=='.') continue;  /* hidden files */
+			size_t nlen = strnlen(name, MAX_NAME_LENGTH);
+			if(dirnamelen+1+nlen>MAX_PATHNAME) { 
+				 /* Name is too long to stat! */
+				printf("%.*s: path was too long\n", MAX_NAME_LENGTH, name);
+				continue;
+			}
+			char path[MAX_PATHNAME+1];
+			strcpy(path, list[i]);
+			strcat(path+dirnamelen, "/");
+			strncat(path+dirnamelen+1,name, MAX_NAME_LENGTH);
+
+			ls_print(path,name);
 		}
 	}
 
@@ -1105,17 +1117,18 @@ int util_df(size_t argc, const char** argv)
 	if(mtab==NOFILE) { PError(argv[0]); return 1; }
 
 	FILE* fmtab = fidopen(mtab,"r");
-	char* mpoint = NULL;
-	size_t mplen = 0;
 	printf("%-7s %-8s %10s %10s %-4s %s\n", 
 		"Device", "Filesys", "Blocks", "Used", "Use%", "Mounted on");
 	while(! feof(fmtab)) {
-		int rc = getline(&mpoint, &mplen, fmtab);
-		if(rc<1) break;
-		mpoint[rc-1] = '\0';  /* Eat the newline */
+		char mount_point[MAX_PATHNAME];
+		Dev_t device;
+		char SYSFS[MAX_NAME_LENGTH];
+		int rc = fscanf(fmtab, "%s %u %s", mount_point, &device, SYSFS);
+		if(rc==EOF) break;
+		if(rc!=3) { PError("Unparseable mnttab"); return 1; }
 
 		struct StatFs st;
-		if(StatFs(mpoint, &st)!=0) { PError(mpoint); continue; }
+		if(StatFs(mount_point, &st)!=0) { PError(mount_point); continue; }
 
 		char usage[20];
 		if(st.fs_blocks)
@@ -1128,9 +1141,8 @@ int util_df(size_t argc, const char** argv)
 			DEV_MAJOR(st.fs_dev), DEV_MINOR(st.fs_dev),
 			st.fs_fsys, 
 			st.fs_blocks, st.fs_bused, usage,
-			mpoint);
+			mount_point);
 	}
-	free(mpoint);
 	return 0;
 }
 
@@ -1169,7 +1181,7 @@ int util_exec(size_t argc, const char** argv)
 	memcpy(Args, argv+1, argc-2);
 	Args[argc-2] = NULL;
 
-	int rc = Exec(argv[1], Args, Args);
+	int rc = Exec(argv[1], (void*)Args, (void*)Args);
 	if(rc) { PError(argv[0]); return 1; }
 	return 0;
 }
@@ -1554,8 +1566,12 @@ finished:
  */
 int boot_shell(int argl, void* args)
 {
-	//CHECK(MkDir("/dev"));
-	//CHECK(Mount(0, "/dev", "devfs", 0, NULL));
+	CHECK(Mount(0, "/", "tmpfs", 0, NULL));
+	CHECK(MkDir("/dev"));
+	CHECK(Mount(0, "/dev", "devfs", 0, NULL));
+	CHECK(MkDir("/bin"));
+	CHECK(Mount(0, "/bin", "binfs", 0, NULL));
+
 
 	/* Find the shell */
 	int shprog = getprog_byname("sh");

@@ -4,6 +4,7 @@
 
 #include <stdio.h>
 #include "tinyos.h"
+#include "util.h"
 
 /**
 	@file tinyoslib.h
@@ -206,28 +207,45 @@ void LocalTime(timestamp_t ts, struct tm* tm, unsigned long* usec);
 int GetTimeOfDay(struct tm* tm, unsigned long* usec);
 
 
-struct tos_program {
-	void* code;
-	char magic[2];
-	char name[MAX_NAME_LENGTH];
-	const char* description;
+enum tos_type
+{
+	TOS_PROGRAM
 };
 
-#define REGISTER_PROGRAM(C, M, D)					\
-extern struct tos_program __start_tinyos_program;	\
-extern struct tos_program __stop_tinyos_program;	\
-static struct tos_program __descriptor_##C 			\
-    __attribute((__section__("tinyos_program")))	\
+
+struct tos_entity {
+	void* data;
+	size_t size;
+	enum tos_type type;
+	char name[MAX_NAME_LENGTH];
+	const char* description;
+	rlnode dnode;
+};
+
+
+#define TOS_REGISTRY  								\
+extern struct tos_entity __start_tinyos;			\
+extern struct tos_entity __stop_tinyos;				\
+struct tos_entity* __begin_tinyos = &__start_tinyos;\
+struct tos_entity* __end_tinyos = &__stop_tinyos;	\
+
+
+struct bf_program
+{
+	char magic[2];
+	Program program;
+};
+
+
+#define REGISTER_PROGRAM(C, D)						\
+static struct bf_program __program_##C = {{'#','P'}, &C}; \
+static struct tos_entity __descriptor_##C 			\
+    __attribute((__section__("tinyos")))			\
     __attribute((__used__)) 						\
- 	= { .code = &C, .magic=M, .name= #C, 			\
+ 	= { .data = &__program_##C, .size = sizeof(__program_##C),	\
+ 		.type=TOS_PROGRAM, .name= #C, 							\
  		.description=D};							\
 
-
-#define PROGRAM_REGISTRY  \
-extern struct tos_program __start_tinyos_program;	\
-extern struct tos_program __stop_tinyos_program;	\
-struct tos_program* begin_programs = &__start_tinyos_program;	\
-struct tos_program* end_programs = &__stop_tinyos_program;		\
 
 
 #endif

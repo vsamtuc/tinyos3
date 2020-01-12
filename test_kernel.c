@@ -395,16 +395,14 @@ void execute_program(void* handle)
 }
 
 
-void print_section(struct tos_program* start, struct tos_program* stop)
+void print_section(struct tos_entity* start, struct tos_entity* stop)
 {
 	MSG("REGISTERED:\n");
-	for(struct tos_program* p = start; p!= stop; p++) {
+	for(struct tos_entity* p = start; p!= stop; p++) {
 		MSG("Name: %s\n", p->name);
-		Program prog = p->code;
-		Execute(prog, 0, NULL);
 
 		Dl_info dli;
-		int rc = dladdr(p->code, &dli);
+		int rc = dladdr(p->data, &dli);
 		if(rc==0)
 			MSG(" Info error: %s\n", dlerror());
 		else
@@ -419,9 +417,9 @@ void print_section(struct tos_program* start, struct tos_program* stop)
 
 void print_dlsection(void* handle2)
 {
-	ASSERT(dlsym(handle2,"__start_tinyos_program"));
-	struct tos_program** s2 = dlsym(handle2,"begin_programs");
-	struct tos_program** e2 = dlsym(handle2,"end_programs");
+	ASSERT(dlsym(handle2,"__start_tinyos"));
+	struct tos_entity** s2 = dlsym(handle2,"__begin_tinyos");
+	struct tos_entity** e2 = dlsym(handle2,"__end_tinyos");
 	FATAL_ASSERT(s2);
 	FATAL_ASSERT(e2);
 	print_section(*s2, *e2);	
@@ -429,12 +427,18 @@ void print_dlsection(void* handle2)
 
 BOOT_TEST(test_load_shared,"Test that loading a shared object and executing a program from it works")
 {
-	FATAL_ASSERT(Mount(NO_DEVICE, "/", "memfs", 0, NULL)==0);
+	FATAL_ASSERT(Mount(NO_DEVICE, "/", "tmpfs", 0, NULL)==0);
 	FATAL_ASSERT(MkDir("/dev")==0);
 	FATAL_ASSERT(Mount(NO_DEVICE, "/dev", "devfs", 0, NULL)==0);
 
 	void* handle = dlopen("./testprog.so", RTLD_NOW|RTLD_LOCAL);
 	FATAL_ASSERT_MSG(handle, "dlerror: %s", dlerror());
+
+	void* h1 = dlopen("./testprog.so", RTLD_NOW|RTLD_LOCAL);
+	FATAL_ASSERT_MSG(h1, "dlerror: %s", dlerror());
+	ASSERT(h1==handle);
+	dlclose(h1);
+
 
 	void* handle2 = dlopen("./testprog2.so", RTLD_NOW|RTLD_LOCAL);
 	FATAL_ASSERT_MSG(handle, "dlerror: %s", dlerror());
