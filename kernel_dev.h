@@ -62,7 +62,7 @@ typedef struct device_control_block
 		Much like 'major number' in Unix. It determines the driver.
 		This number is also the index of this object in @c device_table.
   	*/
-  	unsigned int type;     
+  	devnum_t type;     
 
 
 	/**
@@ -84,13 +84,50 @@ typedef struct device_control_block
 
 		This function is passed the minor number of the device to be accessed.
 		It returns a stream object suitable for this device.
+
+		This stream object will be used with the routines stored in \c dev_fops.
+		A \c NULL return is considered an error.
+
+		@param minor the minor number of the device to open
+		@return a stream object or \c NULL 
 	*/
-	void* (*Open)(uint minor);
+	void* (*Open)(devnum_t minor);
+
+	/**
+		@brief Create a new device of this type
+		
+		If successful, this call will create a new device under this driver.
+
+		The values of `*minor` and \c name are suggestions to the call,
+		that the created device have this minor number and that it will be 
+		published under the given name. The use of this information is up to the
+		device driver.
+
+		If a device was successfully created, the minor number is stored in `*minor`.
+
+		@param minor a suggested minor number to create
+		@param name a suggested name under which the device will be published
+		@param config an additional argument, whose meaning is device-specific
+		@return 0 for success or an error code if non-zero.
+	 */
+	int (*Create)(devnum_t* minor, const char* name, void* config);
+
+	/**
+		@brief Destroy a given device of this type
+
+		If successful, this call will destroy a device of this type. 
+		For this to be possible, it must be that the device driver supports device
+		destruction (e.g., perhaps this is a plug-and-play device).
+
+		@param minor the minor number for the device to be destroyed
+		@return 0 on success or an error code for failure
+	 */
+	int (*Destroy)(devnum_t minor);
 
 	/** 
-		@brief Number of devices for this major number. 
+		@brief Number of devices for this major number.  
 	*/
-	int devnum;
+	devnum_t devnum;
 
 	/** @brief File operations for this device.
 
@@ -116,7 +153,7 @@ extern DCB* device_table[MAX_DEV];
 	@param dcb The device control block of the new device.
 	@see REGISTER_DRIVER
  */
-void register_device(DCB* dcb);
+void register_driver(DCB* dcb);
 
 
 /**
@@ -133,7 +170,9 @@ void register_device(DCB* dcb);
 	@param major the major device number
 	@param minor the minor device number
  */
-void device_publish(const char* devname, uint major, uint minor);
+void device_publish(const char* devname, devnum_t major, devnum_t minor);
+
+
 /**
 	@brief Remove a device from the device directory
 
@@ -156,7 +195,7 @@ void device_retract(const char* devname);
   */
 #define REGISTER_DRIVER(dcb) \
 __attribute__((constructor)) \
-static void __add_ ## dcb ##_to_device_table() { register_device(&dcb); }
+static void __add_ ## dcb ##_to_device_table() { register_driver(&dcb); }
 
 /** 
   @brief Initialization for devices.
@@ -174,7 +213,6 @@ void initialize_devices();
 void finalize_devices();
 
 
-
 /**
   @brief Open a device.
 
@@ -182,9 +220,56 @@ void finalize_devices();
   returns a stream object, storing its pointer in @c obj, and a
   @c file_ops record (storing it in @c ops).
 
-  It returns 0 on success and -1 on failure.
-  */
-int device_open(uint major, uint minor, void** obj, file_ops** ops);
+
+  @param major the device major number
+  @param minor the device minor number
+  @param obj location where a stream object is stored on success
+  @param ops location where stream operations will be stored on success
+  @return 0 on success and an error code on failure. 
+  Standard error codes are:
+   - \c ENXIO the device does not exist
+   - \c ENODEV  the device does not support this operation
+   Other error codes are device-specific
+*/
+int device_open(devnum_t major, devnum_t minor, void** obj, file_ops** ops);
+
+
+/**
+	@brief Create a new device.
+
+	If successful, this call will create a new device of the given major number.
+
+	The values of `*minor` and \c name are suggestions to the call,
+	that the created device have this minor number and that it will be 
+	published under the given name. The use of this information is up to the
+	device driver.
+
+	If a device was successfully created, the minor number is stored in `*minor`.
+
+	@param major the major number of the device to create
+	@param minor position to store the minor number of a suggested minor number to create
+	@param name a suggested name under which the device will be published
+	@param config an additional argument, whose meaning is device-specific
+	@return 0 for success or an error code if non-zero.
+		Standard error codes are:
+		- \c ENXIO the device does not exist
+		- \c ENODEV  the device does not support this operation
+		Other error codes are device-specific
+ */
+int device_create(devnum_t major, devnum_t* minor, const char* name, void* config);
+
+
+/**
+	@brief Destroy a device.
+
+	If successful, this call will destroy the given device.
+
+	@param major the major number of the device to destroy
+	@param minor the minor number of the device to destroy
+	@return 0 for success or an error code if non-zero.
+ */
+int device_destroy(devnum_t major, devnum_t minor);
+
 
 /**
   @brief Get the number of devices of a particular major number.
@@ -192,7 +277,7 @@ int device_open(uint major, uint minor, void** obj, file_ops** ops);
   The number of devices M determines the legal range of minor numbers,
   namely 0<= minor < M.
   */
-uint device_no(uint major);
+uint device_no(devnum_t major);
 
 /** @} */
 

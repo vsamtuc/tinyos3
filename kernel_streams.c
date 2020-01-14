@@ -247,7 +247,7 @@ int sys_Close(int fd)
   Possible reasons for failure:
   - Either oldfd or newfd is invalid.
  */
-int sys_Dup2(int oldfd, int newfd)
+int sys_Dup2(Fid_t oldfd, Fid_t newfd)
 {
 	if(oldfd<0 || newfd<0 || oldfd>=MAX_FILEID || newfd>=MAX_FILEID) {
 		set_errcode(EBADF);
@@ -280,7 +280,7 @@ int sys_Dup2(int oldfd, int newfd)
   Possible reasons for failure:
   - Either oldfd or newfd is invalid.
  */
-int sys_Dup(int oldfd)
+int sys_Dup(Fid_t oldfd)
 {
 	if(oldfd<0 || oldfd>=MAX_FILEID) {
 		set_errcode(EBADF);
@@ -308,4 +308,29 @@ int sys_Dup(int oldfd)
 }
 
 
+/*
+	Dispatch an ioctl call for the given fid
+ */
+int sys_Ioctl(Fid_t fid, unsigned long request, void* argp)
+{
+	FCB* fcb = get_fcb(fid);
+	if(fcb==NULL) return -1;
+
+	for(struct ioctl_func* p=fcb->streamfunc->ioctls; p; p++) {
+		/* End of ioctls */
+		if(p->Ioctl==NULL) break;
+
+		/* Found the request */
+		if(p->request==request) {
+			int rc = p->Ioctl(fcb->streamobj, request, argp);
+
+			if(rc) { set_errcode(rc); return -1; }
+			else return 0;
+		}
+	}
+
+	/* Done, we return error */
+	set_errcode(ENOTTY); 
+	return -1;
+}
 

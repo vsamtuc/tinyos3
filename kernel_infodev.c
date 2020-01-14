@@ -2,6 +2,9 @@
 #include "kernel_dev.h"
 #include "kernel_proc.h"
 #include "kernel_fs.h"
+#include "kernel_exec.h"
+
+#include "tinyoslib.h"
 
 /*============================================
 
@@ -60,10 +63,10 @@ void write_procinfo(FILE* f)
 			get_pid(pcb->parent),
 			status,
 			wchan,
-			pcb->main_task,
-			pcb->argl
+			pcb->xargs.task,
+			pcb->xargs.argl
 			);
-		fwrite(pcb->args, 1, pcb->argl, f);
+		fwrite(pcb->xargs.args, 1, pcb->xargs.argl, f);
 		fprintf(f,"\n");
 	}
 }
@@ -94,8 +97,30 @@ void write_filesystems(FILE* f)
 }
 
 
+void write_binfmt(FILE* f)
+{
+	void tos_print(struct dlobj* dl, struct tos_entity* e)
+	{
+		fprintf(f,"\t%16p[%3lu] %3d %.*s\n",
+			e->data, e->size, e->type, MAX_NAME_LENGTH, e->name);
+	}
 
-#define MAX_INFO 3
+	for(uint i=0; i < MAX_DLOBJ; i++) {
+		struct dlobj* dl = dl_table+i;
+		if(! dl->used) continue;
+		fprintf(f, "%3d: %1d %1d %6d %6d", i, 
+			dl->used, dl->published, dl->pub_count, dl->use_count);
+		if(dl->published) {
+			fprintf(f, " %-s\n", dl->name);
+			dlobj_apply(dl, tos_print);
+		} else { fprintf(f, "\n"); }
+
+		fprintf(f,"\n");
+	}
+}
+
+
+#define MAX_INFO 4
 
 static info_dcb_t info_dev[MAX_INFO] = 
 {
@@ -110,6 +135,10 @@ static info_dcb_t info_dev[MAX_INFO] =
 	{
 		.pubname = "filesystems",
 		.write_output = write_filesystems
+	},
+	{
+		.pubname = "binfmt",
+		.write_output = write_binfmt
 	}
 };
 
@@ -120,7 +149,7 @@ static info_dcb_t info_dev[MAX_INFO] =
 
 static void info_devinit();
 
-static void* info_open(uint minor)
+static void* info_open(devnum_t minor)
 {
 	assert(minor < MAX_INFO);
 	info_stream* s = xmalloc(sizeof(info_stream));

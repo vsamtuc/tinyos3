@@ -390,7 +390,10 @@ void execute_program(void* handle)
 {
 	Program test_program = dlsym(handle,"test_program");
 	FATAL_ASSERT_MSG(test_program, "dlerror: %s", dlerror());
+	FATAL("We cannot run yet, fix needed")
+#if 0
 	ASSERT(Execute(test_program,0,NULL)!=NOPROC);
+#endif
 	WaitChild(NOPROC,NULL);
 }
 

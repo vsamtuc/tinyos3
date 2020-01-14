@@ -22,7 +22,7 @@ int clock_read(void* dev, char* buffer, unsigned int size)
 
 int clock_close(void* dev) { return 0; }
 
-void* clock_open(uint minor)
+void* clock_open(devnum_t minor)
 {
 	return &clockdev;
 }

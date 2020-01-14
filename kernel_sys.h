@@ -24,7 +24,7 @@
 #define SYSCALLS \
 SYSCALL(GetError, int, (void), ())\
 SYSCALL(Spawn, int, (Task task, int argl, void* args), (task, argl, args))\
-SYSCALL(Exec, int, (const char* progname, char *const argv[], char* const envp[]), (progname, argv, envp))\
+SYSCALL(Exec, int, (const char* progname, const char * argv[], const char* envp[]), (progname, argv, envp))\
 SYSCALLV(Exit, (int exitval), (exitval))\
 SYSCALL(GetPid, int, (void), ())\
 SYSCALL(GetPPid, int, (void), ())\
@@ -55,6 +55,7 @@ SYSCALL(StatFs, int, (const char* mpoint, struct StatFs* statfs), (mpoint, statf
 SYSCALL(Read,int,(Fid_t fd, char *buf, unsigned int size), (fd,buf,size))\
 SYSCALL(Write,int,(Fid_t fd, const char *buf, unsigned int size), (fd,buf,size))\
 SYSCALL(Seek, intptr_t, (int fid, intptr_t offset, int whence), (fid, offset, whence))\
+SYSCALL(Ioctl, int, (Fid_t fid, unsigned long request, void* argp), (fid, request, argp))\
 SYSCALL(Close,int,(Fid_t fd),(fd))\
 SYSCALL(Dup, Fid_t, (Fid_t oldfd), (oldfd))\
 SYSCALL(Dup2,int, (Fid_t oldfd, Fid_t newfd), (oldfd,newfd))\

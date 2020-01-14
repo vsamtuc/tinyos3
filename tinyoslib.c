@@ -156,27 +156,22 @@ int GetTimeOfDay(struct tm* tm, unsigned long* usec)
 
 static int exec_wrapper(int argl, void* args)
 {
+	packer p = UNPACKER(argl, args);
 	/* unpack the program pointer */
-	Program prog;
+	char* program = strget(&p);
+	size_t argc;  UNPACK(&p, argc);
+	const char* argv[argc+1];
+	unpackz(&p, argc, argv);
 
-	/* unpack the prog pointer */
-	memcpy(&prog, args, sizeof(prog));
-
-	argl -= sizeof(prog);
-	args += sizeof(prog);
-
-	/* unpack the string vector */
-	size_t argc = argscount(argl, args);
-	const char* argv[argc];
-	argvunpack(argc, argv, argl, args);
-
-	/* Make the call */
-	return prog(argc, argv);
+	return Exec(program, argv, NULL);
 }
+
+
+extern int bf_program_task(int argl, void* args);
 
 int ParseProgArgs(Task task, int argl, void* args, Program* prog, int argc, const char** argv)
 {
-	if(task != exec_wrapper)
+	if(task != bf_program_task)
 		/* We do not recognize the format! */
 		return -1;
 
@@ -200,26 +195,14 @@ int ParseProgArgs(Task task, int argl, void* args, Program* prog, int argc, cons
 
 
 
-int Execute(Program prog, size_t argc, const char* const * argv)
+int SpawnProgram(const char* path, size_t argc, const char* const * argv)
 {
-	/* We will pack the prog pointer and the arguments to 
-	  an argument buffer.
-	  */
-
-	/* compute the argument buffer size */
-	size_t argl = argvlen(argc, argv) + sizeof(prog);
-
-	/* allocate the buffer */
-	char args[argl];
-
-	/* put the pointer at the start */
-	memcpy(args, &prog, sizeof(prog));
-
-	/* add the string vector */
-	argvpack(args+sizeof(prog), argc, argv);
+	packer p PACKER_CLEANUP = PACKER;
+	strpack(&p, path);
+	packv(&p, argc, argv);	
 
 	/* Execute the process */
-	return Spawn(exec_wrapper, argl, args);
+	return Spawn(exec_wrapper, p.pos, p.buffer);
 }
 
 
@@ -270,3 +253,43 @@ int ReadDir(int dirfd, char* buffer, unsigned int size)
 	}
 	return len;
 }
+
+
+int dll_load(const char* name)
+{
+	Fid_t fid = Open("/dev/.kernel_dl", OPEN_RDONLY);
+	if(fid==NOFILE) return -1;
+	if(Ioctl(fid, DLL_LOAD, (void*)name)) return -1;
+	return 0;
+}
+
+int dll_unload(const char* name)
+{
+	char pathname[MAX_PATHNAME];
+	snprintf(pathname, MAX_PATHNAME, "/dev/%s", name);
+
+	Fid_t fid = Open(pathname, OPEN_RDONLY);
+	if(fid==NOFILE) return -1;
+	if(Ioctl(fid, DLL_UNLOAD, (void*)name)) return -1;
+	return 0;
+}
+
+int install(size_t argc, const char** argv)
+{
+	if(argc<2) { printf("Insufficient arguments"); return 1; }
+	if(dll_load(argv[1])==-1) { PError(argv[0]); return 1; }
+	return 0;
+}
+REGISTER_PROGRAM(install)
+
+int uninstall(size_t argc, const char** argv)
+{
+	if(argc<2) { printf("Insufficient arguments"); return 1; }
+	if(dll_unload(argv[1])==-1) { PError(argv[0]); return 1; }
+	return 0;
+}
+REGISTER_PROGRAM(uninstall)
+
+
+
+TOS_REGISTRY

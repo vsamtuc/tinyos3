@@ -46,9 +46,12 @@ typedef struct process_control_block
   int exitval;            /**< @brief The exit value of the process */
   TCB* main_thread;       /**< @brief The main thread */
 
+#if 0
   Task main_task;         /**< @brief The main thread's function */
   int argl;               /**< @brief The main thread's argument length */
   void* args;             /**< @brief The main thread's argument string */
+#endif
+  struct exec_args xargs; /**< @brief Execution arguments */
 
   volatile int sigkill;   /**< @brief Mark a process for termination */
 

@@ -70,6 +70,7 @@ void boot(vm_config* vmc, Task boot_task, int argl, void* args)
   boot_rec.task = boot_task;
   boot_rec.argl = argl;
   boot_rec.args = args;
+  boot_rec.lease = NULL;
 
   vmc->bootfunc = boot_tinyos_kernel; 
   vm_run(vmc);

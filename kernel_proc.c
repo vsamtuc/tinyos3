@@ -53,8 +53,7 @@ Pid_t get_pid(PCB* pcb)
 static inline void initialize_PCB(PCB* pcb)
 {
 	pcb->pstate = FREE;
-	pcb->argl = 0;
-	pcb->args = NULL;
+	pcb->xargs = XARGS_NULL;
 
 	for(int i=0;i<MAX_FILEID;i++)
 		pcb->FIDT[i] = NULL;
@@ -68,6 +67,7 @@ static inline void initialize_PCB(PCB* pcb)
 
 
 static PCB* pcb_freelist;
+static PCB* pcb_usedlist;
 
 void initialize_processes()
 {
@@ -79,6 +79,7 @@ void initialize_processes()
 	/* use the parent field to build a free list */
 	PCB* pcbiter;
 	pcb_freelist = NULL;
+	pcb_usedlist = NULL;
 	for(pcbiter = PT+MAX_PROC; pcbiter!=PT; ) {
 		--pcbiter;
 		pcbiter->parent = pcb_freelist;
@@ -87,7 +88,7 @@ void initialize_processes()
 
 	process_count = 0;
 
-	/* Execute a null "idle" process */
+	/* Execute a null "scheduler" process */
 	if(sys_Spawn(NULL,0,NULL)!=0)
 		FATAL("The scheduler process does not have pid==0");
 }
@@ -99,6 +100,11 @@ void initialize_processes()
 PCB* acquire_PCB()
 {
 	PCB* pcb = NULL;
+
+	if(pcb_freelist==NULL) {
+		pcb_freelist = pcb_usedlist;
+		pcb_usedlist = NULL;
+	}
 
 	if(pcb_freelist != NULL) {
 		pcb = pcb_freelist;
@@ -116,8 +122,8 @@ PCB* acquire_PCB()
 void release_PCB(PCB* pcb)
 {
 	pcb->pstate = FREE;
-	pcb->parent = pcb_freelist;
-	pcb_freelist = pcb;
+	pcb->parent = pcb_usedlist;
+	pcb_usedlist = pcb;
 	process_count--;
 }
 
@@ -138,9 +144,9 @@ static void start_main_thread()
 {
 	int exitval;
 
-	Task call =  CURPROC->main_task;
-	int argl = CURPROC->argl;
-	void* args = CURPROC->args;
+	Task call =  CURPROC->xargs.task;
+	int argl = CURPROC->xargs.argl;
+	void* args = CURPROC->xargs.args;
 
 	exitval = call(argl,args);
 	Exit(exitval);
@@ -150,25 +156,31 @@ static void start_main_thread()
 /* 
    Create and wake up the thread for the main function. 
  */
-void process_exec(PCB* proc, Task call, int argl, void* args)
+void process_exec(PCB* proc, struct exec_args* xargs)
 {
 	/* Set the main thread's function */
-	proc->main_task = call;
-	proc->argl = argl;
-	proc->args = args;
+	proc->xargs = *xargs;
 
-	if(call != NULL) {
+	if(xargs->task != NULL) {
 		proc->main_thread = spawn_thread(proc, start_main_thread);
 		wakeup(proc->main_thread);
 	}
 }
 
+/*
+	Clear the process's execution info.
+
+	Note: this will potentially release a DSO providing user-space code, make sure
+	`proc` is not, and will not, execute user-space code after this call!
+ */
 void process_clear_exec_info(PCB* proc)
 {
-	if(proc->args != NULL) free(proc->args);
-	proc->argl = 0;
-	proc->args = NULL;
-	proc->main_task = NULL;
+
+	
+	if(proc->xargs.args) free(proc->xargs.args);
+	if(proc->xargs.lease) dlobj_decref(proc->xargs.lease);
+
+	proc->xargs = XARGS_NULL;
 	proc->errcode = 0;
 }
 
@@ -182,14 +194,14 @@ _Noreturn void process_exit_thread()
 
 
 /* The system call */
-int sys_Exec(const char* pathname, char* const argv[], char* const envp[])
+int sys_Exec(const char* pathname, const char* argv[], const char* envp[])
 {
 	struct exec_args XA;
 	int rc = exec_program(&XA, pathname, (void*)argv, envp, 0);
 	if(rc) { return -1; }
 
 	process_clear_exec_info(CURPROC);
-	process_exec(CURPROC, XA.task, XA.argl, XA.args);
+	process_exec(CURPROC, &XA);
 	process_exit_thread();
 }
 
@@ -260,12 +272,18 @@ Pid_t sys_Spawn(Task call, int argl, void* args)
 		return NOPROC;
 	}
 
+	/* Renewed lease from parent */
+	struct dlobj* lease = NULL;
+
 	if(get_pid(newproc)<=1) 
 		/* Processes with pid<=1 (the scheduler and the init process) 
 		   are parentless and are treated specially. */
 		process_init_resources(newproc, NULL);
-	else
+	else {
 		process_init_resources(newproc, CURPROC);
+		lease = CURPROC->xargs.lease;
+		if(lease) dlobj_incref(lease);
+	}
 
 	/* Copy the argument */
 	void* args_copy = NULL;
@@ -275,10 +293,13 @@ Pid_t sys_Spawn(Task call, int argl, void* args)
 	}
 
 	/* 
-	   This must be the last thing we do, because once we wakeup the new thread it may run! 
-	   So we need to have finished the initialization of the PCB.
+		Execute the new program.
+
+		This must be the last thing we do, because once we wakeup the new thread it may run! 
+		So we need to have finished the initialization of the PCB.
 	 */
-	process_exec(newproc, call, argl, args_copy);
+	struct exec_args XA = {.task = call, .argl = argl, .args = args_copy, .lease = lease };
+	process_exec(newproc, &XA);
 
 	return get_pid(newproc);
 }
@@ -343,18 +364,18 @@ static Pid_t wait_for_specific_child(PCB* parent, Pid_t cpid, int* status)
 	}
 
 	/* 
-Condition:
-child==NULL or child->parent!=parent or child->pstate==ZOMBIE  
+		Condition:
+		child==NULL or child->parent!=parent or child->pstate==ZOMBIE  
 
-Action:
-if child==NULL || child->parent!=parent
-return error ECHILD
-else
-cleanup and return status of child
+		Action:
+		if child==NULL || child->parent!=parent
+		return error ECHILD
+		else
+		cleanup and return status of child
 
-It is complicated to write the condition as an expression inside while(), 
-because get_pcb(cpid) may return a different thing every time a waiter is woken up! 
-We write it more verbosely as below:
+		It is complicated to write the condition as an expression inside while(), 
+		because get_pcb(cpid) may return a different thing every time a waiter is woken up! 
+		We write it more verbosely as below:
 	 */
 	PCB* child;
 	while(1)
@@ -436,8 +457,6 @@ Pid_t sys_WaitChild(Pid_t cpid, int* status)
   Process termination
 
   ============================================*/
-
-
 
 
 void sys_Exit(int exitval)

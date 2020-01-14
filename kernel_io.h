@@ -3,6 +3,24 @@
 
 #include <stdint.h>
 
+
+
+/**
+	@brief A pair of request number and pointer to an ioctl routine.
+
+	A (possibly empty) array of such pairs is defined inside a driver, in order
+	to provide a driver-specific I/O control API.
+ */
+struct ioctl_func
+{
+	/**< @brief Pointer to an ioctl call */
+	int (*Ioctl)(void* this, unsigned long request, void* argp);
+
+	/**< @brief Request number */
+	unsigned long request;
+};
+
+
 /**
   @brief The device-specific file operations table.
 
@@ -85,7 +103,13 @@ typedef struct file_operations {
 	*/
 	intptr_t (*Seek)(void* this, intptr_t offset, int whence);
 
+	/**
+		@brief An array of ioctls for this device. 
 
+		This pointer is either null or points to an array of objects whose last
+		entry is  `{NULL, <num>}` (where `<num>` is any value).
+	 */
+	struct ioctl_func* ioctls;
 
 } file_ops;
 

@@ -121,6 +121,29 @@ static inline void * xmalloc (size_t size)
 }
 
 
+/**
+	@brief A wrapper for realloc checking for out-of-memory.
+
+	If there is no memory to fulfill a request, FATAL is used to
+	print an error message and abort.
+
+	@param size the number of bytes allocated via malloc
+	@returns the new memory block
+  */
+static inline void * xrealloc (void* ptr, size_t size)
+{
+  void *value = realloc (ptr, size);
+  if (value == 0)
+    FATAL("virtual memory exhausted");
+  return value;
+}
+
+
+
+
+
+
+
 /** @}   check_macros  */
 
 
@@ -1596,16 +1619,22 @@ static inline hash_value hash_rlnode_key(rlnode_key key)
 
 
 
-/*
-	Some helpers for packing and unpacking vectors of strings into
-	(argl, args)
+/**
+	@defgroup data_packing Packing data to buffers.
+
+	@brief Some helpers for packing and unpacking data 
+	   vectors of strings into `(argl, args)`.
+
+	@{
 */
+
+
 
 
 /**
 	@brief Get the length of a NULL-terminated vector of pointers 
 */
-static inline size_t veclen(void* const * vec) {
+static inline size_t veclen(const char* const * vec) {
 	size_t len=0;
 	while(*vec++) len++;
 	return len;
@@ -1697,6 +1726,72 @@ static inline void* argvunpack(size_t argc, const char** argv, int argl, void* a
 	return a;
 }
 
+
+/** 
+	@brief A packer is an extensible buffer for packing and unpacking
+	data.
+ */
+typedef struct packer {
+	void* buffer;
+	size_t size;
+	size_t pos;
+	int flags;
+} packer;
+
+
+/** @brief Initialize a dynamic packer */
+#define PACKER { .buffer=NULL, .size=0, .pos=0, .flags=0 }
+
+/** @brief Allocate a */
+#define PACKER_CLEANUP  __attribute__((cleanup(packer_free))) 
+
+#define UNPACKER(argl, args) {.buffer=(args), .size=(argl), .pos=0, .flags = 0}
+
+/** @brief Free packer memory */
+void packer_free(packer* p);
+
+void mempack(packer* p, const void* item, size_t isize);
+void strpack(packer* p, const char* str);
+void strnpack(packer* p, const char* str, size_t n);
+
+size_t memunpack(packer* p, void* loc, size_t isize);
+size_t strunpack(packer* p, char* loc);
+size_t strnunpack(packer* p, char* loc, size_t n);
+
+void* memget(packer* p, size_t isize);
+char* strget(packer* p);
+char* strnget(packer* p, size_t n);
+
+#define PACK(p, V) mempack((p), &(V), sizeof(V))
+#define UNPACK(p, V) memunpack((p), &(V), sizeof(V))
+
+
+static inline void packv(packer* p, size_t argc, const char* const * argv)
+{
+	PACK(p, argc);
+	for(uint i=0;i<argc;i++) strpack(p, argv[i]);
+}
+
+static inline void packz(packer* p, const char* const * argz)
+{
+	size_t argc = veclen(argz);
+	packv(p, argc, argz);
+}
+
+static inline void unpackv(packer* p, size_t argc, const char** argv)
+{
+	for(uint i=0;i<argc;i++) argv[i]=strget(p);
+}
+
+static inline void unpackz(packer* p, size_t argc, const char** argv)
+{
+	for(uint i=0;i<argc;i++) argv[i]=strget(p);
+	argv[argc] = NULL;
+}
+
+
+
+/** @} */
 
 /**
 	@brief Return the difference in time between two timespecs
@@ -1965,7 +2060,6 @@ static inline struct exception_stack_frame* __exc_exit_try(exception_context con
 #define __concatenate_tokens(x,y) x ## y
 #define __conc(z,w) __concatenate_tokens(z,w)
 
-/** @} */
 
 #define TRY_WITH(context) \
 	struct exception_stack_frame __conc(__try_,__LINE__) = \

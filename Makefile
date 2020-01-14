@@ -44,14 +44,14 @@ endif
 LDFLAGS= $(PLFLAGS) $(BASICFLAGS) -rdynamic
 LIBS= -L. -lfcontext -lpthread -lrt -lm -ldl
 
+TOS_LIBS= -L. -lfcontext -lm -ldl
 
 C_PROG= test_util.c test_bios.c test_kernel.c \
  	mtask.c tinyos_shell.c terminal.c \
  	validate_api.c \
  	$(EXAMPLE_PROG)
 
-T_PROG=testprog.so testprog2.so
-
+TOS_PROG=testprog.c testprog2.c small_apps.c sysutils.c
 EXAMPLE_PROG= $(wildcard *_example*.c)
 
 #
@@ -60,7 +60,7 @@ EXAMPLE_PROG= $(wildcard *_example*.c)
 C_SRC= bios.c $(wildcard kernel_*.c) tinyoslib.c symposium.c util.c unit_testing.c console.c
 C_OBJ=$(C_SRC:.c=.o)
 
-C_SOURCES= $(C_PROG) $(C_SRC)
+C_SOURCES= $(C_PROG) $(TOS_PROG) $(C_SRC)
 C_OBJECTS=$(C_SOURCES:.c=.o)
 
 FIFOS= con0 con1 con2 con3 kbd0 kbd1 kbd2 kbd3
@@ -73,23 +73,34 @@ tests: test_util validate_api test_example test_bios test_kernel
 
 examples: $(EXAMPLE_PROG:.c=) 
 
-modules: $(T_PROG)
+modules: $(TOS_PROG:.c=.so)
 
 #
 # libfcontext.a
 #
 libfcontext.a: make_x86_64_sysv_elf_gas.o jump_x86_64_sysv_elf_gas.o ontop_x86_64_sysv_elf_gas.o
-	$(AR) -crv $@ $^
-	$(RANLIB) $@
+	$(AR) -crvs $@ $^
 
 #
 # Modules
 #
-testprog.so: testprog.o
-	$(CC) -shared -o $@ $^ $(LIBS)
 
-testprog2.so: testprog2.o
-	$(CC) -shared -o $@ $^ $(LIBS)
+%.tos.o: %.c
+	$(CC) -fPIC $(CFLAGS) -c -o $@ $^
+
+testprog.so: testprog.tos.o
+	$(CC) -shared -o $@ $^ $(TOS_LIBS)
+
+testprog2.so: testprog2.tos.o
+	$(CC) -shared -o $@ $^ $(TOS_LIBS)
+
+
+small_apps.so: small_apps.tos.o symposium.tos.o
+	$(CC) -shared -o $@ $^ $(TOS_LIBS)
+
+sysutils.so: sysutils.tos.o shell.tos.o
+	$(CC) -shared -o $@ $^ $(TOS_LIBS)
+
 
 #
 # Normal apps
@@ -145,7 +156,7 @@ distclean: realclean
 	-rm *~
 
 realclean:
-	-rm $(C_PROG:.c=) $(C_OBJECTS) .depend
+	-rm $(C_PROG:.c=) $(C_OBJECTS) *.tos.o *.so *.a .depend
 	-rm $(FIFOS)
 
 depend: $(C_SOURCES)

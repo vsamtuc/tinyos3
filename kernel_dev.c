@@ -59,7 +59,7 @@ static void dev_adv_free(rlnode* n)
 static rdict dev_directory;
 
 
-void device_publish(const char* devname, uint major, uint minor)
+void device_publish(const char* devname, devnum_t major, devnum_t minor)
 {
 	rdict_insert(& dev_directory, dev_adv_alloc(devname, major, minor));
 }
@@ -122,20 +122,21 @@ void finalize_devices()
 }
 
 
-void register_device(DCB* dcb)
+void register_driver(DCB* dcb)
 {
 	device_table[dcb->type] = dcb;
 }
 
-int device_open(uint major, uint minor, void** obj, file_ops** ops)
+int device_open(devnum_t major, devnum_t minor, void** obj, file_ops** ops)
 {
 	/* Check limits */
-	if(major >= MAX_DEV || device_table[major]==NULL) { set_errcode(ENXIO); return -1; }
-	if(minor >= device_table[major]->devnum) { set_errcode(ENXIO); return -1; }
+	if(major >= MAX_DEV || device_table[major]==NULL) return ENXIO;
+	if(minor >= device_table[major]->devnum) return ENXIO; 
 
 	/* Check that open succeeds */
+	if(! device_table[major]->Open) return ENODEV;
 	void* devstream = device_table[major]->Open(minor);
-	if(devstream == NULL) { set_errcode(ENXIO); return -1; }
+	if(devstream == NULL) return ENODEV;
 
 	/* Return stream */
 	*obj = devstream;
@@ -143,7 +144,30 @@ int device_open(uint major, uint minor, void** obj, file_ops** ops)
 	return 0;
 }
 
-uint device_no(uint major)
+int device_create(devnum_t major, devnum_t* minor, const char* name, void* arg)
+{
+	/* Check limits */
+	if(major >= MAX_DEV || device_table[major]==NULL) return ENXIO;
+
+	/* Check that open succeeds */
+	if(! device_table[major]->Create) return ENODEV;
+	return device_table[major]->Create(minor, name, arg);
+}
+
+
+int device_destroy(devnum_t major, devnum_t minor)
+{
+	/* Check limits */
+	if(major >= MAX_DEV || device_table[major]==NULL) return ENXIO;
+	if(minor >= device_table[major]->devnum) return ENXIO;
+
+	/* Check that open succeeds */
+	if(! device_table[major]->Destroy) return ENODEV;
+	return device_table[major]->Destroy(minor);
+}
+
+
+uint device_no(devnum_t major)
 {
   return device_table[major]->devnum;
 }
@@ -221,10 +245,7 @@ static int devfs_open(MOUNT _mnt, inode_t _ino, int flags, void** obj, file_ops*
 {
 	if(_ino == (inode_t) NO_DEVICE) return EISDIR;
 	Dev_t dev = (Dev_t) _ino;
-	if(device_open(DEV_MAJOR(dev), DEV_MINOR(dev), obj, ops)==0)
-		return 0;
-	else
-		return ENODEV;
+	return device_open(DEV_MAJOR(dev), DEV_MINOR(dev), obj, ops);
 }
 
 static int devfs_truncate(MOUNT _mnt, inode_t _ino, intptr_t length)

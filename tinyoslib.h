@@ -42,27 +42,19 @@ typedef int (*Program)(size_t argc, const char** argv);
 
 
 /**
-	@brief Execute a new process, passing it the given arguments.
+	@brief Execute a program in a new process, passing it the given arguments.
 
 	The underlying implementation uses the @ref Spawn system call, to
 	create a new process. 
 
+	Note that this function is completely different from the \c Exec
+	system call, which terminates the current program and executes
+	a new one in the current process.
+
 	By convention, argument argv[0] is assumed to be the program name, 
 	although any string is actually acceptable.
   */
-int Execute(Program prog, size_t argc, const char* const * argv);
-
-/**
-	@brief Duplicate a file id to a new file id.
-
-	Return a new fid that points to the same file id as \c oldfid.
-	In case of error, \c NOFILE is returned and \c GetError() returns
-	the error code.
-
-	@param oldfid the file id to be duplicated
-	@returns the new file id, or NOFILE
- */
-Fid_t Dup(Fid_t oldfid);
+int SpawnProgram(const char* prog, size_t argc, const char* const * argv);
 
 
 /**
@@ -207,19 +199,37 @@ void LocalTime(timestamp_t ts, struct tm* tm, unsigned long* usec);
 int GetTimeOfDay(struct tm* tm, unsigned long* usec);
 
 
+/* DLL device ioctls */
+
+/**< 
+	@brief ioctl request to load a shared object into tinyos 
+	@see dll_load
+ */	
+#define DLL_LOAD   0x1
+#define DLL_UNLOAD 0x2
+
+
+int dll_load(const char* name);
+int dll_unload(const char* name);
+
+
 enum tos_type
 {
 	TOS_PROGRAM
 };
 
 
+/*
+	The size of this must be a power of 2, so that ELF will
+	pack the structures.
+ */
 struct tos_entity {
 	void* data;
 	size_t size;
 	enum tos_type type;
 	char name[MAX_NAME_LENGTH];
-	const char* description;
 	rlnode dnode;
+	void* __filler[2];
 };
 
 
@@ -237,14 +247,13 @@ struct bf_program
 };
 
 
-#define REGISTER_PROGRAM(C, D)						\
+#define REGISTER_PROGRAM(C)						\
 static struct bf_program __program_##C = {{'#','P'}, &C}; \
 static struct tos_entity __descriptor_##C 			\
-    __attribute((__section__("tinyos")))			\
-    __attribute((__used__)) 						\
+    __attribute__((__section__("tinyos")))			\
+    __attribute__((__used__)) 						\
  	= { .data = &__program_##C, .size = sizeof(__program_##C),	\
- 		.type=TOS_PROGRAM, .name= #C, 							\
- 		.description=D};							\
+ 		.type=TOS_PROGRAM, .name= #C}; 							\
 
 
 

@@ -276,7 +276,7 @@ Pid_t Spawn(Task task, int argl, void* args);
 
 
 
-int Exec(const char* progpath, char* const argv[], char* const envp[]);
+int Exec(const char* progpath, const char* argv[], const char* envp[]);
 
 
 /** @brief Exit the current process.
@@ -450,6 +450,14 @@ void ThreadExit(int exitval);
 typedef uint32_t Dev_t; 
 
 /**
+	@brief Device number
+
+	Each device is identified by a pair of numbers of type `devnum_t`,
+	the so-called major and minor numbers.
+ */
+typedef uint16_t devnum_t;
+
+/**
   @brief The device major numbers.
 	
   The device major number of a device determines the driver used.
@@ -469,13 +477,13 @@ enum Device_type
 #define NO_DEVICE ((Dev_t) -1)
 
 /** @brief Extract the major number from a device id  */
-#define DEV_MAJOR(dev)  ((uint16_t) ((dev)>>16))
+#define DEV_MAJOR(dev)  ((devnum_t) ((dev)>>16))
 
 /** @brief Extract the major number from a device id  */
-#define DEV_MINOR(dev)  ((uint16_t) (dev))
+#define DEV_MINOR(dev)  ((devnum_t) (dev))
 
 /** @brief Combine a major and minor number into a device id  */
-static inline Dev_t device_id(uint16_t major, uint16_t minor) 
+static inline Dev_t device_id(devnum_t major, devnum_t minor) 
 {
 	return (((Dev_t) major) << 16) | ((Dev_t) minor);
 }
@@ -578,6 +586,49 @@ enum Open_flags
    - **@c ENOSPC ** The filesystem has no more roof for a new file
  */
 Fid_t Open(const char* pathname, int flags);
+
+
+/**
+	@brief Create a device special file.
+
+	This call will create a device special file at the given pathname.
+
+	@param pathname a pathname on which the special file will be located
+	@param dev device id for the device special file
+	@returns 0 on success or -1 in case of error. 
+	   Possible errors are:	   
+   - **@c ENAMETOOLONG** The pathname exceeds the limits of the operating system.
+   - **@c EEXIST** The pathname exists
+   - **@c EISDIR** The pathname is a directory.
+   - **@c EROFS** The filesystem is read-only and write access was requested.
+   - **@c ENOMEM** The kernel memory limit has been exceeded.
+   - **@c ENOSPC** The filesystem has no more roof for a new file	
+ */
+int MkNod(const char* pathname, Dev_t dev);
+
+
+/**
+	@brief Manipulate the parameters of a device
+
+	This call allows device-specific operations on a file descriptor associated with a
+	device. The extra argument `argp` passes data to the call, whose format depends on the
+	device.
+
+	Usually the standard library defines routines which employ and provide a more convenient
+	interface to the user.
+
+	@param fid the open device to manipulate
+	@param request identifier for the request
+	@param argp extra arguments for the request
+	@return 0 on success, or -1 on failure. 
+		Standard errors include the following
+		- **@c EBADF** The file id is invalid.
+		- **@c EINVAL** The file id is not suitable for writing.
+		- **@c EIO** There was a I/O runtime problem.
+		- **@c ENOTTY** \c fid is not a device suitable for the request
+		Other error codes may be returned by the underlying driver.
+ */
+int Ioctl(Fid_t fid, unsigned long request, void* argp);
 
 
 /**
@@ -868,6 +919,21 @@ int Write(Fid_t fd, const char* buf, unsigned int size);
 int Close(Fid_t fd);
 
 
+/**
+	@brief Duplicate a file id to a new file id.
+
+	Return a new fid that points to the same file id as \c oldfid.
+	In case of error, \c NOFILE is returned and \c GetError() returns
+	the error code.
+
+	@param oldfid the file id to be duplicated
+	@returns the new file id, or NOFILE on failure.
+	- **@c EBADF** oldfd is not an open file or it is invalid
+    - **@c EMFILE** The maximum number of per-process file descriptors has been reached.
+ */
+Fid_t Dup(Fid_t oldfid);
+
+
 /** @brief Make a copy of a stream to a new file ID.
 
   If @c newfd is already in use by another file, it is first
@@ -879,7 +945,7 @@ int Close(Fid_t fd);
   @param oldfd the file id to copy from
   @param newfd the new file id.
   @return This call returns 0 on success and -1 on failure.
-  Possible reasons for failure:
+  Possible errors are:
   - **@c EBADF** Either oldfd or newfd is invalid.
   - **@c EBADF** oldfd is not an open file.
  */

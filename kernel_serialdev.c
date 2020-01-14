@@ -138,7 +138,7 @@ int serial_close(void* dev)
 }
 
 
-void* serial_open(uint term)
+void* serial_open(devnum_t term)
 {
 	assert(term<bios_serial_ports());
 	return & serial_dev[term];

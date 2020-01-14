@@ -53,7 +53,7 @@ int nulldev_close(void* dev)
 /*
 	Open just returns `nulldev`
  */
-void* nulldev_open(uint minor)
+void* nulldev_open(devnum_t minor)
 {
 	return &nulldev[minor];
 }

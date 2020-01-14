@@ -664,16 +664,93 @@ void rdict_std_trigger_resize(rdict* dict)
 
 
 
+/* ---------------------------------------------------------
+	... hashing policy
+   --------------------------------------------------------- */
+/* ---------------------------------------------------------
+	... hashing policy
+   --------------------------------------------------------- */
+/* ---------------------------------------------------------
+	... hashing policy
+   --------------------------------------------------------- */
 
-/* ---------------------------------------------------------
-	... hashing policy
-   --------------------------------------------------------- */
-/* ---------------------------------------------------------
-	... hashing policy
-   --------------------------------------------------------- */
-/* ---------------------------------------------------------
-	... hashing policy
-   --------------------------------------------------------- */
+/**********************
+	Packer
+ **********************/
+
+static void packer_ensure_space(packer* p, size_t isize)
+{
+	size_t newsize = p->size;
+	if(newsize==0) newsize = 16;
+	while(isize > newsize - p->pos) newsize <<=1;
+	if(newsize!=p->size) { p->buffer = realloc(p->buffer, newsize); p->size=newsize; }
+	assert(p->size >= p->pos + isize);
+}
+
+void packer_free(packer* p) { free(p->buffer); }
+
+
+/* Two length functions */
+static inline size_t  __len(const char* p) { return strlen(p)+1; }
+static inline size_t  __nlen(const char* p, size_t n) {
+	size_t nlen = strnlen(p, n);
+	return nlen + (nlen<n) ? 1 : 0;
+}
+
+static inline void* __cur(packer* p) { return p->buffer+p->pos; }
+
+void mempack(packer* p, const void* item, size_t isize)
+{
+	packer_ensure_space(p, isize);
+	memcpy(p->buffer+p->pos, item, isize);
+	p->pos += isize;
+}
+
+void strpack(packer* p, const char* str)
+{
+	mempack(p, str, __len(str));
+}
+
+void strnpack(packer* p, const char* str, size_t n)
+{
+	mempack(p, str, __nlen(str,n));
+}
+
+
+size_t memunpack(packer* p, void* loc, size_t isize) 
+{
+	memcpy(loc, p->buffer+p->pos, isize);
+	p->pos += isize;
+	return isize;
+}
+
+size_t strunpack(packer* p, char* loc)
+{
+	return memunpack(p, loc, __len(__cur(p)));
+}
+
+size_t strnunpack(packer* p, char* loc, size_t n)
+{
+	return memunpack(p, loc, __nlen(__cur(p),n));
+}
+
+void* memget(packer* p, size_t isize)
+{
+	void* ret = p->buffer+p->pos;
+	p->pos += isize;
+	return ret;
+}
+
+char* strget(packer* p)
+{
+	return memget(p, __len(__cur(p)));
+}
+
+char* strnget(packer* p, size_t n)
+{
+	return memget(p, __nlen(__cur(p),n));
+}
+
 
 
 
