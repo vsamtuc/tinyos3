@@ -51,6 +51,7 @@ C_PROG= test_util.c test_bios.c test_kernel.c \
  	validate_api.c \
  	$(EXAMPLE_PROG)
 
+TOS_SYSUTILS=$(wildcard sysutils_*.c)
 TOS_PROG=testprog.c testprog2.c small_apps.c sysutils.c
 EXAMPLE_PROG= $(wildcard *_example*.c)
 
@@ -98,7 +99,7 @@ testprog2.so: testprog2.tos.o
 small_apps.so: small_apps.tos.o symposium.tos.o
 	$(CC) -shared -o $@ $^ $(TOS_LIBS)
 
-sysutils.so: sysutils.tos.o shell.tos.o
+sysutils.so: sysutils.tos.o shell.tos.o $(TOS_SYSUTILS:.c=.tos.o)
 	$(CC) -shared -o $@ $^ $(TOS_LIBS)
 
 

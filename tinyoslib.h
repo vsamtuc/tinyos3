@@ -156,6 +156,37 @@ void BarrierSync(barrier* bar, unsigned int n);
 int ReadDir(int dirfid, char* buffer, unsigned int size);
 
 
+
+/**
+	@brief Return the names in a directory
+
+	Given a directory `dirpath`, store into `namelist` a `malloc`-ed
+	`NULL`-terminated vector of strings, where each string is a name
+	in `dirpath`. Example, printing all devices
+	\code
+	char** devices;
+	ScanDir("/dev", &devices, NULL);
+	for(char** p = devices; (*p)!=NULL; p++)  
+		printf("device: %s\n", (*p));
+	free(devices);
+	\endcode
+
+	The third argument, if not NULL, is a pointer to a function. This function
+	is called on every name. Only those names for which it returns nonzero are
+	included in `*namelist`.
+
+	The returned array of strings must be freed to avoid a memory leak.
+
+	@param dirpath a pathname to list
+	@param namelist location where a NULL-terminated array of strings is stored
+	@param filter  a function that selects some names
+	@return the number of elements in `*namelist` or -1 on error. If an error occurred,
+	  GetError() is set to the code (returned from @ref OpenDir()).
+ */
+int ScanDir(const char* dirpath, char*** namelist, int (*filter)(const char*));
+
+
+
 /**
 	@brief Return a timestamp for the current time
 	

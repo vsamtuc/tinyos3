@@ -255,6 +255,72 @@ int ReadDir(int dirfd, char* buffer, unsigned int size)
 }
 
 
+/* true/false return, true means 'take file' */
+typedef int (*name_filter)(const char*);
+
+/* Must return 0, on error -1, scan stops on -1 */
+typedef int (*name_action)(const char*, size_t idx, void* cookie);
+
+#define checked(call) \
+do{ int rc=(call); if(rc<0) return -1; }while(0)
+
+
+int foreach_name(Fid_t fdir, name_filter filter, name_action action, void* cookie)
+{
+	int rc;
+	checked(Seek(fdir,0,SEEK_SET));
+	char name[MAX_NAME_LENGTH+1]; name[MAX_NAME_LENGTH]=0;
+	size_t count=0;
+	while( (rc=ReadDir(fdir,name, MAX_NAME_LENGTH))>0 ) {
+		if(!filter || filter(name)) {
+			action(name, count, cookie);
+			count++;
+		}
+	}
+	return (rc<0) ? -1 : Seek(fdir,0,SEEK_SET);
+}
+
+
+int ScanDir(const char* path, char*** namelist, name_filter filter)
+{
+	Fid_t fdir = OpenDir(path);
+	if(fdir==NOFILE) return -1;
+
+	/* Count elements and sizes */
+	size_t count=0, total_length = 0;
+
+	/* Helper */
+	int count_dir(const char* name, size_t idx, void* cookie)
+	{ count++; total_length+=strlen(name); return 0; }
+	checked(foreach_name(fdir, filter, count_dir, NULL));
+
+	/* Allocate return buffer */
+	size_t nlsize = (count+1)*sizeof(char*) + total_length+count;
+	void* buffer = xmalloc(nlsize);
+	memset(buffer, 0, nlsize);
+
+	char** names = buffer;
+	char* pos =  buffer + sizeof(char*)*(count+1);
+
+	/* Fills the buffer */
+	int dump_dir(const char* name, size_t idx, void* cookie)
+	{  names[idx]=pos; pos = stpcpy(pos, name)+1; return 0; }
+	if(foreach_name(fdir, filter, dump_dir, NULL)==-1) {
+		free(buffer); return -1;
+	}
+
+	/* Sort the buffer */
+	int cmpstrptr(const void* p, const void* q)
+	{ return strcmp(*(const char**)p,  *(const char**)q); }
+	qsort(names, count, sizeof(char*), cmpstrptr);
+
+	/* Return */
+	*namelist = buffer;
+	return count;
+}
+
+
+
 int dll_load(const char* name)
 {
 	Fid_t fid = Open("/dev/.kernel_dl", OPEN_RDONLY);
