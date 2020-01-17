@@ -188,6 +188,25 @@ static inline void * xrealloc (void* ptr, size_t size)
  */
 static inline void* pointer_marked(void* ptr) { return (void*) ((uintptr_t)ptr | __mark_mask); }
 
+
+/**
+	@brief Return a pointer with marking flipped.
+
+	This routine will flip a mark bit into a (marked or unmarked) pointer and return the new
+	pointer. The returned pointer should not be dereferenced, as results will be undefined
+	(and probably catastrophic).
+
+	@see pointer_marked
+	@see pointer_unmarked
+	
+	@param ptr the pointer to flip the mark
+	@return a pointer 
+ */
+static inline void* pointer_mark_flipped(void* ptr) { return (void*) ((uintptr_t)ptr ^ __mark_mask); }
+
+
+
+
 /**
 	@brief Return an unmarked pointer.
 

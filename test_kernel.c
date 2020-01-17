@@ -5,7 +5,8 @@
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
-#include <setjmp.h>
+#include <stdatomic.h>
+#include <sys/mman.h>
 
 #include <dlfcn.h>
 
@@ -372,90 +373,502 @@ BOOT_TEST(test_dlink,"Test dynamic linking")
 	return 0;
 }
 
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
 
-struct _pair { const char* name; Program prog; };
-
-void print_table(const char* tname, struct _pair* p)
+size_t get_file_size(const char* filename)
 {
-	MSG("Table: %s\n", tname);
-	if(p==NULL) MSG("    NULL table\n");
-	while(p->prog) {
-		MSG("  Name: %s \n", p->name);
-		p++;
+	struct stat st;
+	stat(filename, &st);
+	return st.st_size;
+}
+
+int set_up_memory(const char* filename, void* loc, size_t size)
+{
+	int fd = open(filename, O_RDONLY);
+	FATAL_ASSERT(fd>=0);
+	int rc = read(fd, loc, size);
+	close(fd);
+	return rc;
+}
+
+#define PAGESIZE (1<<12)
+
+void * mm_handle;
+size_t mm_size;
+size_t pgfaults;
+
+int addr_in_range(void* addr, void* start, size_t size) 
+{
+	return (addr>=start && (addr-start) < size);
+}
+
+void* pageof(void* addr) 
+{
+	uintptr_t ia = (uintptr_t)addr;
+	ia &= ~(PAGESIZE-1);
+	return (void*)ia;
+}
+
+
+void sigsegv_handler(int signum, siginfo_t* si, void* ctx)
+{
+	fprintf(stderr, "Segfault\n");
+	if(signum == SIGSEGV && 
+		si->si_code == SEGV_ACCERR && 
+		addr_in_range(si->si_addr, mm_handle, mm_size)) 
+	{
+		CHECK(mprotect(pageof(si->si_addr), PAGESIZE, PROT_READ|PROT_WRITE));
+		pgfaults++;
+		atomic_signal_fence(memory_order_seq_cst);
+	} else {
+		psiginfo(si, "Unrecognized segfault");
+		abort();
 	}
 }
 
 
-void execute_program(void* handle)
+BOOT_TEST(test_mm,"mm test")
 {
-	Program test_program = dlsym(handle,"test_program");
-	FATAL_ASSERT_MSG(test_program, "dlerror: %s", dlerror());
-	FATAL("We cannot run yet, fix needed")
-#if 0
-	ASSERT(Execute(test_program,0,NULL)!=NOPROC);
-#endif
-	WaitChild(NOPROC,NULL);
-}
 
+	/* 
+		Reserve a huge amount of address space, make all of it segfault on any access
+	 */
 
-void print_section(struct tos_entity* start, struct tos_entity* stop)
-{
-	MSG("REGISTERED:\n");
-	for(struct tos_entity* p = start; p!= stop; p++) {
-		MSG("Name: %s\n", p->name);
+	mm_size = 1ul << 36;
+	mm_handle = mmap(NULL, mm_size, PROT_READ|PROT_WRITE, MAP_ANONYMOUS|MAP_PRIVATE|MAP_NORESERVE, -1, 0);
+	if(! mm_handle) { perror("test_mm"); }
+	FATAL_ASSERT(mm_handle);
+	CHECK(mprotect(mm_handle, mm_size, PROT_NONE));
 
-		Dl_info dli;
-		int rc = dladdr(p->data, &dli);
-		if(rc==0)
-			MSG(" Info error: %s\n", dlerror());
-		else
-			MSG(" Info: fname=%s fbase=%p  sname=%s saddr=%p\n", 
-				dli.dli_fname, dli.dli_fbase, dli.dli_sname, dli.dli_saddr);
+	/*
+		Set up handler for SIGSEGV
+	 */
 
+	stack_t ss = { .ss_sp = xmalloc(1<<14), .ss_size=1<<14, .ss_flags=0 };
+	stack_t old_ss;
+	CHECK(sigaltstack(&ss, &old_ss));
 
-		WaitChild(NOPROC, NULL);
-	}
-	MSG("END REGISTERED:\n");
-}
+	struct sigaction sa = { .sa_sigaction=sigsegv_handler, .sa_flags=SA_SIGINFO|SA_ONSTACK|SA_NODEFER };
+	struct sigaction saved_sa;
+	CHECK(pthread_sigmask(0, NULL, &sa.sa_mask));
+	CHECK(sigaction(SIGSEGV, &sa, &saved_sa));
 
-void print_dlsection(void* handle2)
-{
-	ASSERT(dlsym(handle2,"__start_tinyos"));
-	struct tos_entity** s2 = dlsym(handle2,"__begin_tinyos");
-	struct tos_entity** e2 = dlsym(handle2,"__end_tinyos");
-	FATAL_ASSERT(s2);
-	FATAL_ASSERT(e2);
-	print_section(*s2, *e2);	
-}
+	pgfaults=0;  /* Will count page faults */
+	atomic_signal_fence(memory_order_seq_cst);
 
-BOOT_TEST(test_load_shared,"Test that loading a shared object and executing a program from it works")
-{
-	FATAL_ASSERT(Mount(NO_DEVICE, "/", "tmpfs", 0, NULL)==0);
-	FATAL_ASSERT(MkDir("/dev")==0);
-	FATAL_ASSERT(Mount(NO_DEVICE, "/dev", "devfs", 0, NULL)==0);
+	/*
+		Read some data
+	 */
+	const char* fname = "Makefile";
+	size_t fsize = get_file_size(fname);
+	char fdata[fsize];
+	int rc = set_up_memory(fname, fdata, fsize+ (1<<12));
+	ASSERT(fsize==rc);
 
-	void* handle = dlopen("./testprog.so", RTLD_NOW|RTLD_LOCAL);
-	FATAL_ASSERT_MSG(handle, "dlerror: %s", dlerror());
+	size_t psize = (fsize + PAGESIZE-1) / PAGESIZE;
 
-	void* h1 = dlopen("./testprog.so", RTLD_NOW|RTLD_LOCAL);
-	FATAL_ASSERT_MSG(h1, "dlerror: %s", dlerror());
-	ASSERT(h1==handle);
-	dlclose(h1);
+	/* Cause a segfault */
+	memcpy(mm_handle, fdata, fsize);
+	ASSERT(memcmp(mm_handle, fdata, fsize)==0);
+	CHECK(madvise(mm_handle, psize, MADV_DONTNEED));
+	ASSERT(memcmp(mm_handle, fdata, fsize)!=0);
 
+	/* Cause another segfault */
+	int* xp = (int*)(mm_handle+2*PAGESIZE);
+	* xp= 10;
+	ASSERT(*xp == 10);
 
-	void* handle2 = dlopen("./testprog2.so", RTLD_NOW|RTLD_LOCAL);
-	FATAL_ASSERT_MSG(handle, "dlerror: %s", dlerror());
+	/* check number of segfaults */
 
-	execute_program(handle);
-	execute_program(handle2);
-	
-	print_dlsection(handle);
-	print_dlsection(handle2);
-
-	ASSERT(dlclose(handle)==0);
-	ASSERT(dlclose(handle2)==0);
+	/* Cleanup */
+	CHECK(munmap(mm_handle, mm_size));
+	CHECK(sigaction(SIGSEGV, &saved_sa, NULL));
+	CHECK(sigaltstack(&old_ss, NULL));
 
 	return 0;
+}
+
+
+/* 
+	An ordered tree built using a 'less' function.
+
+	We use rlnodes, with prev<->left and next<->right.
+	We implement the red-black algorithm, as follows:
+
+	we treat the tree as a 2-3 tree, i.e., each 't-node' is 
+	either a single rlnode or a pair of rlnodes. Thus, each
+	t-node holds 1 or 2 keys and 2 or 3 pointers. 
+
+	A t-node is a list of rlnodes, linked by a marked pointer
+	in the 'next' field.
+*/
+
+
+#if 0
+typedef rlnode* tnode[2];
+typedef int (*rtree_less)(rlnode*, rlnode_key key);
+
+
+static inline void load_tnode(tnode N, rlnode* n) {
+	N[0] = n;
+	if(pointer_is_marked(n->next))
+		N[1] = pointer_unmarked(n->next);
+	else
+		N[1] = NULL;
+}
+
+
+static inline int tnode_is_leaf(tnode N) { return N[0]->prev == NULL; }
+static inline unsigned int tnode_size(tnode N) { return N[1] ? 2 : 1; }
+static inline rlnode** tnode_subtree(tnode N, unsigned int i) {
+	assert (i<= tnode_size(N));
+	if(i==0) return & N[0]->prev;
+	if(N[1]) return (i==1) ? & N[1]->prev : & N[1]->next;
+	else return & N[0]->next;
+} 
+static inline unsigned int tnode_find_subtree(tnode N, rlnode_key key, rtree_less lessf)
+{
+	uint tns = tnode_size(N);
+	for(uint i=0; i<tns; i++) if(!lessf(N[i],key)) return i;
+	return tns; 
+}
+
+/*
+	If node==NULL, return NULL (no insertion). Assume node != 0
+	It is node->next == NULL. 
+
+	Think of node as  (cp, n)  where cp==node->prev 
+
+	Think of a tnode as  
+	either  (c, k) c            child == 0/1
+	or      (c,k) (c,k), c      child == 0/1/2
+
+	Do insert (depending on child) one of 5 cases
+
+	child==0:   (cp, n) (c,k) c   or  (cp,n) (c,k) (c,k) c  
+	child==1:   (c, k)  (cp,n) c  or  (c, k) (cp,n) (c,k) c
+	child==2:                         (c, k) (c, k) (cp, n) c
+
+	On overflow (right column), generate bubble up as the leftmost pair
+*/
+static inline rlnode* tnode_insert(tnode N, rlnode* node, uint child)
+{
+	if(node==NULL) return NULL;
+	assert(node->next == NULL);
+	assert(child<=tnode_size(N));
+
+	rlnode* bup = NULL;
+
+	if(N[1]) {
+		/* We split */
+		rlnode* M; /* The left bloc of the split */
+		if(child==0) {
+			M=node; bup = N[0]; N[0]=N[1];
+		} else if(child==1) {
+			M=N[0]; bup = node; N[0]=N[1];
+		} else {
+			M = N[0]; bup = N[1]; N[0]=node;
+			N[0]->next = bup->next;
+		}
+		N[1] = NULL;
+		M->next = bup->prev; 
+		bup->prev = M;
+		bup->next = NULL;
+	} else {
+		if(child==0) {
+			N[1] = N[0];
+			N[0] = node; 
+		} else {
+			N[1] = node;
+			node->next = N[0]->next;
+		}
+		N[0]->next = pointer_marked(N[1]);
+	}
+	return bup;
+}
+
+/*
+	Precondition: node->key not equal to any node in the tree
+ */
+rlnode* rtree_insert(rlnode* tree, rlnode* node, rtree_less lessf)
+{
+	/* prepare node */
+	node->prev = node->next = NULL; 
+
+	/* base case */
+	if(tree==NULL) return node;
+
+
+	/* Insert into tree, return root of new tree */
+	rlnode* insert(tnode N)
+	{
+		/* bubble-up */
+		rlnode* bup;
+		uint child = tnode_find_subtree(N, node->key, lessf);
+
+		/* Reach bottom */
+		if(! tnode_is_leaf(N)) {
+			rlnode ** subtree = tnode_subtree(N,child);
+			tnode Child;  load_tnode(Child, *subtree);
+
+			/* Get bubble up from subtree */
+			bup = insert(Child);
+
+			/* child possibly changed, update it */
+			*subtree = Child[0];
+		} else 
+			bup = node;
+		
+		/* We need to insert bubble-up into this tnode */
+		rlnode* mybup = tnode_insert(N, bup, child);
+		return mybup;
+	}
+
+	tnode T; load_tnode(T, tree);
+	rlnode* bup = insert(T);
+	if(bup) {
+		bup->next = T[0];
+		return bup;
+	}
+	return T[0];
+}
+
+
+rlnode* rtree_remove(rlnode* tree, rlnode* node)
+{
+	
+}
+#endif 
+
+static inline int  _red(rlnode* n) { return n && pointer_is_marked(n->next); }
+static inline void _set_red(rlnode* n) {n->next =  pointer_marked(n->next); }
+static inline void _set_black(rlnode* n) {n->next =  pointer_unmarked(n->next); }
+static inline void _color_flip(rlnode* n) { n->next =  pointer_mark_flipped(n->next); }
+
+static inline void _set_color(rlnode* n, int red) { if(red) _set_red(n); else _set_black(n); }
+
+static inline rlnode* _left(rlnode* n) { return n->prev; }
+static inline rlnode* _right(rlnode* n) { return pointer_unmarked(n->next); }
+static inline rlnode* _set_left(rlnode* n, rlnode* v) { n->prev = v; return v; }
+static inline rlnode* _set_right(rlnode* n, rlnode* v) {
+	n->next = pointer_is_marked(n->next) ? pointer_marked(v) : pointer_unmarked(v);
+	return v;
+}
+
+
+static inline rlnode* _rotate_left(rlnode* h) 
+{
+	rlnode* x = _right(h);
+	_set_right(h, _left(x));
+	_set_left(x, h);
+	_set_color(x, _red(h));
+	_set_red(h);
+	return x;
+}
+static inline rlnode* _rotate_right(rlnode* h)
+{
+	rlnode* x = _left(h);
+	_set_left(h, _right(x));
+	_set_right(x, h);
+	_set_color(x, _red(h));
+	_set_red(h);
+	return x;	
+}
+static inline void _flip_colors(rlnode* h)
+{
+	_color_flip(h);
+	_color_flip(_left(h));
+	_color_flip(_right(h));
+}
+
+void rtree_init(rlnode* node, rlnode_key key)
+{
+	node->key = key;
+	node->prev = node->next = NULL;
+	_set_red(node);
+}
+
+
+/** 
+	@brief Comparator function 
+
+	Return -1, 0 or 1, depending on whether the two compared
+	keys are <, ==  or > to each other
+ */
+typedef int (*rtree_cmp)(rlnode_key key1, rlnode_key key2);
+
+rlnode* rtree_search(rlnode* tree, rlnode_key key, rtree_cmp cmpf)
+{
+	rlnode* x = tree;
+	while(x) {
+		int cmp = cmpf(key, x->key);
+		if(cmp==0) return x;
+		else x = (cmp<0)? _left(x) : _right(x);
+	}
+	return NULL;
+}
+
+rlnode* rtree_insert(rlnode* tree, rlnode* node, rtree_cmp cmpf)
+{
+	_set_red(node);
+
+	rlnode* insert(rlnode* h) {
+		if(h==NULL) return node;
+
+		if(_red(_left(h)) && _red(_right(h)) ) _color_flip(h);
+
+		int cmp = cmpf(node->key, h->key);
+		assert(cmp); /* No duplicates allowed ! */
+		if(cmp<0)  _set_left(h, insert(_left(h)));
+		else       _set_right(h, insert(_right(h)));
+
+		if(_red(_right(h)) && !_red(_left(h))) h = _rotate_left(h);
+		if(_red(_left(h)) && _red(_left(_left(h)))) h = _rotate_right(h);
+
+		return h;
+	}
+
+	tree = insert(tree);
+	_set_black(tree);
+	return tree;
+}
+
+
+
+void rtree_apply(rlnode* tree, void (*func)(rlnode* node))
+{
+	if(tree==NULL) return;
+	rtree_apply(_left(tree), func);
+	func(tree);
+	rtree_apply(_right(tree), func);
+}
+
+rlnode_key rtree_reduce(rlnode* tree, rlnode_key (*reducer)(rlnode*, rlnode_key, rlnode_key), rlnode_key nullval)
+{
+	if(tree) {
+		rlnode_key lval = rtree_reduce(_left(tree), reducer, nullval);
+		rlnode_key rval = rtree_reduce(_right(tree), reducer, nullval);
+		return reducer(tree, lval, rval);
+	} else
+		return nullval;
+}
+
+
+rlnode_key rtree_height(rlnode* tree)
+{
+	rlnode_key hred(rlnode* node, rlnode_key lval, rlnode_key rval) {
+		uintptr_t lh = lval.unum;
+		uintptr_t rh = rval.unum;
+
+		return (rlnode_key) { .unum = (lh<rh ? rh : lh )+1 };
+	}
+	return rtree_reduce(tree, hred, 0);
+}
+
+
+static inline int uint_cmp(uintptr_t x, uintptr_t y) { return (x==y) ? 0 : (x<y) ? -1 : 1; }
+
+int rtree_uint_cmp(rlnode_key a, rlnode_key b) { return uint_cmp(a.unum, b.unum); }
+int qsort_cmp(const void* a, const void* b) { return uint_cmp(*(uintptr_t*)a, *(uintptr_t*)b); }
+
+
+void rlnode_print_uint(rlnode* node)
+{
+	printf("%lu ", node->unum);
+}
+
+BARE_TEST(test_build_rtree1,"Test building and traversing rtree, random insertions")
+{
+	uintptr_t output[55];
+	uintptr_t expected[55];
+	size_t pos = 0;
+
+	void rlnode_output_uint(rlnode* node)
+	{
+		output[pos++] = node->unum;
+		printf("%lu ", node->unum);
+	}
+
+
+	rlnode* T = NULL;
+	for(uint i=0; i<55; i++) {
+		uintptr_t val = (i*34)%55; /* Unique value (Fibonacci numbers 34 and 55) */
+
+		rlnode* node = alloca(sizeof(rlnode)); 
+		rtree_init(node, val);		
+		T = rtree_insert(T, node, rtree_uint_cmp);
+
+		pos = 0;
+		rtree_apply(T, rlnode_output_uint); printf("\n");
+		ASSERT(i+1==pos);
+		expected[i] = val;
+		qsort(expected, pos, sizeof(uintptr_t), qsort_cmp);
+		ASSERT(memcmp(output, expected, pos*sizeof(uintptr_t))==0);
+	}
+	ASSERT(T != NULL);
+}
+
+BARE_TEST(test_build_rtree2,"Test building and traversing rtree, increasing insertions")
+{
+	uintptr_t output[55];
+	uintptr_t expected[55];
+	size_t pos = 0;
+
+	void rlnode_output_uint(rlnode* node)
+	{
+		output[pos++] = node->unum;
+	}
+
+
+	rlnode* T = NULL;
+	for(uint i=0; i<55; i++) {
+		uintptr_t val = i; 
+
+		rlnode* node = alloca(sizeof(rlnode));
+		rtree_init(node, val);		
+		T = rtree_insert(T, node, rtree_uint_cmp);
+
+		pos = 0;
+		rtree_apply(T, rlnode_output_uint);
+		ASSERT(i+1==pos);
+		expected[i] = val;
+		qsort(expected, pos, sizeof(uintptr_t), qsort_cmp);
+		ASSERT(memcmp(output, expected, pos*sizeof(uintptr_t))==0);
+	}
+	ASSERT(T != NULL);
+}
+
+BARE_TEST(test_build_rtree3,"Test building and traversing rtree, decreasing insertions")
+{
+	uintptr_t output[55];
+	uintptr_t expected[55];
+	size_t pos = 0;
+
+	void rlnode_output_uint(rlnode* node)
+	{
+		output[pos++] = node->unum;
+	}
+
+
+	rlnode* T = NULL;
+	for(uint i=0; i<55; i++) {
+		uintptr_t val = 55-i;
+
+		rlnode* node = alloca(sizeof(rlnode));
+		rtree_init(node, val);		
+		T = rtree_insert(T, node, rtree_uint_cmp);
+
+		pos = 0;
+		rtree_apply(T, rlnode_output_uint);
+		ASSERT(i+1==pos);
+		expected[i] = val;
+		qsort(expected, pos, sizeof(uintptr_t), qsort_cmp);
+		ASSERT(memcmp(output, expected, pos*sizeof(uintptr_t))==0);
+	}
+	ASSERT(T != NULL);
 }
 
 
@@ -467,7 +880,10 @@ TEST_SUITE(fsystem_tests, "Filesystem tests")
 	&test_pathcomp,
 	&test_dlinker_binding,
 	&test_dlink,
-	&test_load_shared,
+	&test_mm,
+	&test_build_rtree1,
+	&test_build_rtree2,
+	&test_build_rtree3,
 	NULL
 };
 

@@ -126,9 +126,10 @@ static void initialize()
 	USR1_sigaction.sa_flags = SA_SIGINFO;
 	sigemptyset(& USR1_sigaction.sa_mask);
 
-	/* Create the sigmask to block all signals, except USR1 */
+	/* Create the sigmask to block all signals, except SEGV, USR1 */
 	CHECK(sigfillset(&core_signal_set));
 	CHECK(sigdelset(&core_signal_set, SIGUSR1));
+	CHECK(sigdelset(&core_signal_set, SIGSEGV));
 
 	/* Create the mask for blocking SIGUSR1 */
 	CHECK(sigemptyset(&sigusr1_set));

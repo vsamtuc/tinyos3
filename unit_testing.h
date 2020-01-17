@@ -245,10 +245,14 @@ extern struct program_arguments
 void MSG(const char* format, ...) __attribute__ ((format (printf, 1, 2)));
 
 
-/** @brief Flag failure during a test */
-extern int FLAG_FAILURE; 
+/** @brief Mark a test as failed */
+void fail_test();
 
-/** @brief Abort a test. */
+/** @brief The number of failures in a test so far */
+unsigned int failures();
+
+
+/** @brief Abort a test immediately. */
 void abort_test();
 
 /** @brief Like ASSERT but with a custom message. 
@@ -256,8 +260,8 @@ void abort_test();
 */
 #define ASSERT_MSG(expr, format, ...) 										\
 	do{ if(!(expr)) { 														\
-		FLAG_FAILURE++; 													\
-		if(FLAG_FAILURE < 50)												\
+		fail_test(); 														\
+		if(failures() < 50)													\
  			MSG("%s(%d): " format , __FILE__, __LINE__, ##  __VA_ARGS__ );	\
  		else {																\
  			MSG("... Too many errors, ABORTING\n"); 						\
@@ -285,7 +289,7 @@ void abort_test();
 	Much like the lowercase @c assert(...) macro, this macro 
 	checks the expression given as argument and fails if it is false.
 	Unlike @c assert, this macro does not abort; execution continues.
-	However, having set @ref FLAG_FAILURE eventually the test will fail.
+	However, having called @ref fail_test(), eventually the test will fail.
 
 	A message with the filename, line and expression that failed is printed
 	to the console.

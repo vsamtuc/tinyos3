@@ -130,6 +130,10 @@ void MSG(const char* format, ...)
 }
 
 
+void fail_test() { FLAG_FAILURE++; }
+
+unsigned int failures() { return FLAG_FAILURE; }
+
 
 /* 
 	Execution utilities
