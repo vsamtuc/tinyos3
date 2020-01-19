@@ -643,6 +643,12 @@ rlnode* rtree_remove(rlnode* tree, rlnode* node)
 }
 #endif 
 
+/*
+	From Sedgewick,
+
+http://citeseerx.ist.psu.edu/viewdoc/summary?doi=10.1.1.139.282
+*/
+
 static inline int  _red(rlnode* n) { return n && pointer_is_marked(n->next); }
 static inline void _set_red(rlnode* n) {n->next =  pointer_marked(n->next); }
 static inline void _set_black(rlnode* n) {n->next =  pointer_unmarked(n->next); }
