@@ -414,6 +414,234 @@ TEST_SUITE(rheap_tests,
 
 /*****************************************************
  *
+ *  Tests for rtree
+ *
+ ******************************************************/
+
+
+void rtree_apply(rlnode* tree, void (*func)(rlnode* node))
+{
+	if(tree==NULL) return;
+	rtree_apply(rtree_left(tree), func);
+	func(tree);
+	rtree_apply(rtree_right(tree), func);
+}
+
+rlnode_key rtree_reduce(rlnode* tree, rlnode_key (*reducer)(rlnode*, rlnode_key, rlnode_key), rlnode_key nullval)
+{
+	if(tree) {
+		rlnode_key lval = rtree_reduce(rtree_left(tree), reducer, nullval);
+		rlnode_key rval = rtree_reduce(rtree_right(tree), reducer, nullval);
+		return reducer(tree, lval, rval);
+	} else
+		return nullval;
+}
+
+
+void rtree_check_invariants(rlnode* tree)
+{
+	/* Invariants:
+		(1) if a node is red, both children are black
+		(2) number of black nodes to every leaf is equal
+	 */
+	inline int is_red(rlnode* h) { return h && pointer_is_marked(h->next); }
+
+	size_t check(rlnode* h)
+	{
+		size_t lbh=0, rbh=0;
+		if(h) {
+			lbh = check(rtree_left(h));
+			rbh = check(rtree_right(h));
+		}
+		ASSERT(!  (is_red(h) && (is_red(rtree_left(h)) || is_red(rtree_right(h))) ));
+		ASSERT_RELATION(lbh, rbh, "%zu", _1==_2);
+		return lbh + (is_red(h)? 0: 1);
+	}
+	check(tree);
+}
+
+
+static inline int uint_cmp(uintptr_t x, uintptr_t y) { return (x==y) ? 0 : (x<y) ? -1 : 1; }
+
+int rtree_uint_cmp(rlnode_key a, rlnode_key b) { return uint_cmp(a.unum, b.unum); }
+int qsort_cmp(const void* a, const void* b) { return uint_cmp(*(uintptr_t*)a, *(uintptr_t*)b); }
+
+
+void rlnode_print_uint(rlnode* node)
+{
+	printf("%lu ", node->unum);
+}
+
+BARE_TEST(test_build_rtree1,"Test building and traversing rtree, random insertions")
+{
+	uintptr_t output[55];
+	uintptr_t expected[55];
+	size_t pos = 0;
+
+	void rlnode_output_uint(rlnode* node)
+	{
+		output[pos++] = node->unum;
+	}
+
+
+	rlnode* T = NULL;
+	rtree_check_invariants(T);
+
+	rlnode* NODES[55];
+
+	for(uint i=0; i<55; i++) {
+		uintptr_t val = (i*34)%55; /* Unique value (Fibonacci numbers 34 and 55) */
+
+		rlnode* node = alloca(sizeof(rlnode)); 
+		NODES[i] = node;
+		rtree_init(node, val);		
+		T = rtree_insert(T, node, rtree_uint_cmp);
+		rtree_check_invariants(T);
+
+		pos = 0;
+		rtree_apply(T, rlnode_output_uint);
+		ASSERT(i+1==pos);
+		expected[i] = val;
+		qsort(expected, pos, sizeof(uintptr_t), qsort_cmp);
+		ASSERT(memcmp(output, expected, pos*sizeof(uintptr_t))==0);
+	}
+	ASSERT(T != NULL);
+
+	for(uint i=0; i<55; i++) {
+		rlnode* node = NODES[i];
+		T = rtree_delete(T, node, rtree_uint_cmp);
+		rtree_check_invariants(T);		
+	}	
+
+	ASSERT(T == NULL);
+}
+
+BARE_TEST(test_build_rtree2,"Test building and traversing rtree, increasing insertions")
+{
+	uintptr_t output[55];
+	uintptr_t expected[55];
+	size_t pos = 0;
+
+	void rlnode_output_uint(rlnode* node)
+	{
+		output[pos++] = node->unum;
+	}
+
+
+	rlnode* T = NULL;
+	rtree_check_invariants(T);
+	for(uint i=0; i<55; i++) {
+		uintptr_t val = i; 
+
+		rlnode* node = alloca(sizeof(rlnode));
+		rtree_init(node, val);		
+		T = rtree_insert(T, node, rtree_uint_cmp);
+		rtree_check_invariants(T);
+
+		pos = 0;
+		rtree_apply(T, rlnode_output_uint);
+		ASSERT(i+1==pos);
+		expected[i] = val;
+		qsort(expected, pos, sizeof(uintptr_t), qsort_cmp);
+		ASSERT(memcmp(output, expected, pos*sizeof(uintptr_t))==0);
+	}
+	ASSERT(T != NULL);
+}
+
+BARE_TEST(test_build_rtree3,"Test building and traversing rtree, decreasing insertions")
+{
+	uintptr_t output[55];
+	uintptr_t expected[55];
+	size_t pos = 0;
+
+	void rlnode_output_uint(rlnode* node)
+	{
+		output[pos++] = node->unum;
+	}
+
+
+	rlnode* T = NULL;
+	rtree_check_invariants(T);
+	for(uint i=0; i<55; i++) {
+		uintptr_t val = 55-i;
+
+		rlnode* node = alloca(sizeof(rlnode));
+		rtree_init(node, val);		
+		T = rtree_insert(T, node, rtree_uint_cmp);
+		rtree_check_invariants(T);
+
+		pos = 0;
+		rtree_apply(T, rlnode_output_uint);
+		ASSERT(i+1==pos);
+		expected[i] = val;
+		qsort(expected, pos, sizeof(uintptr_t), qsort_cmp);
+		ASSERT(memcmp(output, expected, pos*sizeof(uintptr_t))==0);
+	}
+	ASSERT(T != NULL);
+}
+
+
+BARE_TEST(test_rtree_ops,"Test inserting and deleting keys in random order")
+{
+
+
+	rlnode* NODES[55];
+	for(uint i=0; i<55; i++) {
+		uintptr_t val = (i*34)%55;
+		NODES[i] = alloca(sizeof(rlnode));
+		rtree_init(NODES[i], val);
+	}
+
+	uint intree = 0;
+
+	rlnode* T = NULL;
+	rtree_check_invariants(T);
+	for(uint i=0; i<100000; i++) {
+		/* choose a random number in [0:55) */
+		uint j = lrand48() % (i%55 +1);
+
+		if(j>=intree) {
+			/* swap NODES[j] and NODES[intree] */
+			rlnode* tmp = NODES[intree];
+			NODES[intree] = NODES[j];
+			NODES[j] = tmp;
+
+			T = rtree_insert(T, NODES[intree], rtree_uint_cmp);
+			rtree_check_invariants(T);
+
+			intree++;
+		} else {
+			intree--;
+
+			/* swap NODES[j] and NODES[intree] */
+			rlnode* tmp = NODES[intree];
+			NODES[intree] = NODES[j];
+			NODES[j] = tmp;
+
+			T = rtree_delete(T, NODES[intree], rtree_uint_cmp);
+			rtree_check_invariants(T);			
+		}
+	}
+}
+
+
+
+
+
+TEST_SUITE(rtree_tests, "Tests for resource tree")
+{
+	&test_build_rtree1,
+	&test_build_rtree2,
+	&test_build_rtree3,
+	&test_rtree_ops,
+	NULL
+};
+
+
+
+
+/*****************************************************
+ *
  *  Tests for exceptions
  *
  ******************************************************/
@@ -839,7 +1067,8 @@ TEST_SUITE(all_tests,
 	"All tests")
 {
 	&rlist_tests,
-	&rheap_tests,
+	&rheap_tests,	
+	&rtree_tests,	
 	&rdict_tests,
 	&test_pack_unpack,
 	&exception_tests,	
