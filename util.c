@@ -201,6 +201,199 @@ rlnode* rheap_to_ring(rlnode* heap)
 }
 
 
+
+
+
+/************************************************************************
+	rtree implementation
+	---------------------
+
+	We use rlnodes, with prev<->left and next<->right.
+	We implement the red-black algorithm, as described in
+	[Sedgewick, 2008, 
+      http://citeseerx.ist.psu.edu/viewdoc/summary?doi=10.1.1.139.282]
+
+    We treat the tree as a 2-3 tree of \c rlnode, with a marking on the
+    \c next pointer to store the color.
+
+****************************************************************************/
+
+
+static inline int  _red(rlnode* n) { return n && pointer_is_marked(n->next); }
+static inline void _set_red(rlnode* n) {n->next =  pointer_marked(n->next); }
+static inline void _set_black(rlnode* n) {n->next =  pointer_unmarked(n->next); }
+static inline void _set_flip_color(rlnode* n) { n->next =  pointer_mark_flipped(n->next); }
+static inline void _set_color(rlnode* n, int red) { if(red) _set_red(n); else _set_black(n); }
+
+static inline rlnode* _left(rlnode* n) { return n->prev; }
+static inline rlnode* _right(rlnode* n) { return pointer_unmarked(n->next); }
+static inline rlnode* _set_left(rlnode* n, rlnode* v) { n->prev = v; return v; }
+static inline rlnode* _set_right(rlnode* n, rlnode* v) {
+	n->next = pointer_is_marked(n->next) ? pointer_marked(v) : pointer_unmarked(v);
+	return v;
+}
+
+
+static inline rlnode* _rotate_left(rlnode* h) 
+{
+	rlnode* x = _right(h);
+	_set_right(h, _left(x));
+	_set_left(x, h);
+	_set_color(x, _red(h));
+	_set_red(h);
+	return x;
+}
+static inline rlnode* _rotate_right(rlnode* h)
+{
+	rlnode* x = _left(h);
+	_set_left(h, _right(x));
+	_set_right(x, h);
+	_set_color(x, _red(h));
+	_set_red(h);
+	return x;	
+}
+static inline void _color_flip(rlnode* h)
+{
+	_set_flip_color(h);
+	_set_flip_color(_left(h));
+	_set_flip_color(_right(h));
+}
+
+static inline rlnode* _fix_up(rlnode* h)
+{
+	if(_red(_right(h)) && !_red(_left(h))) h = _rotate_left(h);
+	if(_red(_left(h)) && _red(_left(_left(h)))) h = _rotate_right(h);
+	if(_red(_left(h)) && _red(_right(h)) ) _color_flip(h);
+	return h;	
+}
+
+
+static inline rlnode* _move_red_left(rlnode* h)
+{
+	_color_flip(h);
+	if(_red(_left(_right(h)))) {
+		_set_right(h, _rotate_right(_right(h)));
+		h = _rotate_left(h);
+		_color_flip(h);
+	}
+	return h;
+}
+
+static inline rlnode* _move_red_right(rlnode* h)
+{
+	_color_flip(h);
+	if(_red(_left(_left(h)))) {
+		h = _rotate_right(h);
+		_color_flip(h);
+	}
+	return h;	
+}
+
+
+void rtree_init(rlnode* node, rlnode_key key)
+{
+	node->key = key;
+	node->prev = node->next = NULL;
+	_set_red(node);
+}
+
+
+rlnode* rtree_search(rlnode* tree, rlnode_key key, rtree_cmp cmpf)
+{
+	rlnode* x = tree;
+	while(x) {
+		int cmp = cmpf(key, x->key);
+		if(cmp==0) return x;
+		else x = (cmp<0)? _left(x) : _right(x);
+	}
+	return NULL;
+}
+
+rlnode* rtree_insert(rlnode* tree, rlnode* node, rtree_cmp cmpf)
+{
+	_set_red(node);
+
+	rlnode* insert(rlnode* h) {
+		if(h==NULL) return node;
+
+		int cmp = cmpf(node->key, h->key);
+		if(cmp<0)  _set_left(h, insert(_left(h)));
+		else       _set_right(h, insert(_right(h)));
+
+		return _fix_up(h);
+	}
+
+	tree = insert(tree);
+	_set_black(tree);
+	return tree;
+}
+
+
+rlnode* rtree_delete(rlnode* tree, rlnode* node, rtree_cmp cmpf)
+{
+	/* This will point to the deleted node */
+	rlnode* deleted = NULL;
+
+	/* Delete the minimum node in subtree h and let 'deleted' point to it
+	   Precondition: h != NULL */
+	rlnode* delete_min(rlnode* h)
+	{
+		if(_left(h)==NULL) { deleted = h; return NULL; }
+
+		if(!_red(_left(h)) && !_red(_left(_left(h))))
+			h = _move_red_left(h);
+
+		_set_left(h, delete_min(_left(h)));
+
+		return _fix_up(h);
+	}
+
+
+	rlnode* delete(rlnode* h)
+	{
+		if(cmpf(node->key, h->key)<0) {
+			if( !_red(_left(h)) && !_red(_left(_left(h)))  ) 
+				h = _move_red_left(h);
+			_set_left(h, delete(_left(h)));
+		} else {
+			if(_red(_left(h))) h = _rotate_right(h);
+			if(cmpf(node->key, h->key)==0 && _right(h)==NULL) {
+				deleted=h; return NULL;
+			}
+			if( !_red(_right(h)) && !_red(_left(_right(h)))  )
+				h = _move_red_right(h);
+
+			if(cmpf(node->key, h->key)==0) {
+				_set_right(h, delete_min(_right(h)) );
+				/* Replace h with deleted, delete h */
+				deleted->prev = h->prev;
+				deleted->next = h->next;
+				rlnode* tmp = h;
+				h = deleted;
+				deleted = tmp;
+			} else {
+				_set_right(h, delete(_right(h)));				
+			}
+
+		}
+		return _fix_up(h);
+	}
+
+
+	tree = delete(tree);
+	if(deleted) { 
+		assert(deleted==node);
+		deleted->prev = deleted->next = NULL; _set_red(deleted); 
+	}
+	if(tree) _set_black(tree);
+	return tree;
+}
+
+
+
+
+
+
 /************************************************************************
 	rdict implementation
 	---------------------

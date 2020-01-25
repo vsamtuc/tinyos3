@@ -5,7 +5,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
-#include <setjmp.h>
+#include <stdatomic.h>
 #include <sys/mman.h>
 
 #include <dlfcn.h>
@@ -373,14 +373,122 @@ BOOT_TEST(test_dlink,"Test dynamic linking")
 	return 0;
 }
 
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
 
 
-BOOT_TEST(test_mmap, "MMap test")
+size_t get_file_size(const char* filename)
 {
-	void* handle = mmap(NULL, 1<<14, PROT_READ|PROT_WRITE, MAP_ANONYMOUS|MAP_NORESERVE, -1, 0);
-	if(handle==MAP_FAILED) { perror("mmap"); abort_test(); }
-	FATAL_ASSERT(handle!=MAP_FAILED);
-	ASSERT(munmap(handle, 1<<14));
+	struct stat st;
+	stat(filename, &st);
+	return st.st_size;
+}
+
+int set_up_memory(const char* filename, void* loc, size_t size)
+{
+	int fd = open(filename, O_RDONLY);
+	FATAL_ASSERT(fd>=0);
+	int rc = read(fd, loc, size);
+	close(fd);
+	return rc;
+}
+
+#define PAGESIZE (1<<12)
+
+void * mm_handle;
+size_t mm_size;
+size_t pgfaults;
+
+int addr_in_range(void* addr, void* start, size_t size) 
+{
+	return (addr>=start && (addr-start) < size);
+}
+
+void* pageof(void* addr) 
+{
+	uintptr_t ia = (uintptr_t)addr;
+	ia &= ~(PAGESIZE-1);
+	return (void*)ia;
+}
+
+
+void sigsegv_handler(int signum, siginfo_t* si, void* ctx)
+{
+	fprintf(stderr, "Segfault\n");
+	if(signum == SIGSEGV && 
+		si->si_code == SEGV_ACCERR && 
+		addr_in_range(si->si_addr, mm_handle, mm_size)) 
+	{
+		CHECK(mprotect(pageof(si->si_addr), PAGESIZE, PROT_READ|PROT_WRITE));
+		pgfaults++;
+		atomic_signal_fence(memory_order_seq_cst);
+	} else {
+		psiginfo(si, "Unrecognized segfault");
+		abort();
+	}
+}
+
+
+BOOT_TEST(test_mm,"mm test")
+{
+
+	/* 
+		Reserve a huge amount of address space, make all of it segfault on any access
+	 */
+
+	mm_size = 1ul << 36;
+	mm_handle = mmap(NULL, mm_size, PROT_READ|PROT_WRITE, MAP_ANONYMOUS|MAP_PRIVATE|MAP_NORESERVE, -1, 0);
+	if(! mm_handle) { perror("test_mm"); }
+	FATAL_ASSERT(mm_handle);
+	CHECK(mprotect(mm_handle, mm_size, PROT_NONE));
+
+	/*
+		Set up handler for SIGSEGV
+	 */
+
+	stack_t ss = { .ss_sp = xmalloc(1<<14), .ss_size=1<<14, .ss_flags=0 };
+	stack_t old_ss;
+	CHECK(sigaltstack(&ss, &old_ss));
+
+	struct sigaction sa = { .sa_sigaction=sigsegv_handler, .sa_flags=SA_SIGINFO|SA_ONSTACK|SA_NODEFER };
+	struct sigaction saved_sa;
+	CHECK(pthread_sigmask(0, NULL, &sa.sa_mask));
+	CHECK(sigaction(SIGSEGV, &sa, &saved_sa));
+
+	pgfaults=0;  /* Will count page faults */
+	atomic_signal_fence(memory_order_seq_cst);
+
+	/*
+		Read some data
+	 */
+	const char* fname = "Makefile";
+	size_t fsize = get_file_size(fname);
+	char fdata[fsize];
+	int rc = set_up_memory(fname, fdata, fsize+ (1<<12));
+	ASSERT(fsize==rc);
+
+	size_t psize = (fsize + PAGESIZE-1) / PAGESIZE;
+
+	/* Cause a segfault */
+	memcpy(mm_handle, fdata, fsize);
+	ASSERT(memcmp(mm_handle, fdata, fsize)==0);
+	CHECK(madvise(mm_handle, psize, MADV_DONTNEED));
+	ASSERT(memcmp(mm_handle, fdata, fsize)!=0);
+
+	/* Cause another segfault */
+	int* xp = (int*)(mm_handle+2*PAGESIZE);
+	* xp= 10;
+	ASSERT(*xp == 10);
+
+	/* check number of segfaults */
+
+	/* Cleanup */
+	CHECK(munmap(mm_handle, mm_size));
+	CHECK(sigaction(SIGSEGV, &saved_sa, NULL));
+	CHECK(sigaltstack(&old_ss, NULL));
+
 	return 0;
 }
 
@@ -392,7 +500,7 @@ TEST_SUITE(fsystem_tests, "Filesystem tests")
 	&test_pathcomp,
 	&test_dlinker_binding,
 	&test_dlink,
-	&test_mmap,
+	&test_mm,
 	NULL
 };
 

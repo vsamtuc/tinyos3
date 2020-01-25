@@ -21,4 +21,7 @@ struct memseg
 };
 
 
+/* syscalls */
+int GetMemory(void** loc, size_t size);
+
 #endif

@@ -188,6 +188,25 @@ static inline void * xrealloc (void* ptr, size_t size)
  */
 static inline void* pointer_marked(void* ptr) { return (void*) ((uintptr_t)ptr | __mark_mask); }
 
+
+/**
+	@brief Return a pointer with marking flipped.
+
+	This routine will flip a mark bit into a (marked or unmarked) pointer and return the new
+	pointer. The returned pointer should not be dereferenced, as results will be undefined
+	(and probably catastrophic).
+
+	@see pointer_marked
+	@see pointer_unmarked
+	
+	@param ptr the pointer to flip the mark
+	@return a pointer 
+ */
+static inline void* pointer_mark_flipped(void* ptr) { return (void*) ((uintptr_t)ptr ^ __mark_mask); }
+
+
+
+
 /**
 	@brief Return an unmarked pointer.
 
@@ -1020,6 +1039,115 @@ rlnode* rheap_to_ring(rlnode* heap);
 
 /* @} rheap */
 
+
+/**
+	@defgroup rtree Ordered trees.
+
+	@brief Ordered resource trees.
+	
+	## Overview ##
+
+	An ordered tree holds nodes ordered by some function. Keeping the height of the tree
+	small, namely \f$ O(\log n)\f$, guarantees fast lookup, insert and delete times.
+	The \c rtree implementation is based on Sedgewick's Left-leaning Red-Black trees.
+
+	A tree is created using a comparison function of type \c rtree_cmp. This function
+	takes two \c rlnode_key values as argument and returns -1, 0 or 1, depending on
+	whether the first argument is respectively less, equal or greater than the second.
+
+	There are two conceptual update operations, 
+	- `insert(T, n, cmpf)`
+	- `delete(T, n, cmpf)`
+
+	where T is the root \rlnode of the tree and
+	\c n is an rlnode to insert or delete. Both operations return the new root of the tree,
+	or \c NULL if the tree is empty.
+	Note also that the \c cmpf function is always called with `n->key` as its first argument.
+
+	The keys in the tree must be unique, with respect to the comparator function.
+ */
+
+/** 
+	@brief Comparator function for \c rtree
+
+	Return -1, 0 or 1, depending on whether the two compared
+	keys are <, ==  or > to each other.
+ */
+typedef int (*rtree_cmp)(rlnode_key key1, rlnode_key key2);
+
+
+/**
+	@brief Initialize a node for insertion into an \c rtree
+
+	@param node the node to initialize
+	@param key the key of the node to initialize
+ */
+void rtree_init(rlnode* node, rlnode_key key);
+
+
+/**
+	@brief Get the left subtree of an rtree node
+ */
+static inline rlnode* rtree_left(rlnode* node) {  return node->prev; }
+
+/**
+	@brief Get the right subtree of an rtree node
+ */
+static inline rlnode* rtree_right(rlnode* node) {  return pointer_unmarked(node->next); }
+
+
+/**
+	@brief Insert a node into an \c rtree
+
+	This function returns the root of the new \c rtree after \c node has
+	been inserted into it, according to comparison function \c cmpf.
+
+	@param tree the root node of the tree to insert in
+	@param node the new node to be inserted
+	@return the new root of the tree.
+
+	@precondition no key in the tree must compare equal to
+	`node->key`.
+ */
+rlnode* rtree_insert(rlnode* tree, rlnode* node, rtree_cmp cmpf);
+
+
+
+/**
+	@brief Delete a node from an \c rtree
+
+	This function returns the root of the new \c rtree after \c node has
+	been removed from it, according to comparison function \c cmpf.
+
+	The removed node is returned initialized for re-insertion into an rtree.
+
+	@param tree the root node of the tree to remove from
+	@param node the node to be removed
+	@return the new root of the tree.
+
+	@precondition `node` must be in `tree`
+ */
+rlnode* rtree_delete(rlnode* tree, rlnode* node, rtree_cmp cmpf);
+
+
+/**
+	@brief Search for a node matching the given key.
+
+	This function returns a node in `tree` whose tree compares equal to `key`,
+	or \c NULL if no such node exists.
+
+	@param tree the root of the tree
+	@param key the key to look up in the tree
+	@param cmpf the comparator function to use for search
+	@return a node `x` in the tree such that  `cmpf(key, x->key)==0`, or \c NULL.
+ */
+rlnode* rtree_search(rlnode* tree, rlnode_key key, rtree_cmp cmpf);
+
+
+
+
+
+/** @} rtree */
 
 
 /**

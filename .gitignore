@@ -1,5 +1,6 @@
 *~
 *.o
+*.so
 .depend
 mtask
 terminal

@@ -1,0 +1,38 @@
+
+- core
+
+  1. memory management
+  2. users
+
+- file system
+
+  1. mode (chmod)
+
+- devices
+
+  1. block devices (buffer manager)
+  2. terminal device
+
+- streams
+
+  1. FCB-owned file locks
+
+- processes
+
+  1. CLOEXEC
+  2. memory management
+
+- syscalls
+
+  mmap/munmap, chmod, chown, 
+
+- userspace
+
+  1. environment
+  2. shell globbing
+  3. grep
+  4. cp/mv
+  5. printf-like packer
+  6. malloc-like call
+
+  7. standard file system? 
