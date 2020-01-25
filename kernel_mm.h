@@ -5,8 +5,13 @@
 	@bfile kernel_mm.h
 	@brief Memory management in the kernel
 
- */
+	- SIGSEGV protection
+	- double stacks
 
+	- separate stack per thread
+	- data segments
+
+ */
 
 
 struct memseg

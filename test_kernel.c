@@ -6,6 +6,7 @@
 #include <string.h>
 #include <time.h>
 #include <setjmp.h>
+#include <sys/mman.h>
 
 #include <dlfcn.h>
 
@@ -373,91 +374,15 @@ BOOT_TEST(test_dlink,"Test dynamic linking")
 }
 
 
-struct _pair { const char* name; Program prog; };
 
-void print_table(const char* tname, struct _pair* p)
+BOOT_TEST(test_mmap, "MMap test")
 {
-	MSG("Table: %s\n", tname);
-	if(p==NULL) MSG("    NULL table\n");
-	while(p->prog) {
-		MSG("  Name: %s \n", p->name);
-		p++;
-	}
-}
-
-
-void execute_program(void* handle)
-{
-	Program test_program = dlsym(handle,"test_program");
-	FATAL_ASSERT_MSG(test_program, "dlerror: %s", dlerror());
-	FATAL("We cannot run yet, fix needed")
-#if 0
-	ASSERT(Execute(test_program,0,NULL)!=NOPROC);
-#endif
-	WaitChild(NOPROC,NULL);
-}
-
-
-void print_section(struct tos_entity* start, struct tos_entity* stop)
-{
-	MSG("REGISTERED:\n");
-	for(struct tos_entity* p = start; p!= stop; p++) {
-		MSG("Name: %s\n", p->name);
-
-		Dl_info dli;
-		int rc = dladdr(p->data, &dli);
-		if(rc==0)
-			MSG(" Info error: %s\n", dlerror());
-		else
-			MSG(" Info: fname=%s fbase=%p  sname=%s saddr=%p\n", 
-				dli.dli_fname, dli.dli_fbase, dli.dli_sname, dli.dli_saddr);
-
-
-		WaitChild(NOPROC, NULL);
-	}
-	MSG("END REGISTERED:\n");
-}
-
-void print_dlsection(void* handle2)
-{
-	ASSERT(dlsym(handle2,"__start_tinyos"));
-	struct tos_entity** s2 = dlsym(handle2,"__begin_tinyos");
-	struct tos_entity** e2 = dlsym(handle2,"__end_tinyos");
-	FATAL_ASSERT(s2);
-	FATAL_ASSERT(e2);
-	print_section(*s2, *e2);	
-}
-
-BOOT_TEST(test_load_shared,"Test that loading a shared object and executing a program from it works")
-{
-	FATAL_ASSERT(Mount(NO_DEVICE, "/", "tmpfs", 0, NULL)==0);
-	FATAL_ASSERT(MkDir("/dev")==0);
-	FATAL_ASSERT(Mount(NO_DEVICE, "/dev", "devfs", 0, NULL)==0);
-
-	void* handle = dlopen("./testprog.so", RTLD_NOW|RTLD_LOCAL);
-	FATAL_ASSERT_MSG(handle, "dlerror: %s", dlerror());
-
-	void* h1 = dlopen("./testprog.so", RTLD_NOW|RTLD_LOCAL);
-	FATAL_ASSERT_MSG(h1, "dlerror: %s", dlerror());
-	ASSERT(h1==handle);
-	dlclose(h1);
-
-
-	void* handle2 = dlopen("./testprog2.so", RTLD_NOW|RTLD_LOCAL);
-	FATAL_ASSERT_MSG(handle, "dlerror: %s", dlerror());
-
-	execute_program(handle);
-	execute_program(handle2);
-	
-	print_dlsection(handle);
-	print_dlsection(handle2);
-
-	ASSERT(dlclose(handle)==0);
-	ASSERT(dlclose(handle2)==0);
-
+	void* handle = mmap(NULL, 1<<14, PROT_READ|PROT_WRITE, MAP_ANONYMOUS|MAP_NORESERVE, -1, 0);
+	if(handle==MAP_FAILED) { perror("mmap"); abort_test(); }
+	FATAL_ASSERT(handle!=MAP_FAILED);
+	ASSERT(munmap(handle, 1<<14));
 	return 0;
 }
-
 
 
 
@@ -467,7 +392,7 @@ TEST_SUITE(fsystem_tests, "Filesystem tests")
 	&test_pathcomp,
 	&test_dlinker_binding,
 	&test_dlink,
-	&test_load_shared,
+	&test_mmap,
 	NULL
 };
 
