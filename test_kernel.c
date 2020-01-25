@@ -438,8 +438,9 @@ BOOT_TEST(test_mm,"mm test")
 		Reserve a huge amount of address space, make all of it segfault on any access
 	 */
 
-	mm_size = 1ul << 36;
+	mm_size = 1ul << 40;
 	mm_handle = mmap(NULL, mm_size, PROT_READ|PROT_WRITE, MAP_ANONYMOUS|MAP_PRIVATE|MAP_NORESERVE, -1, 0);
+	//mm_handle = mmap(NULL, mm_size, PROT_READ|PROT_WRITE, MAP_ANONYMOUS|MAP_PRIVATE, -1, 0);
 	if(! mm_handle) { perror("test_mm"); }
 	FATAL_ASSERT(mm_handle);
 	CHECK(mprotect(mm_handle, mm_size, PROT_NONE));
