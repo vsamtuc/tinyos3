@@ -488,12 +488,14 @@ static inline rlnode* __rdict_bucket_remove(rdict_iterator pos, rlnode* elem)
 /*
 	Initialize the bucket list with sentinel values.
  */
-static inline void __rdict_init_buckets(rdict_bucket* buckets, unsigned long size)
+static inline void __rdict_allocate(rdict* dict, unsigned long buckno)
 {
-	for(size_t i=0;i<size-1;i++) {
-		buckets[i] = pointer_marked(buckets+i);
+	dict->policy(RDICT_ALLOCATE, dict, (buckno+1)*sizeof(rdict_bucket));
+	for(size_t i=0; i<buckno; i++) {
+		dict->buckets[i] = pointer_marked(dict->buckets+i);
 	}
-	buckets[size-1] = NULL; /* sentinel */
+	dict->buckets[buckno] = NULL; /* sentinel */
+	dict->bucketno = buckno;
 }
 
 
@@ -517,8 +519,8 @@ static inline void __rdict_clear(rdict* dict)
  */
 static inline void __rdict_size_changed(rdict* dict)
 {
-	if(dict->policy->check_resize_needed(dict))
-		dict->policy->trigger_resize(dict);
+	va_list va;
+	dict->policy(RDICT_SIZE_CHANGED, dict, va);
 }
 
 
@@ -530,35 +532,27 @@ static inline void __rdict_size_changed(rdict* dict)
  ====================================== */
 
 
-void rdict_initialize(rdict* dict, struct rdict_policy* policy, ...)
+void rdict_initialize(rdict* dict, rdict_policy policy, rlnode_key pdata, unsigned long bucketno)
 {
 	dict->size = 0;
 	dict->policy = policy;
-	dict->policy_data = (rlnode_key){ .obj = NULL };
-	dict->bucketno = 0;
+	dict->policy_data = pdata;
+	dict->bucketno = bucketno;
 	dict->buckets = NULL;
 
-	va_list ap;
-	va_start(ap, policy);
-	policy->initialize(dict, ap);
-	va_end(ap);
-
-	/* Allocate the buckets array */
-	assert(dict->bucketno>0);
-	dict->buckets = policy->allocate(dict, (dict->bucketno+1)*sizeof(rdict_bucket));
-	__rdict_init_buckets(dict->buckets, dict->bucketno+1);
+	/* Init has allocated the buckets array */
+	assert(bucketno>0);
+	__rdict_allocate(dict, bucketno);
 }
 
 
 void rdict_destroy(rdict* dict)
 {
+	va_list ap;
 	if(dict->buckets) {
 		__rdict_clear(dict);
-		dict->bucketno = 0;
-		dict->policy->deallocate(dict, dict->buckets);
-		dict->buckets = NULL;
 	}
-	dict->policy->destroy(dict);
+	dict->policy(RDICT_DESTROY, dict, ap);
 }
 
 
@@ -578,24 +572,29 @@ rdict_iterator rdict_next(rdict_iterator pos)
 
 void rdict_resize(rdict* dict, unsigned long new_bucketno)
 { 
-	/* Allocate the new buckets */
-	rdict_bucket* new_buckets = dict->policy->allocate(dict, (new_bucketno+1)*sizeof(rdict_bucket));
-	__rdict_init_buckets(new_buckets, new_bucketno+1);
+	if(new_bucketno==dict->bucketno) return;
 
-	/* Move the nodes to the new buckets */
-	for(int i=0; i < dict->bucketno; i++) {
-		rdict_iterator iter = &dict->buckets[i];
-		while( ! __rdict_bucket_end(iter) ) {
-			rlnode* node = *iter;
-			*iter = node->next;
-			__rdict_iter_push(new_buckets+(node->hash % new_bucketno), node);
+	/* Push all nodes to a stack */
+	rlnode* stack = NULL;
+	for(unsigned long i = 0; i < dict->bucketno; i++) {
+		rlnode* bucket = dict->buckets[i];
+		while(! pointer_is_marked(bucket)) {
+			rlnode* next = bucket->next;
+			bucket->next = stack;
+			stack = bucket;
+			bucket = next;
 		}
 	}
 
-	/* Set everything up */
-	dict->policy->deallocate(dict, dict->buckets);
-	dict->bucketno = new_bucketno;
-	dict->buckets = new_buckets;
+	/* Allocate the new buckets */
+	__rdict_allocate(dict, new_bucketno);
+
+	/* Insert the nodes to the new buckets */
+	while(stack) {
+		rlnode* node = stack;
+		stack = node->next;
+		__rdict_iter_push(dict->buckets+(node->hash % dict->bucketno), node);
+	}
 }
 
 
@@ -800,60 +799,44 @@ size_t rdict_next_greater_prime_size(size_t size, int shift)
 	Default hashing policy
    --------------------------------------------------------- */
 
-void rdict_std_initialize(rdict*, va_list);
-void rdict_std_destroy(rdict*);
-void* rdict_std_allocate(rdict*, size_t);
-void rdict_std_deallocate(rdict*, void*);
-unsigned long rdict_std_resize_size(rdict*);
-int rdict_std_check_resize_needed(rdict*);
-void rdict_std_trigger_resize(rdict*);
 
-
-struct rdict_policy rdict_default = {
-	rdict_std_initialize,
-	rdict_std_destroy,
-	rdict_std_allocate,
-	rdict_std_deallocate,
-	rdict_std_resize_size,
-	rdict_std_check_resize_needed,
-	rdict_std_trigger_resize
-};
-
-
-void rdict_std_initialize(rdict* dict, va_list ap)
+int rdict_default_policy(enum rdict_policy_op op, rdict* dict, ...)
 {
-	unsigned long bucketno_hint = va_arg(ap, unsigned long);
-	dict->bucketno = rdict_next_greater_prime_size(bucketno_hint,0);
+	va_list ap;
+
+	switch(op) {
+	case RDICT_DESTROY:
+		free(dict->buckets);
+		dict->buckets = NULL;
+		dict->bucketno = 0;
+		return 0;
+
+	case RDICT_SIZE_CHANGED:
+		/* 
+			The load factor is size/bucketno.
+			If the load factor is more than 1, resize.
+			If the load factor is less than 1/8, resize.
+		 */
+		if( (dict->size > dict->bucketno) || ( (dict->size << 3) < dict->bucketno ) ) {
+			unsigned long newbucketno = rdict_next_greater_prime_size(dict->size, 0);
+			rdict_resize(dict, newbucketno);
+		}
+		return 0;
+
+	case RDICT_ALLOCATE:
+		{
+			va_start(ap, dict);
+			size_t bytes = va_arg(ap, size_t);
+			va_end(ap);
+
+			dict->buckets = realloc(dict->buckets, bytes);
+		}
+		return 0;
+	default:
+		return -1;
+	}
 }
 
-
-void rdict_std_destroy(rdict* d) { /* Nothing to do */ }
-
-void* rdict_std_allocate(rdict* d, size_t size) { return malloc(size); }
-
-void rdict_std_deallocate(rdict* d, void* ptr) { free(ptr); }
-
-unsigned long rdict_std_resize_size(rdict* d) 
-{
-	unsigned long newbucketno = rdict_next_greater_prime_size(d->size, 0);
-	return newbucketno;
-}
-
-int rdict_std_check_resize_needed(rdict* dict)
-{
-	/* 
-		The load factor is size/bucketno.
-		If the load factor is more than 1, resize.
-		If the load factor is less than 1/8, resize.
-	 */
-	return (dict->size > dict->bucketno) || ( (dict->size << 3) < dict->bucketno );
-}
-
-void rdict_std_trigger_resize(rdict* dict)
-{
-	unsigned long new_bucketno = dict->policy->resize_size(dict);
-	rdict_resize(dict, new_bucketno);
-}
 
 
 

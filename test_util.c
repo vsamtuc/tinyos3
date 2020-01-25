@@ -652,6 +652,7 @@ BARE_TEST(test_dict_init, "Initialization of rdict")
 {
 	rdict dict;
 	unsigned long sizes[7] = { 0, 1, 2, 5, 6, 20, 1000 };
+
 	unsigned long expected[7] = { 5, 5, 5, 11, 11, 23, 1741 };
 	for(int i=0; i<7; i++) {
 		rdict_init(&dict, sizes[i]); 

@@ -1168,7 +1168,7 @@ rlnode* rtree_search(rlnode* tree, rlnode_key key, rtree_cmp cmpf);
 	requires some allocated memory for a large array of pointers. Second, to be highly performant,
 	a dictionary may need to be __resized__ periodically, so as to keep hashing collisions 
 	very unlikely. Both memory allocation and resizing can be highly customized in \c rdict,
-	via a __policy object__. 
+	via a __policy function__. 
 
 	The API of \c rdict is inspired from the API of unordered sets in the standard C++ library,
 	but with certain enhancements. Each \c rdict is associated with a so-called __equality function__.
@@ -1234,93 +1234,50 @@ typedef int (*rdict_equal)(rlnode*, rlnode_key key);
   */
 typedef rlnode* rdict_bucket;
 
+/* forward declarations */
 typedef struct rdict rdict;
 
 /**
-	@brief The management policy for rdict.
+	@brief The management policy operations.
 	
-	This object contains callbacks that control the dynamic
-	behaviour of an \c rdict during its lifetime.
-
-	The standard policy is implemented by routines named as
-	\c rdict_std_*  where '*' is one of 'initialize', 'destroy',
-	'allocate', 'deallocate', 'resize_size'
+	This enum enumerates the operations that control the dynamic
+	behaviour of an \c rdict during its lifetime. 
  */
-struct rdict_policy
+enum rdict_policy_op
 {
-	/** 
-		@brief Called on initialization. 
-
-		The main responsibility of this call is to set \c d->bucketno value. 
-		This call must contain the necessary logic to select an initial
-		size. In addition, this call may set \c d->policy_data to some value.
-
-		__This call should not allocate memory for the buckets__. 
-
-		To support flexible initialization policies, @ref rdict_initialize accepts a
-		variable number of arguments, which are passed to this routine.
-	*/
-	void (*initialize)(rdict* d, va_list ap);
-
-	/** 
-		@brief Called on destroy.
-
-		The main responsibility of this call is to clean up any memory resources held
-		by the dict, __apart from the buckets array__. In practice, this just means
-		releasing memory held by the policy object if any.
-
-		Note that at the time this routine is called, the dictionary has been emptied
-		or nodes.
-	 */
-	void (*destroy)(rdict* d);
-
-	/** 
-		@brief The routine used to allocate memory.
-
-		This routine should return a block of memory suitably aligned for an array of
-		\c rdict_bucket objects. The standard implementation uses \c malloc.
-	 */
-	void* (*allocate)(rdict* d, size_t size);
-
-	/** @brief The routine used to deallocate memory */
-	void (*deallocate)(rdict* d, void* ptr);
-
-	/** 
-		@brief The routine used to compute a new size.
-
-		This routine must return a non-zero integer. It may not perform any resizing 
-		action on the dictionary; however, it may update \c d->policy_data. The
-		standard implementation uses \c free.
-	 */
-	unsigned long (*resize_size)(rdict* d);
-
-	/** 
-		@brief This routine is called on changes to the size of the hash table.
-
-		The purpose of this routine is to monitor the size of an \rdict and
-		return true if a resize is needed. This routine is called on every 
-		change to the size of the hash table. 
-
-		This routine should not perform the actual resize. This will be done by other
-		routines.
-
-		The reason for this split functionality is that some \c rdict should not
-		be resized immediately, as resizing might take a long time. Therefore, the
-		\c resize_needed routine can implement some mechanism via which a resize will
-		happen at a later time. 
-	 */
-	int (*check_resize_needed)(rdict* d);
-
-	/** 
-		@brief This routine is called when a resize is needed. 
-		
-		The need for a resize was determined by \c check_resize_needed() returning true.
-		This routine may perform the resize immediately; this can be achieved by
-		setting this callback to \c rdict_resize_callback. Alternatively, it may
-		implement some mechanism for resizing at a later time, or not at all...
-	*/
-	void (*trigger_resize)(rdict* d);
+	RDICT_DESTROY,
+	RDICT_SIZE_CHANGED,
+	RDICT_ALLOCATE
 };
+
+
+/**
+	@brief The management policy function type.
+	
+	This function implements the operations that control the dynamic
+	behaviour of an \c rdict during its lifetime. 
+
+	The first argument of this function must be one of the enumerators
+	of `enum rdict_policy_op`. The second argument is an \c rdict. The
+	third argument is a variable argument list.	
+
+	The oparations of this function are as follows, depending on the
+	first argument:
+
+	- `RDICT_DESTROY`  called without variadic arguments from `rdict_destroy`.
+	   The dict size will be 0 at the time of the call. 
+
+	- `RDICT_SIZE_CHANGED` called without variadic arguments, from all functions
+	which change `dict->size`. The function may call `rdict_resize` if it has
+	determined that a resize is needed.
+
+	- `RDICT_ALLOCATE` (size_t s) called with a variadic argument of type `size_t`.
+	It should store into `dict->buckets` a pointer to a memory area of `s` bytes.
+
+
+ */
+typedef int (*rdict_policy)(enum rdict_policy_op, rdict* dict, ...);
+
 
 
 
@@ -1329,7 +1286,7 @@ struct rdict_policy
  */
 typedef struct rdict
 {
-	struct rdict_policy* policy;/**< @brief The policy object for this dict */
+	rdict_policy policy;		/**< @brief The policy object for this dict */
 	rlnode_key policy_data;		/**< @brief This field can used by policy objects */
 	unsigned long size;			/**< @brief Number of elements in the table */
 	unsigned long bucketno;		/**< @brief Number of buckets in the table */
@@ -1340,17 +1297,18 @@ typedef struct rdict
 /**
 	@brief Initialize a \c rdict with specific policy.
 
-	Initialize an \c rdict with a particular policy. After the policy, a number
-	of additional arguments can be provided, depending on the policy. 
+	Initialize an \c rdict with a particular policy, policy data and initial buckets. 
 
-	This function should be used only if a custom policy is used. For the default policy
-	users can call @ref rdict_init.
+	Normally, this function will be called from another function, suitable for the
+	desired policy. For the default policy,	users should call @ref rdict_init.
 
 	@param dict the dictionary to initialize
 	@param policy the policy object	
+	@param pdata the policy data value
+	@param bucketno the initial number of buckets
 	@see rdict_init
  */
-void rdict_initialize(rdict* dict, struct rdict_policy* policy, ...);
+void rdict_initialize(rdict* dict, rdict_policy policy, rlnode_key pdata, unsigned long bucketno);
 
 
 
@@ -1650,8 +1608,8 @@ void rdict_apply_removed(rdict* dict, rdict_apply_func func);
 size_t rdict_next_greater_prime_size(size_t size, int shift);
 
 
-/** @brief The default policy object */
-extern struct rdict_policy rdict_default;
+/** @brief The default policy function */
+int rdict_default_policy(enum rdict_policy_op op, rdict* dict, ...);
 
 
 /**
@@ -1661,7 +1619,9 @@ extern struct rdict_policy rdict_default;
   */
 static inline void rdict_init(rdict* dict, unsigned long buckno_hint)
 {
-	rdict_initialize(dict, &rdict_default, buckno_hint);
+	unsigned long bucketno = rdict_next_greater_prime_size(buckno_hint,0);
+
+	rdict_initialize(dict, rdict_default_policy, NULL, bucketno);
 }
 
 

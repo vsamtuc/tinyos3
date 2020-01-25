@@ -1,4 +1,4 @@
-#include __KERNEL_MM_H
+#ifndef __KERNEL_MM_H
 #define __KERNEL_MM_H
 
 /**
@@ -16,7 +16,7 @@
 
 struct memseg
 {
-	void*  s_start;
+	void*  s_base;
 	size_t s_size;
 };
 
