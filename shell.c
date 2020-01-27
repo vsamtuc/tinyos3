@@ -78,7 +78,7 @@ int p_file_exists(const char* pathname)
 }
 
 
-const char* PATH[] = { ".", "/bin" };
+const char* PATH[] = { ".", "/bin", NULL };
 
 char* alloc_progpath(const char* file, const char* PATH[])
 {
