@@ -488,7 +488,7 @@ static inline rlnode* __rdict_bucket_remove(rdict_iterator pos, rlnode* elem)
 /*
 	Initialize the bucket list with sentinel values.
  */
-static inline void __rdict_allocate(rdict* dict, unsigned long buckno)
+static inline void __rdict_allocate(rdict* dict, size_t buckno)
 {
 	dict->policy(RDICT_ALLOCATE, dict, (buckno+1)*sizeof(rdict_bucket));
 	for(size_t i=0; i<buckno; i++) {
@@ -504,7 +504,7 @@ static inline void __rdict_allocate(rdict* dict, unsigned long buckno)
  */
 static inline void __rdict_clear(rdict* dict)
 {
-	for(unsigned long i = 0; i < dict->bucketno; i++) {
+	for(size_t i = 0; i < dict->bucketno; i++) {
 		while(! pointer_is_marked(dict->buckets[i])) {
 			rlnode* elem = dict->buckets[i];
 			dict->buckets[i] = elem->next;
@@ -532,7 +532,7 @@ static inline void __rdict_size_changed(rdict* dict)
  ====================================== */
 
 
-void rdict_initialize(rdict* dict, rdict_policy policy, rlnode_key pdata, unsigned long bucketno)
+void rdict_initialize(rdict* dict, rdict_policy policy, rlnode_key pdata, size_t bucketno)
 {
 	dict->size = 0;
 	dict->policy = policy;
@@ -556,6 +556,13 @@ void rdict_destroy(rdict* dict)
 }
 
 
+void rdict_clear(rdict* dict)
+{
+	size_t orig_size = dict->size;
+	__rdict_clear(dict);
+	if(orig_size != dict->size)
+		__rdict_size_changed(dict);
+}
 
 rdict_iterator rdict_begin(rdict* dict)
 {
@@ -570,13 +577,13 @@ rdict_iterator rdict_next(rdict_iterator pos)
 }
 
 
-void rdict_resize(rdict* dict, unsigned long new_bucketno)
+void rdict_resize(rdict* dict, size_t new_bucketno)
 { 
 	if(new_bucketno==dict->bucketno) return;
 
 	/* Push all nodes to a stack */
 	rlnode* stack = NULL;
-	for(unsigned long i = 0; i < dict->bucketno; i++) {
+	for(size_t i = 0; i < dict->bucketno; i++) {
 		rlnode* bucket = dict->buckets[i];
 		while(! pointer_is_marked(bucket)) {
 			rlnode* next = bucket->next;
@@ -677,7 +684,7 @@ void rdict_apply(rdict* dict, void (*func)(rlnode*))
 
 void rdict_apply_removed(rdict* dict, void (*func)(rlnode*))
 {
-	unsigned long orig_size = dict->size;
+	size_t orig_size = dict->size;
 	for(rdict_iterator i=rdict_begin(dict); i!=rdict_end(dict); i = __rdict_forward(i)) {
 		rlnode* elem = __rdict_iter_pop(i);
 		dict->size --;  /* reduce the size before calling func */
@@ -818,7 +825,7 @@ int rdict_default_policy(enum rdict_policy_op op, rdict* dict, ...)
 			If the load factor is less than 1/8, resize.
 		 */
 		if( (dict->size > dict->bucketno) || ( (dict->size << 3) < dict->bucketno ) ) {
-			unsigned long newbucketno = rdict_next_greater_prime_size(dict->size, 0);
+			size_t newbucketno = rdict_next_greater_prime_size(dict->size, 0);
 			rdict_resize(dict, newbucketno);
 		}
 		return 0;
@@ -909,6 +916,7 @@ size_t strnunpack(packer* p, char* loc, size_t n)
 {
 	return memunpack(p, loc, __nlen(__cur(p),n));
 }
+
 
 void* memget(packer* p, size_t isize)
 {

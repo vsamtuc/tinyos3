@@ -1288,8 +1288,8 @@ typedef struct rdict
 {
 	rdict_policy policy;		/**< @brief The policy object for this dict */
 	rlnode_key policy_data;		/**< @brief This field can used by policy objects */
-	unsigned long size;			/**< @brief Number of elements in the table */
-	unsigned long bucketno;		/**< @brief Number of buckets in the table */
+	size_t size;				/**< @brief Number of elements in the table */
+	size_t bucketno;			/**< @brief Number of buckets in the table */
 	rdict_bucket* buckets;		/**< @brief Array of buckets */
 } rdict;
 
@@ -1308,7 +1308,7 @@ typedef struct rdict
 	@param bucketno the initial number of buckets
 	@see rdict_init
  */
-void rdict_initialize(rdict* dict, rdict_policy policy, rlnode_key pdata, unsigned long bucketno);
+void rdict_initialize(rdict* dict, rdict_policy policy, rlnode_key pdata, size_t bucketno);
 
 
 
@@ -1332,7 +1332,7 @@ void rdict_clear(rdict* dict);
 	@param dict the dictionary to resize
 	@param new_bucketno the new number of buckets, which must be >0.
  */
-void rdict_resize(rdict* dict, unsigned long new_bucketno);
+void rdict_resize(rdict* dict, size_t new_bucketno);
 
 
 /**
@@ -1617,9 +1617,9 @@ int rdict_default_policy(enum rdict_policy_op op, rdict* dict, ...);
 
 	The passed parameter is a size hint given to the policy.
   */
-static inline void rdict_init(rdict* dict, unsigned long buckno_hint)
+static inline void rdict_init(rdict* dict, size_t buckno_hint)
 {
-	unsigned long bucketno = rdict_next_greater_prime_size(buckno_hint,0);
+	size_t bucketno = rdict_next_greater_prime_size(buckno_hint,0);
 
 	rdict_initialize(dict, rdict_default_policy, NULL, bucketno);
 }
@@ -1850,8 +1850,13 @@ void* memget(packer* p, size_t isize);
 char* strget(packer* p);
 char* strnget(packer* p, size_t n);
 
+
 #define PACK(p, V) mempack((p), &(V), sizeof(V))
 #define UNPACK(p, V) memunpack((p), &(V), sizeof(V))
+
+
+static inline void* mempeek(packer* p) { return p->buffer + p->pos; }
+
 
 
 static inline void packv(packer* p, size_t argc, const char* const * argv)
