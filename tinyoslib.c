@@ -65,6 +65,7 @@ void tinyos_replace_stdio()
 	assert(saved_in == NULL);
 	assert(saved_out == NULL);
 	//if(GetTerminalDevices()==0) return;
+	setbuf(stdout, NULL);
 
 	FILE* termin = get_std_stream(0, "r");
 	FILE* termout = get_std_stream(1, "w");
