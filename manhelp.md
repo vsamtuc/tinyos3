@@ -1,4 +1,18 @@
-# Building tinyos using make
+# NAME
+  help - How to get started building TinyOS 3
+
+# SYNOPSIS
+```
+  make
+  make help
+  make clean
+  make DEBUG=0 clean all
+  make depend
+```
+
+# DESCRIPTION
+
+## Building tinyos using make
 
 To build your code easily, a complex Makefile is provided. This manual presents several ways to run 
 make using this Makefile.
@@ -31,14 +45,6 @@ To see how fast your code is, you can build with full optimizations. Give the fo
 $ make DEBUG=0 clean all
 ```
 
-##  Using valgrind
-
-If you have not installed valgrind, the code will be built without support for it. But valgrind is very
-useful for debugging. You can install it with the following command:
-```
-$ sudo apt install valgrind
-```
-
 ## Re-making the dependencies
 
 When you change the \#include headers in some file, you should rebuild the dependencies.
@@ -47,6 +53,15 @@ $ make depend
 ```
 This way you are sure that make re-builds everything it needs to rebuild every time.
 
+# EXTERNAL PROGRAMS
+
+##  Using valgrind
+
+If you have not installed valgrind, the code will be built without support for it. But valgrind is very
+useful for debugging. You can install it with the following command:
+```
+$ sudo apt install valgrind
+```
 
 ## Building the documentation
 

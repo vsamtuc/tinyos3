@@ -98,21 +98,10 @@ enum SCHED_CAUSE {
   are stored all the metadata that relate to the thread.
 */
 typedef struct thread_control_block {
+
 	PCB* owner_pcb; /**< @brief This is null for a free TCB */
 
 	cpu_context_t context; /**< @brief The thread context */
-
-#ifndef NVALGRIND
-	unsigned valgrind_stack_id; /**< @brief Valgrind helper for stacks. 
-
-	  This is useful in order to register the thread stack to the valgrind memory profiler. 
-	  Valgrind needs to know which parts of memory are used as stacks, in order to return
-	  meaningful error information. 
-
-	  This field is not relevant to anything in the TinyOS logic and can be ignored.
-	  */
-#endif
-
 	Thread_type type; /**< @brief The type of thread */
 	Thread_state state; /**< @brief The state of the thread */
 	Thread_phase phase; /**< @brief The phase of the thread */
@@ -121,12 +110,23 @@ typedef struct thread_control_block {
 
 	TimerDuration wakeup_time; /**< @brief The time this thread will be woken up by the scheduler */
 
-	rlnode sched_node; /**< @brief Node to use when queueing in the scheduler lists */
+	rlnode sched_node; /**< @brief Node to use when queueing in the scheduler queue */
 	TimerDuration its; /**< @brief Initial time-slice for this thread */
 	TimerDuration rts; /**< @brief Remaining time-slice for this thread */
 
 	enum SCHED_CAUSE curr_cause; /**< @brief The endcause for the current time-slice */
 	enum SCHED_CAUSE last_cause; /**< @brief The endcause for the last time-slice */
+
+#ifndef NVALGRIND
+	unsigned valgrind_stack_id; /**< @brief Valgrind helper for stacks. 
+
+	  This is useful in order to register the thread stack to the valgrind memory profiler. 
+	  Valgrind needs to know which parts of memory are used as stacks, in order to return
+	  meaningful error information. 
+
+	  This field is not relevant to anything in the TinyOS logic.
+	  */
+#endif
 
 } TCB;
 
