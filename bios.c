@@ -51,9 +51,6 @@ typedef struct core
 	volatile uint32_t int_pending;
 	interrupt_handler* intvec[maximum_interrupt_no];
 
-	sig_atomic_t halted;
-	rlnode halted_node;
-	pthread_cond_t halt_cond;
 
 #if defined(CORE_STATISTICS)
 	/* Statistics */
@@ -92,11 +89,8 @@ static pthread_barrier_t system_barrier, core_barrier;
 /* Flag that signals that PIC daemon should be active */
 static volatile sig_atomic_t PIC_active;
 
-/* Mutex for implementing core halt */
-static pthread_mutex_t core_halt_mutex = PTHREAD_MUTEX_INITIALIZER;
-
-/* List of halted cores */
-static rlnode halted_list;
+/* Bit vector denoting halted cores */
+static uint32_t halt_vector;
 
 /* PIC thread id */
 static pthread_t PIC_thread;
@@ -243,16 +237,16 @@ static void* bootfunc_wrapper(void* _core)
 /*
 	Set pending interrupt
  */
-static inline void interrupt_set(Core* core, Interrupt intno)
+static inline void intr_set(Core* core, Interrupt intno)
 {
 	uint32_t sel = 1<<intno;
 	__atomic_fetch_or(& core->int_pending, sel, __ATOMIC_ACQ_REL);
 }
 
 /*
-	Clear pending interrupt
+	Clear pending interrupt for core, return previous value
  */
-static inline int interrupt_clear(Core* core, Interrupt intno)
+static inline int intr_fetch_clear(Core* core, Interrupt intno)
 {
 	uint32_t sel = 1<<intno;
 	uint32_t old = __atomic_fetch_and(& core->int_pending, ~sel, __ATOMIC_ACQ_REL);
@@ -260,7 +254,11 @@ static inline int interrupt_clear(Core* core, Interrupt intno)
 }
 
 
-/* Cause the given core to be interrupted in the future */
+/* 
+	Cause the given core to be interrupted in the future.
+	This function does not add a pending interrupt, but
+	causes a signal to be sent to the core.
+ */
 static inline void interrupt_core(Core* core)
 {
 	union sigval coreval;
@@ -268,16 +266,18 @@ static inline void interrupt_core(Core* core)
 	coreval.sival_int = core->id;	
 
 	CHECKRC(pthread_sigqueue(core->thread, SIGUSR1, coreval));
-	cpu_core_restart(core->id);
 }
 
 
 /*
 	Raise an interrupt to a core.
+
+	Adds intno as pending for the core and causes a signal to
+	be delivered.
  */
 static inline void raise_interrupt(Core* core, Interrupt intno) 
 {
-	interrupt_set(core, intno);
+	intr_set(core, intno);
 #if defined(CORE_STATISTICS)
 	core->irq_raised[intno] ++;
 #endif
@@ -287,9 +287,8 @@ static inline void raise_interrupt(Core* core, Interrupt intno)
 
 
 /*
-	Dispatch the pending iterrupts for the given core.
+	Call the interrupt handler 'irq' for core.
  */
-
 static inline void dispatch_irq(Core* core, int irq)
 {
 #if defined(CORE_STATISTICS)
@@ -301,16 +300,25 @@ static inline void dispatch_irq(Core* core, int irq)
 		handler();
 }
 
+/*
+	Try to call an interrupt handler for any pending interrupt of core, 
+	return 1 for success and 0 on failure.
+ */
 static int try_dispatch(Core* core)
 {
 	for(int intno=0; intno < maximum_interrupt_no; intno++) 
-		if(interrupt_clear(core, intno)) {
+		if(intr_fetch_clear(core, intno)) {
 			dispatch_irq(core, intno);
 			return 1;
 		}
 	return 0;
 }
 
+
+
+/*
+	Try to dispatch as many interrupts to the core as possible
+ */
 static inline void dispatch_interrupts(Core* core)
 {
 	assert(cpu_core_id==core->id);
@@ -332,7 +340,7 @@ static inline void dispatch_interrupts(Core* core)
 
 
 /*
-	This is the handler run by core threads to handle interrupts.
+	This is the signal handler for core threads, to handle interrupts.
  */
 static void sigusr1_handler(int signo, siginfo_t* si, void* ctx)
 {
@@ -726,8 +734,8 @@ void vm_boot(interrupt_handler bootfunc, uint cores, uint serialno)
 	pthread_barrier_init(& system_barrier, NULL, cores+1);
 	pthread_barrier_init(& core_barrier, NULL, cores);
 
-	/* Initialize the halted list */
-	rlnode_init(&halted_list, NULL);
+	/* Initialize the halted vector */
+	halt_vector = 0;
 
 	/* Launch the core threads */
 	ncores = cores;
@@ -736,9 +744,6 @@ void vm_boot(interrupt_handler bootfunc, uint cores, uint serialno)
 		CORE[c].bootfunc = bootfunc;
 		CORE[c].id = c;
 
-		pthread_cond_init(& CORE[c].halt_cond, NULL);
-		CORE[c].halted = 0;
-		rlnode_init(& CORE[c].halted_node, &CORE[c]);
 
 #if defined(CORE_STATISTICS)
 		/* Initialize Core statistics */
@@ -798,17 +803,7 @@ uint cpu_cores()
 }
 
 
-/* 
-	This should only be called with core_halt_mutex held
- */
-static inline void core_restart(Core* core)
-{
-	if(core->halted) {
-		core->halted = 0;
-		rlist_remove(& core->halted_node);
-		pthread_cond_signal(& core->halt_cond);
-	}	
-}
+
 
 
 void cpu_core_halt()
@@ -816,40 +811,38 @@ void cpu_core_halt()
 	CHECKRC(pthread_sigmask(SIG_BLOCK, &sigusr1_set, NULL));
 
 	Core* core = curr_core();
+	uint32_t cmask = 1 << cpu_core_id;
 
-	pthread_mutex_lock(& core_halt_mutex);
-	core->halted = 1;
-	rlist_push_front(&halted_list, & core->halted_node);
-	while(core->halted)
-		pthread_cond_wait(& core->halt_cond, & core_halt_mutex);
-	assert(! core->halted);
-	pthread_mutex_unlock(& core_halt_mutex);
+	__atomic_fetch_or(& halt_vector, cmask, __ATOMIC_RELAXED);
 
+	int _sig;
+	if(halt_vector & cmask)
+		sigwait(&sigusr1_set, &_sig);
+
+	dispatch_interrupts(core);
 	CHECKRC(pthread_sigmask(SIG_UNBLOCK, &sigusr1_set, NULL));
 }
 
 void cpu_core_restart(uint c)
 {
-	pthread_mutex_lock(& core_halt_mutex);
-	core_restart(CORE+c);
-	pthread_mutex_unlock(& core_halt_mutex);	
+	if(halt_vector & (1<<c)) {
+		__atomic_fetch_and(& halt_vector, ~ (1<<c), __ATOMIC_RELAXED);
+		interrupt_core(CORE+c);
+	}
 }
 
 void cpu_core_restart_one()
 {
-	pthread_mutex_lock(& core_halt_mutex);
-	if(! is_rlist_empty(&halted_list)) {
-		core_restart((Core*) rlist_pop_front(&halted_list)->obj);
-	}	
-	pthread_mutex_unlock(& core_halt_mutex);	
+	if(halt_vector) {
+		uint c = __builtin_ctz(halt_vector);
+		cpu_core_restart(c);
+	}
 }
 
 void cpu_core_restart_all()
 {
-	pthread_mutex_lock(& core_halt_mutex);
-	for(uint c=0; c<ncores; c++)
-		core_restart(CORE+c);
-	pthread_mutex_unlock(& core_halt_mutex);	
+	for(uint c=0; c < ncores; c++)
+		cpu_core_restart(c);
 }
 
 void cpu_core_barrier_sync()
@@ -936,7 +929,7 @@ TimerDuration bios_set_timer(TimerDuration usec)
 	CHECKRC(pthread_sigmask(SIG_BLOCK, &sigusr1_set, &curss));	
 	
 	timer_settime(curr_core()->timer_id, 0, &newtime, &oldtime);
-	interrupt_clear(curr_core(), ALARM);
+	intr_fetch_clear(curr_core(), ALARM);
 	
 	CHECKRC(pthread_sigmask(SIG_SETMASK, &curss, NULL));
 
