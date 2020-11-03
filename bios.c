@@ -260,6 +260,16 @@ static inline int interrupt_clear(Core* core, Interrupt intno)
 }
 
 
+/* Cause the given core to be interrupted in the future */
+static inline void interrupt_core(Core* core)
+{
+	union sigval coreval;
+	coreval.sival_ptr = NULL; /* This is to silence valgrind */
+	coreval.sival_int = core->id;	
+
+	CHECKRC(pthread_sigqueue(core->thread, SIGUSR1, coreval));
+	cpu_core_restart(core->id);
+}
 
 
 /*
@@ -267,18 +277,12 @@ static inline int interrupt_clear(Core* core, Interrupt intno)
  */
 static inline void raise_interrupt(Core* core, Interrupt intno) 
 {
-	union sigval coreval;
-	coreval.sival_ptr = NULL; /* This is to silence valgrind */
-	coreval.sival_int = core->id;
-	
 	interrupt_set(core, intno);
-
 #if defined(CORE_STATISTICS)
 	core->irq_raised[intno] ++;
 #endif
 
-	CHECKRC(pthread_sigqueue(core->thread, SIGUSR1, coreval));
-	cpu_core_restart(core->id);
+	interrupt_core(core);
 }
 
 
@@ -309,9 +313,22 @@ static int try_dispatch(Core* core)
 
 static inline void dispatch_interrupts(Core* core)
 {
-	while( try_dispatch(core) ) ;
-}
+	assert(cpu_core_id==core->id);
+	try_dispatch(core);
+	return;
 
+	while( try_dispatch(core) ) {
+		/* 
+			Note: after the successful dispatch, we may not
+			be running on the core any more (!), if the
+			dispatch action has been scheduled...
+		*/
+		if(cpu_core_id != core->id) {
+			//if(core->int_pending) interrupt_core(core);
+			break;
+		}
+	}
+}
 
 
 /*
