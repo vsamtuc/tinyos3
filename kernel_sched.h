@@ -152,30 +152,33 @@ typedef struct core_control_block {
 	TCB* current_thread; /**< @brief Points to the thread currently owning the core */
 	TCB* previous_thread; /**< @brief Points to the thread that previously owned the core */
 	TCB idle_thread; /**< @brief Used by the scheduler to handle the core's idle thread */
-	sig_atomic_t preemption; /**< @brief Marks preemption, used by the locking code */
 
 } CCB;
 
 /** @brief the array of Core Control Blocks (CCB) for the kernel */
 extern CCB cctx[MAX_CORES];
 
-/** @brief The current core's CCB */
-#define CURCORE (cctx[cpu_core_id])
 
 /** 
   @brief The current thread.
 
-  This is a pointer to the TCB of the thread currently executing on this core.
+  This function returns the TCB of the calling thread. Via this function,
+  a system call can identify the process executing it, and all other information.
+
+  For performance reasons, it is advised to call this function
+  only once in each system call.
+
+  @returns a pointer to the TCB of the caller.
 */
-#define CURTHREAD (CURCORE.current_thread)
+TCB* cur_thread();
 
 /** 
-  @brief The current thread.
+  @brief The current process.
 
   This is a pointer to the PCB of the owner process of the current thread, 
   i.e., the thread currently executing on this core.
 */
-#define CURPROC (CURTHREAD->owner_pcb)
+#define CURPROC (cur_thread()->owner_pcb)
 
 /**
   @brief A timeout constant, denoting no timeout for sleep.

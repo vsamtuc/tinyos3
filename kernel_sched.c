@@ -11,6 +11,46 @@
 #include <valgrind/valgrind.h>
 #endif
 
+
+/********************************************
+	
+	Core table and CCB-related declarations.
+
+ *********************************************/
+
+/* Core control blocks */
+CCB cctx[MAX_CORES];
+
+
+/* 
+	The current core's CCB. This must only be used in a 
+	non-preemtpive context.
+ */
+#define CURCORE (cctx[cpu_core_id])
+
+/* 
+	The current thread. This is a pointer to the TCB of the thread 
+	currently executing on this core.
+
+	This must only be used in non-preemptive context.
+*/
+#define CURTHREAD (CURCORE.current_thread)
+
+
+/*
+	This can be used in the preemptive context to
+	obtain the current thread.
+ */
+TCB* cur_thread()
+{
+  int preempt = preempt_off;
+  TCB* cur = CURTHREAD;
+  if(preempt) preempt_on;
+  return cur;
+}
+
+
+
 /*
    The thread layout.
   --------------------
@@ -88,6 +128,9 @@ void* allocate_thread(size_t size)
 }
 #endif
 
+
+
+
 /*
   This is the function that is used to start normal threads.
 */
@@ -97,7 +140,7 @@ void gain(int preempt); /* forward */
 static void thread_start()
 {
 	gain(1);
-	CURTHREAD->thread_func();
+	cur_thread()->thread_func();
 
 	/* We are not supposed to get here! */
 	assert(0);
@@ -171,9 +214,6 @@ void release_TCB(TCB* tcb)
 /*
  *  Note: the scheduler routines are all in the non-preemptive domain.
  */
-
-/* Core control blocks */
-CCB cctx[MAX_CORES];
 
 /*
   The scheduler queue is implemented as a doubly linked list. The
@@ -334,9 +374,9 @@ void sleep_releasing(Thread_state state, Mutex* mx, enum SCHED_CAUSE cause,
 {
 	assert(state == STOPPED || state == EXITED);
 
-	TCB* tcb = CURTHREAD;
 
 	int preempt = preempt_off;
+	TCB* tcb = CURTHREAD;
 	Mutex_Lock(&sched_spinlock);
 
 	/* mark the thread as stopped or exited */

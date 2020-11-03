@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <assert.h>
+#include <stdint.h>
 #include <pthread.h>
 #include <signal.h>
 #include <time.h>
@@ -30,6 +31,11 @@
  */
 
 
+#if 0
+#define CORE_STATISTICS
+#endif
+
+
 /*
 	Per-core data.
  */
@@ -42,18 +48,20 @@ typedef struct core
 	struct sigevent timer_sigevent;
 	timer_t timer_id;
 
+	volatile uint32_t int_pending;
 	interrupt_handler* intvec[maximum_interrupt_no];
-	sig_atomic_t intpending[maximum_interrupt_no];
 
-	sig_atomic_t int_disabled;
 	sig_atomic_t halted;
 	rlnode halted_node;
 	pthread_cond_t halt_cond;
 
+#if defined(CORE_STATISTICS)
 	/* Statistics */
 	int irq_count;
 	int irq_raised[maximum_interrupt_no];
 	int irq_delivered[maximum_interrupt_no];
+#endif
+
 } Core;
 
 
@@ -183,14 +191,12 @@ static void* bootfunc_wrapper(void* _core)
 {
 	Core* core = (Core*)_core;
 
-	/* Default interrupt handlers */
-	for(int i=0; i<maximum_interrupt_no; i++) {
-		core->intvec[i] = NULL;
-		core->intpending[i] = 0;
-	}
+	/* Clear pending bitvec */
+	core->int_pending = 0;
 
-	/* Mark interrupts as enabled */
-	core->int_disabled = 0;
+	/* Default interrupt handlers */
+	for(int i=0; i<maximum_interrupt_no; i++) 
+		core->intvec[i] = NULL;
 
 	/* establish the thread-local id */
 	CHECKRC(pthread_setspecific(Core_key, core));
@@ -235,6 +241,28 @@ static void* bootfunc_wrapper(void* _core)
 
 
 /*
+	Set pending interrupt
+ */
+static inline void interrupt_set(Core* core, Interrupt intno)
+{
+	uint32_t sel = 1<<intno;
+	__atomic_fetch_or(& core->int_pending, sel, __ATOMIC_ACQ_REL);
+}
+
+/*
+	Clear pending interrupt
+ */
+static inline int interrupt_clear(Core* core, Interrupt intno)
+{
+	uint32_t sel = 1<<intno;
+	uint32_t old = __atomic_fetch_and(& core->int_pending, ~sel, __ATOMIC_ACQ_REL);
+	return (old & sel) != 0;
+}
+
+
+
+
+/*
 	Raise an interrupt to a core.
  */
 static inline void raise_interrupt(Core* core, Interrupt intno) 
@@ -242,8 +270,13 @@ static inline void raise_interrupt(Core* core, Interrupt intno)
 	union sigval coreval;
 	coreval.sival_ptr = NULL; /* This is to silence valgrind */
 	coreval.sival_int = core->id;
-	core->intpending[intno] = 1;
+	
+	interrupt_set(core, intno);
+
+#if defined(CORE_STATISTICS)
 	core->irq_raised[intno] ++;
+#endif
+
 	CHECKRC(pthread_sigqueue(core->thread, SIGUSR1, coreval));
 	cpu_core_restart(core->id);
 }
@@ -252,21 +285,33 @@ static inline void raise_interrupt(Core* core, Interrupt intno)
 /*
 	Dispatch the pending iterrupts for the given core.
  */
-static void dispatch_interrupts(Core* core)
+
+static inline void dispatch_irq(Core* core, int irq)
 {
-	for(int intno = 0; intno < maximum_interrupt_no; intno++) {
-		if(core->int_disabled) break; /* will continue at
-										 cpu_interrupt_enable()*/
-		if(core->intpending[intno]) {
-			core->intpending[intno] = 0;
-			core->irq_delivered[intno]++;
-			interrupt_handler* handler =  core->intvec[intno];
-			if(handler != NULL) { 
-				handler();
-			}
-		}
-	}	
+#if defined(CORE_STATISTICS)
+	core->irq_delivered[irq]++;
+#endif
+
+	interrupt_handler* handler =  core->intvec[irq];
+	if(handler != NULL)
+		handler();
 }
+
+static int try_dispatch(Core* core)
+{
+	for(int intno=0; intno < maximum_interrupt_no; intno++) 
+		if(interrupt_clear(core, intno)) {
+			dispatch_irq(core, intno);
+			return 1;
+		}
+	return 0;
+}
+
+static inline void dispatch_interrupts(Core* core)
+{
+	while( try_dispatch(core) ) ;
+}
+
 
 
 /*
@@ -276,8 +321,10 @@ static void sigusr1_handler(int signo, siginfo_t* si, void* ctx)
 {
 	Core* core = & CORE[si->si_value.sival_int];
 
+#if defined(CORE_STATISTICS)
 	core->irq_count++;
-	if(core->int_disabled) return;
+#endif
+
 	dispatch_interrupts(core);
 }
 
@@ -492,14 +539,13 @@ static void pic_drain_sigusr1(int sigusr1fd)
 
 
 /*
-	The PIC daemon is the dispatcher on interrupts to core threads,
+	The PIC daemon dispatches interrupts to core threads,
 	by calling raise_interrupt().
 
 	Interrupts sent include
-	(a) ALARM, when the per-core timer expires
+	(a) ALARM, when the core timer expires
 	(b) SERIAL_RX_READY  &  SERIAL_TX_READY, when some 
 		io_device becomes ready.
-
  */
 static void PIC_daemon(uint serialno)
 {
@@ -677,12 +723,14 @@ void vm_boot(interrupt_handler bootfunc, uint cores, uint serialno)
 		CORE[c].halted = 0;
 		rlnode_init(& CORE[c].halted_node, &CORE[c]);
 
+#if defined(CORE_STATISTICS)
 		/* Initialize Core statistics */
 		CORE[c].irq_count = 0;
 		for(uint intno=0; intno<maximum_interrupt_no;intno++) {
 			CORE[c].irq_delivered[intno] = 0;
 			CORE[c].irq_raised[intno] = 0;
 		}
+#endif
 
 		/* Create the core thread */
 		CHECKRC(pthread_create(& CORE[c].thread, NULL, bootfunc_wrapper, &CORE[c]));
@@ -697,7 +745,7 @@ void vm_boot(interrupt_handler bootfunc, uint cores, uint serialno)
 	/* Run the interrupt controller daemon on this thread */	
 	PIC_daemon(serialno);
 
-	/* Wait for threads to finish */
+	/* Wait for core threads to finish */
 	for(uint c=0; c<cores; c++) {
 		CHECKRC(pthread_join(CORE[c].thread, NULL));
 	}
@@ -712,8 +760,8 @@ void vm_boot(interrupt_handler bootfunc, uint cores, uint serialno)
 	/* Delete the Core table */
 	ncores = 0;
 
-	/* emit statistics */
-#if 0
+	/* print statistics */
+#if defined(CORE_STATISTICS)
 	fprintf(stderr,"PIC loops: %lu  queued/drained= %lu / %lu\n", 
 		PIC_loops, PIC_usr1_queued, PIC_usr1_drained);
 	for(uint c=0;c<cores;c++) {
@@ -732,23 +780,10 @@ uint cpu_cores()
 	return ncores;
 }
 
-void cpu_core_halt()
-{
-	/* unmask signals and call sigsuspend */
-	Core* core = curr_core();
-	assert(! core->int_disabled);
-	CHECKRC(pthread_sigmask(SIG_BLOCK, &sigusr1_set, NULL));
-	pthread_mutex_lock(& core_halt_mutex);
-	core->halted = 1;
-	rlist_push_front(&halted_list, & core->halted_node);
-	while(core->halted)
-		pthread_cond_wait(& core->halt_cond, & core_halt_mutex);
-	assert(! core->halted);
-	pthread_mutex_unlock(& core_halt_mutex);
-	CHECKRC(pthread_sigmask(SIG_UNBLOCK, &sigusr1_set, NULL));
-	dispatch_interrupts(core);
-}
 
+/* 
+	This should only be called with core_halt_mutex held
+ */
 static inline void core_restart(Core* core)
 {
 	if(core->halted) {
@@ -756,6 +791,24 @@ static inline void core_restart(Core* core)
 		rlist_remove(& core->halted_node);
 		pthread_cond_signal(& core->halt_cond);
 	}	
+}
+
+
+void cpu_core_halt()
+{
+	CHECKRC(pthread_sigmask(SIG_BLOCK, &sigusr1_set, NULL));
+
+	Core* core = curr_core();
+
+	pthread_mutex_lock(& core_halt_mutex);
+	core->halted = 1;
+	rlist_push_front(&halted_list, & core->halted_node);
+	while(core->halted)
+		pthread_cond_wait(& core->halt_cond, & core_halt_mutex);
+	assert(! core->halted);
+	pthread_mutex_unlock(& core_halt_mutex);
+
+	CHECKRC(pthread_sigmask(SIG_UNBLOCK, &sigusr1_set, NULL));
 }
 
 void cpu_core_restart(uint c)
@@ -795,27 +848,29 @@ void cpu_ici(uint core)
 
 void cpu_interrupt_handler(Interrupt interrupt, interrupt_handler handler)
 {
+	sigset_t curss;
+	CHECKRC(pthread_sigmask(SIG_BLOCK, &sigusr1_set, &curss));
 	curr_core()->intvec[interrupt] = handler;
+	CHECKRC(pthread_sigmask(SIG_SETMASK, &curss, NULL));
 }
 
-
-void cpu_disable_interrupts()
+int cpu_interrupts_enabled()
 {
-	Core* core = curr_core();
-	if(! core->int_disabled) {
-		CHECKRC(pthread_sigmask(SIG_BLOCK, &sigusr1_set, NULL));
-		core->int_disabled = 1;
-	}
+	sigset_t curss;
+	CHECKRC(pthread_sigmask(SIG_BLOCK, NULL, & curss));
+	return sigismember(&curss, SIGUSR1)==0;
+}
+
+int cpu_disable_interrupts()
+{
+	sigset_t curss;
+	CHECKRC(pthread_sigmask(SIG_BLOCK, &sigusr1_set, & curss));
+	return sigismember(&curss, SIGUSR1)==0;
 }
 
 void cpu_enable_interrupts()
 {
-	Core* core = curr_core();
-	if(core->int_disabled) {        
-		core->int_disabled = 0;
-		CHECKRC(pthread_sigmask(SIG_UNBLOCK, &sigusr1_set, NULL));      
-		dispatch_interrupts(curr_core());
-	}
+	CHECKRC(pthread_sigmask(SIG_UNBLOCK, &sigusr1_set, NULL));
 }
 
 
@@ -830,7 +885,8 @@ void cpu_initialize_context(cpu_context_t* ctx, void* ss_sp, size_t ss_size, voi
   ctx->uc_stack.ss_size = ss_size;
   ctx->uc_stack.ss_flags = 0;
 
-  pthread_sigmask(0, NULL, & ctx->uc_sigmask);  /* We don't want any signals changed */
+  //CHECKRC(pthread_sigmask(0, NULL, & ctx->uc_sigmask));  /* We don't want any signals changed */
+  sigfillset( & ctx->uc_sigmask );
   makecontext(ctx, (void*) ctx_func, 0);
 }
 
@@ -858,9 +914,14 @@ TimerDuration bios_set_timer(TimerDuration usec)
 	};
 
 	struct itimerspec oldtime;
+	sigset_t curss;
+
+	CHECKRC(pthread_sigmask(SIG_BLOCK, &sigusr1_set, &curss));	
 	
 	timer_settime(curr_core()->timer_id, 0, &newtime, &oldtime);
-	curr_core()->intpending[ALARM] = 0;
+	interrupt_clear(curr_core(), ALARM);
+	
+	CHECKRC(pthread_sigmask(SIG_SETMASK, &curss, NULL));
 
 	assert(oldtime.it_interval.tv_sec ==0 && oldtime.it_interval.tv_nsec==0);
 	return 1000000*oldtime.it_value.tv_sec + oldtime.it_value.tv_nsec/1000ull;
@@ -891,9 +952,9 @@ uint bios_serial_ports()
  */
 void bios_serial_interrupt_core(uint serial, Interrupt intno, uint coreid)
 {
-	assert(serial < nterm);
-	assert(intno==SERIAL_RX_READY || intno==SERIAL_TX_READY);
-	assert(coreid < ncores);
+	if(!(serial < nterm)) return;
+	if(!(intno==SERIAL_RX_READY || intno==SERIAL_TX_READY)) return;
+	if(!(coreid < ncores)) return;
 
 	Core* core = & CORE[coreid];
 

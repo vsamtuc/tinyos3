@@ -16,7 +16,7 @@ Tid_t sys_CreateThread(Task task, int argl, void* args)
  */
 Tid_t sys_ThreadSelf()
 {
-	return (Tid_t) CURTHREAD;
+	return (Tid_t) cur_thread();
 }
 
 /**

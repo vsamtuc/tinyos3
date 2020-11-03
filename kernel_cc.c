@@ -34,19 +34,19 @@
  */
 void Mutex_Lock(Mutex* lock)
 {
-#define MUTEX_SPINS 1000
+#define MUTEX_SPINS (cpu_cores()>1 ?  1000 : 10000)
 
   while(__atomic_test_and_set(lock,__ATOMIC_ACQUIRE)) {
     int spin=MUTEX_SPINS;
     while(__atomic_load_n(lock, __ATOMIC_RELAXED)) {
-#if defined(__x86__) || (__x86_64__)
+#if defined(__x86__) || defined(__x86_64__)
       __builtin_ia32_pause();
 #endif
       if(spin>0) 
       	spin--; 
       else { 
       	spin=MUTEX_SPINS; 
-      	if(get_core_preemption())
+      	if(cpu_interrupts_enabled())
       		yield(SCHED_MUTEX); 
       }
     }
@@ -121,7 +121,7 @@ static inline void remove_from_ring(CondVar* cv, __cv_waiter* w)
 static int cv_wait(Mutex* mutex, CondVar* cv, 
 		enum SCHED_CAUSE cause, TimerDuration timeout)
 {
-	__cv_waiter waiter = { .thread=CURTHREAD, .signalled = 0, .removed=0 };
+	__cv_waiter waiter = { .thread=cur_thread(), .signalled = 0, .removed=0 };
 	rlnode_init(& waiter.node, &waiter);
 
 	Mutex_Lock(&(cv->waitset_lock));
@@ -202,32 +202,6 @@ void Cond_Broadcast(CondVar* cv)
 }
 
 
-
-
-
-/*
- *  Pre-emption control
- */ 
-int set_core_preemption(int preempt)
-{
-	sig_atomic_t old_preempt;
-	if(preempt) {
-		old_preempt = __atomic_exchange_n(& CURCORE.preemption, preempt, __ATOMIC_RELAXED);
-		cpu_enable_interrupts();
-	} 
-	else {				
-		cpu_disable_interrupts();
-		old_preempt = __atomic_exchange_n(& CURCORE.preemption, preempt, __ATOMIC_RELAXED);
-	}
-
-	return old_preempt;
-}
-
-
-int get_core_preemption()
-{
-	return CURCORE.preemption;
-}
 
 
 

@@ -213,9 +213,19 @@ void cpu_interrupt_handler(Interrupt interrupt, interrupt_handler handler);
 	If an interrupt arrives while interrupts are disabled, it will be
 	marked as _pending_ and will be raised when interrupts are re-enabled.
 
+	
+
+	@returns 1 if interrupts were enabled before the call, else 0.
 	@see cpu_enable_interrupts
  */
-void cpu_disable_interrupts();
+int cpu_disable_interrupts();
+
+/**
+	@brief Get the current interrupt status for this core.
+
+	@returns 1 if interrupts are enabled, else 0
+ */
+int cpu_interrupts_enabled();
 
 
 /**
@@ -359,12 +369,14 @@ uint bios_serial_ports();
 	Make interrupts of type @c intno for serial port port @c serial be sent
 	to @c core.  By default, initially all interrupts are sent to core 0.
 
+	If any parameter has an illegal value, this call has no effect.
+
 	@param serial the serial device whose interrupt is assigned, it must be
 	         greater of equal to 
 	         @c 0 and less than @c bios_serial_ports().
 	@param intno the interrupt to assign (one of @c SERIAL_RX_READY and 
 			@c SERIAL_TX_READY)
-	@param core th 
+	@param core the core that will handle this interrupt.
  */
 void bios_serial_interrupt_core(uint serial, Interrupt intno, uint core);
 
