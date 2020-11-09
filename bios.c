@@ -48,15 +48,15 @@ typedef struct core
 	struct sigevent timer_sigevent;
 	timer_t timer_id;
 
-	volatile uint32_t int_pending;
+	volatile uint32_t intr_pending;
 	interrupt_handler* intvec[maximum_interrupt_no];
 
 
 #if defined(CORE_STATISTICS)
 	/* Statistics */
-	int irq_count;
-	int irq_raised[maximum_interrupt_no];
-	int irq_delivered[maximum_interrupt_no];
+	uintptr_t irq_count;
+	uintptr_t irq_raised[maximum_interrupt_no];
+	uintptr_t irq_delivered[maximum_interrupt_no];
 #endif
 
 } Core;
@@ -90,7 +90,7 @@ static pthread_barrier_t system_barrier, core_barrier;
 static volatile sig_atomic_t PIC_active;
 
 /* Bit vector denoting halted cores */
-static uint32_t halt_vector;
+static _Atomic uint32_t halt_vector;
 
 /* PIC thread id */
 static pthread_t PIC_thread;
@@ -112,8 +112,8 @@ static volatile coarse_clock_t  system_clock;
 /* This gives a rough serial port timeout of 300 msec */
 #define SERIAL_TIMEOUT 300
 
+/* Forward decl. of per-core signal handler */
 static void sigusr1_handler(int signo, siginfo_t* si, void* ctx);
-
 
 /* PIC daemon statistics */
 static unsigned long PIC_loops, PIC_usr1_drained, PIC_usr1_queued;
@@ -186,7 +186,7 @@ static void* bootfunc_wrapper(void* _core)
 	Core* core = (Core*)_core;
 
 	/* Clear pending bitvec */
-	core->int_pending = 0;
+	core->intr_pending = 0;
 
 	/* Default interrupt handlers */
 	for(int i=0; i<maximum_interrupt_no; i++) 
@@ -235,12 +235,13 @@ static void* bootfunc_wrapper(void* _core)
 
 
 /*
-	Set pending interrupt
+	Set pending interrupt, return previous value
  */
-static inline void intr_set(Core* core, Interrupt intno)
+static inline int intr_fetch_set(Core* core, Interrupt intno)
 {
 	uint32_t sel = 1<<intno;
-	__atomic_fetch_or(& core->int_pending, sel, __ATOMIC_ACQ_REL);
+	uint32_t old = __atomic_fetch_or(& core->intr_pending, sel, __ATOMIC_ACQ_REL);
+	return (old & sel) != 0;
 }
 
 /*
@@ -249,8 +250,34 @@ static inline void intr_set(Core* core, Interrupt intno)
 static inline int intr_fetch_clear(Core* core, Interrupt intno)
 {
 	uint32_t sel = 1<<intno;
-	uint32_t old = __atomic_fetch_and(& core->int_pending, ~sel, __ATOMIC_ACQ_REL);
+	uint32_t old = __atomic_fetch_and(& core->intr_pending, ~sel, __ATOMIC_ACQ_REL);
 	return (old & sel) != 0;
+}
+
+
+/*
+	If there are pending interrupts for core, clear lowest pending interrupt,
+	store in intp and return 1, else return 0.
+ */
+static inline int intr_fetch_lowest(Core* core, Interrupt* intp)
+{
+	Interrupt irq;
+	uint32_t ipnvec;
+	uint32_t ipvec = core->intr_pending;
+
+	do {
+		if(! ipvec) return 0;
+
+		irq = __builtin_ctz(ipvec);
+		assert(irq < maximum_interrupt_no);
+
+		ipnvec = ipvec & ~(1 << irq);
+
+	} while(! __atomic_compare_exchange_n(& core->intr_pending, &ipvec, ipnvec, 0, 
+		__ATOMIC_ACQ_REL, __ATOMIC_RELAXED));
+
+	*intp = irq;
+	return 1;
 }
 
 
@@ -277,62 +304,46 @@ static inline void interrupt_core(Core* core)
  */
 static inline void raise_interrupt(Core* core, Interrupt intno) 
 {
-	intr_set(core, intno);
+	if(! intr_fetch_set(core, intno) ) {
+
 #if defined(CORE_STATISTICS)
-	core->irq_raised[intno] ++;
+		core->irq_raised[intno] ++;
 #endif
 
-	interrupt_core(core);
-}
-
-
-/*
-	Call the interrupt handler 'irq' for core.
- */
-static inline void dispatch_irq(Core* core, int irq)
-{
-#if defined(CORE_STATISTICS)
-	core->irq_delivered[irq]++;
-#endif
-
-	interrupt_handler* handler =  core->intvec[irq];
-	if(handler != NULL)
-		handler();
-}
-
-/*
-	Try to call an interrupt handler for any pending interrupt of core, 
-	return 1 for success and 0 on failure.
- */
-static int try_dispatch(Core* core)
-{
-	for(int intno=0; intno < maximum_interrupt_no; intno++) 
-		if(intr_fetch_clear(core, intno)) {
-			dispatch_irq(core, intno);
-			return 1;
-		}
-	return 0;
+		interrupt_core(core);
+	}
 }
 
 
 
+
 /*
-	Try to dispatch as many interrupts to the core as possible
+	Dispatch any pending interrupts, lowest first.
+	Cease if an interrupt causes core change.
  */
 static inline void dispatch_interrupts(Core* core)
 {
 	assert(cpu_core_id==core->id);
-	try_dispatch(core);
-	return;
 
-	while( try_dispatch(core) ) {
+	while(1) {
+
+		Interrupt irq;
+		if(! intr_fetch_lowest(core, &irq)) break;
+	
+		assert(0 <= irq  && irq < maximum_interrupt_no);
+#if defined(CORE_STATISTICS)
+		core->irq_delivered[irq]++;
+#endif
+		interrupt_handler* handler =  core->intvec[irq];
+		if(handler != NULL) handler();
+	
 		/* 
-			Note: after the successful dispatch, we may not
+			Note: after a successful dispatch, we may not
 			be running on the core any more (!), if the
 			dispatch action has been scheduled...
 		*/
 		if(cpu_core_id != core->id) {
-			//if(core->int_pending) interrupt_core(core);
+			//if(core->intr_pending) interrupt_core(core);
 			break;
 		}
 	}
@@ -787,10 +798,10 @@ void vm_boot(interrupt_handler bootfunc, uint cores, uint serialno)
 	fprintf(stderr,"PIC loops: %lu  queued/drained= %lu / %lu\n", 
 		PIC_loops, PIC_usr1_queued, PIC_usr1_drained);
 	for(uint c=0;c<cores;c++) {
-		fprintf(stderr,"Core %3d: irq_count=%6d. deliv(raised):\t",
+		fprintf(stderr,"Core %3d: irq_count=%6tu. deliv(raised):\t",
 			c, CORE[c].irq_count);
 		for(uint i=0;i<maximum_interrupt_no;i++) 
-			fprintf(stderr," %d(%d)",CORE[c].irq_delivered[i], CORE[c].irq_raised[i]);
+			fprintf(stderr," %tu(%tu)",CORE[c].irq_delivered[i], CORE[c].irq_raised[i]);
 		fprintf(stderr,"\n");
 	}
 #endif
@@ -804,8 +815,6 @@ uint cpu_cores()
 
 
 
-
-
 void cpu_core_halt()
 {
 	CHECKRC(pthread_sigmask(SIG_BLOCK, &sigusr1_set, NULL));
@@ -816,33 +825,49 @@ void cpu_core_halt()
 	__atomic_fetch_or(& halt_vector, cmask, __ATOMIC_RELAXED);
 
 	int _sig;
-	if(halt_vector & cmask)
+	if(halt_vector & cmask) {
 		sigwait(&sigusr1_set, &_sig);
+		dispatch_interrupts(core);
+	}
 
-	dispatch_interrupts(core);
+	__atomic_fetch_and(& halt_vector, ~cmask, __ATOMIC_RELAXED);
+
 	CHECKRC(pthread_sigmask(SIG_UNBLOCK, &sigusr1_set, NULL));
 }
 
+static int __core_restart(uint c)
+{
+	uint32_t cmask = 1 << c;
+
+	uint32_t prevhv = __atomic_fetch_and(& halt_vector, ~cmask, __ATOMIC_RELAXED);
+	if( prevhv & cmask ) {
+		interrupt_core(CORE+c);
+		return 1;
+	} else 
+		return 0;
+}
+
+
 void cpu_core_restart(uint c)
 {
-	if(halt_vector & (1<<c)) {
-		__atomic_fetch_and(& halt_vector, ~ (1<<c), __ATOMIC_RELAXED);
-		interrupt_core(CORE+c);
-	}
+	__core_restart(c);
 }
+
 
 void cpu_core_restart_one()
 {
-	if(halt_vector) {
-		uint c = __builtin_ctz(halt_vector);
-		cpu_core_restart(c);
+	uint32_t hv = halt_vector;
+
+	while( (hv=halt_vector)!=0 ) {
+		uint c = __builtin_ctz(hv);
+		if( __core_restart(c) ) return;
 	}
 }
 
 void cpu_core_restart_all()
 {
 	for(uint c=0; c < ncores; c++)
-		cpu_core_restart(c);
+		__core_restart(c);
 }
 
 void cpu_core_barrier_sync()
@@ -924,14 +949,8 @@ TimerDuration bios_set_timer(TimerDuration usec)
 	};
 
 	struct itimerspec oldtime;
-	sigset_t curss;
-
-	CHECKRC(pthread_sigmask(SIG_BLOCK, &sigusr1_set, &curss));	
 	
 	timer_settime(curr_core()->timer_id, 0, &newtime, &oldtime);
-	intr_fetch_clear(curr_core(), ALARM);
-	
-	CHECKRC(pthread_sigmask(SIG_SETMASK, &curss, NULL));
 
 	assert(oldtime.it_interval.tv_sec ==0 && oldtime.it_interval.tv_nsec==0);
 	return 1000000*oldtime.it_value.tv_sec + oldtime.it_value.tv_nsec/1000ull;
