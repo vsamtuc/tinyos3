@@ -101,16 +101,8 @@ static struct sigaction USR1_saved_sigaction;
 /* The sigaction for SIGUSR1 (core interrupts) */
 static struct sigaction USR1_sigaction;
 
-/* A simulated coarse clock measuring time with a res. of 0.1 sec,
-   since "boot". Used for serial device timeouts. */
-typedef unsigned long coarse_clock_t;
-static volatile coarse_clock_t  system_clock;
-
-/* This is how fast the coarse clock is updated (in usec) */
-#define SLOW_HZ 10000
-
 /* This gives a rough serial port timeout of 300 msec */
-#define SERIAL_TIMEOUT 300
+#define SERIAL_TIMEOUT 300000
 
 /* Forward decl. of per-core signal handler */
 static void sigusr1_handler(int signo, siginfo_t* si, void* ctx);
@@ -181,7 +173,7 @@ static inline void interrupt_pic_thread()
 /*
 	Helper pthread-startable function to launch a core thread.
 */
-static void* bootfunc_wrapper(void* _core)
+static void* core_thread(void* _core)
 {
 	Core* core = (Core*)_core;
 
@@ -371,11 +363,11 @@ static void sigusr1_handler(int signo, siginfo_t* si, void* ctx)
 
 
 /* Coarse clock */
-static coarse_clock_t get_coarse_time()
+static TimerDuration get_coarse_time()
 {
 	struct timespec curtime;
-	CHECK(clock_gettime(CLOCK_REALTIME, &curtime));
-	return curtime.tv_nsec / 1000000 + curtime.tv_sec*1000;
+	CHECK(clock_gettime(CLOCK_REALTIME_COARSE, &curtime));
+	return curtime.tv_nsec / 1000ul + curtime.tv_sec*1000000ull;
 }
 
 
@@ -419,7 +411,7 @@ typedef struct io_device
 
 	volatile Core* int_core;		/* core to receive interrupts */
 	volatile int ready;  		/* ready flag */
-	coarse_clock_t last_int;	/* used for timeouts */
+	TimerDuration last_int;	/* used for timeouts */
 } io_device;
 
 
@@ -438,7 +430,7 @@ static void io_device_init(io_device* this, int fd, io_direction iodir)
 	this->iodir = iodir;
 	this->int_core = &CORE[0];
 	this->ready = io_ready(fd, iodir);
-	this->last_int = system_clock;
+	this->last_int = get_coarse_time();
 
 	/* Set file descriptor to non-blocking */
 	CHECK(fcntl(fd, F_SETFL, O_NONBLOCK));
@@ -450,7 +442,10 @@ static int io_device_read(io_device* this, char* ptr)
 	assert(this->iodir == IODIR_RX);
 	int rc;
 	while((rc=read(this->fd, ptr, 1))==-1 && errno == EINTR);
-	assert(rc==0 || rc==1 || (rc==-1 && (errno==EAGAIN || errno==EWOULDBLOCK)));
+
+	int ok = rc==0 || rc==1 || (rc==-1 && (errno==EAGAIN || errno==EWOULDBLOCK));
+	if(!ok) perror("io_device_read:");
+	assert(ok);
 
 	if(rc!=1 && this->ready) {
 		this->ready = 0;
@@ -468,7 +463,9 @@ static int io_device_write(io_device* this, char value)
 	int rc;
 	while((rc = write(this->fd, &value, 1))==-1 && errno == EINTR);
 
-	assert(rc==1 || (rc==-1 && (errno == EAGAIN || errno==EWOULDBLOCK || errno == EPIPE))); 
+	int ok = rc==1 || (rc==-1 && (errno == EAGAIN || errno==EWOULDBLOCK || errno == EPIPE));
+	if(! ok) perror("io_device_write:");
+	assert(ok);
 
 	if(rc!=1 && this->ready) {
 		this->ready = 0;
@@ -630,11 +627,11 @@ static void PIC_daemon(uint serialno)
 		fdset_add(&readfds, sigusr1fd, &maxfd);
 
 		/* select will sleep for about SLOW_HZ usec (half the system_clock res.) */
-		struct timeval sleeptime = { .tv_sec=0, .tv_usec = SLOW_HZ };
+		struct timeval sleeptime = { .tv_sec=0, .tv_usec = SERIAL_TIMEOUT };
 		int selcode = select(maxfd, &readfds, &writefds, NULL, &sleeptime);
 
 		/* update system clock */
-		system_clock = get_coarse_time();
+		TimerDuration system_clock = get_coarse_time();
 
 		/* process */
 		if(selcode<0) continue;
@@ -738,9 +735,6 @@ void vm_boot(interrupt_handler bootfunc, uint cores, uint serialno)
 	PIC_thread = pthread_self();
 	PIC_active = 1;	
 
-	/* Initialize system_clock */
-	system_clock = get_coarse_time();
-
 	/* Initialize the barriers */
 	pthread_barrier_init(& system_barrier, NULL, cores+1);
 	pthread_barrier_init(& core_barrier, NULL, cores);
@@ -766,7 +760,7 @@ void vm_boot(interrupt_handler bootfunc, uint cores, uint serialno)
 #endif
 
 		/* Create the core thread */
-		CHECKRC(pthread_create(& CORE[c].thread, NULL, bootfunc_wrapper, &CORE[c]));
+		CHECKRC(pthread_create(& CORE[c].thread, NULL, core_thread, &CORE[c]));
 		char thread_name[16];
 		CHECK(snprintf(thread_name,16,"core-%d",c));
 		CHECKRC(pthread_setname_np(CORE[c].thread, thread_name));
@@ -964,7 +958,7 @@ TimerDuration bios_cancel_timer()
 
 TimerDuration bios_clock()
 {
-	return system_clock * 1000ul;
+	return get_coarse_time();
 }	
 
 

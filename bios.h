@@ -134,6 +134,137 @@ typedef enum Interrupt
 /** @brief Maximum number of terminals for a virtual machine. */
 #define MAX_TERMINALS 4
 
+
+
+/**
+	@brief Virtual machine configuration
+
+	The configuration of the virtual machine consists of the following
+	information:
+
+	- The boot function to execute on each core of the simulated machine, 
+	  stored in @c bootfunc.
+
+	- The number of CPU cores of this VM, stored in @c cores
+
+	- The number of serial devices of this VM, stored in @c serialno
+
+	- For each serial device, two file descriptors must be provided: the
+	  keyboard (@c serial_in) file descriptor will be read from and the console
+	  (@c serial_out) file descriptor will be written to. These file descriptors
+	  should correspond to some pipe-like Linux stream (e.g., pipe, FIFO or socket).
+
+ */
+typedef struct vm_config {
+
+	/**
+		@brief The function executed by each core of the VM at boot.
+
+		When all cores return from this function, the virtual
+		machine shuts down.
+	 */
+	interrupt_handler* bootfunc;
+
+
+	/**
+		@brief The number of CPU cores of the VM.
+
+		The number of cores must be between 1 and @c MAX_CORES.
+	 */
+	uint cores;
+
+
+	/** @brief The number of serial ports connected to terminals that
+		the computer will support. 
+
+		The number of serial devices should be between 0 and @c MAX_TERMINALS.
+
+		The terminals can be accessed via pipes, which must already exist. 
+		The file descriptors for these pipes are passed in the @c kbd and
+		@c con arrays of this structure.
+	 */
+	uint serialno;
+
+	/** @brief The array of file descriptors for input serial ports. 
+
+		Field @c serialno determines the number of file descriptors that
+		must be valid in this structure.
+	*/
+	int serial_in[MAX_TERMINALS];
+
+	/** @brief The array of file descriptors for output serial ports. 
+
+		Field @c serialno determines the number of file descriptors that
+		must be valid in this structure.
+	*/
+	int serial_out[MAX_TERMINALS];
+} vm_config;
+
+
+
+/**
+	@brief Initialize a VM configuration's serial ports using the terminal emulators.
+
+	Set a VM configuration's serial ports by opening the named pipes to connect to
+	the terminal emulator program provided in the distribution of @c TinyOS.
+
+	If @c nowait is non-zero, this function will fail and return -1, unless the
+	terminal emulators are already running. If @c nowait is zero,
+	this function will block until the required terminal emulators are executed.
+
+	In the case of failure, no serial ports will be opened
+
+	@param vmc the configuration to initialize
+	@param serialno the number of serial devices to prepare
+	@param nowait flag that this function should not block
+	@return 0 on success, -1 on failure
+*/
+int vm_config_terminals(vm_config* vmc, uint serialno, int nowait);
+
+
+/**
+	@brief Initialize a VM configuration with passed parameters.
+
+	Prepare a VM configuration with the given parameters.
+	This is a convenience function to initialize the VM configuration
+	with serial devices using the terminal emulator program provided 
+	in the distribution of @c TinyOS.
+
+	Note that this function will block until the terminal emulators
+	are executed.
+
+	@param vmc the configuration to initialize
+	@param bootfunc the boot function to execute on cores
+	@param cores the number of cores
+	@param serialno the number of serial devices
+*/
+void vm_configure(vm_config* vmc, interrupt_handler bootfunc, uint cores, uint serialno);
+
+
+/**
+	@brief Boot a Virtual Machine with the given configuration.
+
+	This function sets up a virtual machine (VM) according to the
+	given configuration.
+
+	The VM boots by executing the function specified
+	by the @c bootfunc field of the configuration on each core of the
+	simulated VM.
+
+	The execution of the VM ends (and this function returns) when 
+	(and if) all cores return from bootfunc, in which case the VM shuts down.
+
+	If the configuration passed contains illegal values, this function will
+	print an error message and will @c abort().
+
+	@param vmc the configuration of the virtual machine
+	@see vm_config
+ */
+void vm_run(vm_config* vmc);
+
+
+
+
 /**
 	@brief Boot a CPU with the given number of cores and boot function.
 
