@@ -1009,13 +1009,18 @@ BOOT_TEST(test_join_many_threads,
 		int retval;
 		int rc = ThreadJoin(joined_tid,&retval);
 		if(rc==0) some_thread_joined = 1;
-		ASSERT(rc!=0 || retval==5213);
-		ASSERT(ThreadDetach(ThreadSelf()));
+		ASSERT(rc==-1 || retval==5213);
 		return 0;
 	}
 
+	Tid_t tids[5];
 	for(int i=0;i<5;i++) {
-		CreateThread(joiner_thread,0,NULL);
+		tids[i] = CreateThread(joiner_thread,0,NULL);
+		ASSERT(tids[i]!=NOTHREAD);
+	}
+
+	for(int i=0;i<5;i++) {
+		ASSERT(ThreadJoin(tids[i], NULL)==0);
 	}
 
 	ASSERT(some_thread_joined);
@@ -1040,13 +1045,19 @@ BOOT_TEST(test_detach_after_join,
 		int retval;
 		int rc = ThreadJoin(joined_tid,&retval);
 		ASSERT(rc==-1);
-		ASSERT(ThreadDetach(ThreadSelf()));
 		return 0;
 	}
 
+	Tid_t tids[5];
 	for(int i=0;i<5;i++) {
-		CreateThread(joiner_thread,0,NULL);
+		tids[i] = CreateThread(joiner_thread,0,NULL);
+		ASSERT(tids[i]!=NOTHREAD);
 	}
+
+	for(int i=0;i<5;i++) {
+		ASSERT(ThreadJoin(tids[i], NULL)==0);
+	}
+
 	return 0;
 }
 
