@@ -1098,7 +1098,7 @@ BOOT_TEST(test_cyclic_joins,
 	"Test that a set of cyclically joined threads will not deadlock once the cycle breaks")
 {
 	const unsigned int N=5;
-	barrier B;
+	barrier B = BARRIER_INIT;
 	Tid_t tids[N];
 
 	int join_thread(int argl, void* args) {
