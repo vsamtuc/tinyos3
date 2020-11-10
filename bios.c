@@ -10,6 +10,7 @@
 #include <sys/stat.h>
 #include <sys/select.h>
 #include <sys/signalfd.h>
+#include <sys/sysinfo.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <poll.h>
@@ -54,9 +55,13 @@ typedef struct core
 
 #if defined(CORE_STATISTICS)
 	/* Statistics */
-	uintptr_t irq_count;
-	uintptr_t irq_raised[maximum_interrupt_no];
-	uintptr_t irq_delivered[maximum_interrupt_no];
+	volatile uintptr_t irq_count;
+	volatile uintptr_t irq_raised[maximum_interrupt_no];
+	volatile uintptr_t irq_delivered[maximum_interrupt_no];
+	volatile uintptr_t hlt_count;
+	volatile uintptr_t rst_count;
+	volatile TimerDuration hlt_time;
+	volatile TimerDuration run_time;
 #endif
 
 } Core;
@@ -107,11 +112,16 @@ static void sigusr1_handler(int signo, siginfo_t* si, void* ctx);
 /* PIC daemon statistics */
 static unsigned long PIC_loops;
 
+/* Physical cores (needed for some heuristics) */
+static unsigned int physical_cores;
+
 
 /* Initialize static vars. This is called via pthread_once() */
 static pthread_once_t init_control = PTHREAD_ONCE_INIT;
 static void initialize()
 {
+	physical_cores = get_nprocs();
+
 	USR1_sigaction.sa_sigaction = sigusr1_handler;
 	USR1_sigaction.sa_flags = SA_SIGINFO;
 	sigemptyset(& USR1_sigaction.sa_mask);
@@ -136,9 +146,6 @@ static void initialize()
 }
 
 
-
-
-static void PIC_daemon();  /* forward def */
 
 
 /*
@@ -187,7 +194,8 @@ static void* core_thread(void* _core)
 	core->timer_sigevent.sigev_notify = SIGEV_SIGNAL;
 	core->timer_sigevent.sigev_signo = SIGALRM;
 	core->timer_sigevent.sigev_value.sival_int = core->id;
-	CHECK(timer_create(CLOCK_REALTIME, & core->timer_sigevent, & core->timer_id));
+	// Could also be CLOCK_REALTIME
+	CHECK(timer_create(CLOCK_MONOTONIC, & core->timer_sigevent, & core->timer_id));
 
 	/* sync with all cores */
 	pthread_barrier_wait(& system_barrier);
@@ -207,7 +215,7 @@ static void* core_thread(void* _core)
 
 	/* Stop PIC daemon */
 	if(core->id==0) {
-		__atomic_store_n(&PIC_active, 0, __ATOMIC_RELEASE);
+		PIC_active = 0;
 		interrupt_pic_thread();
 	}
 
@@ -393,6 +401,8 @@ typedef enum io_direction
 	IODIR_TX = 1
 } io_direction;
 
+
+
 /*
 	An io_device is a file descriptor from which we either read or write bytes.
  */
@@ -401,7 +411,7 @@ typedef struct io_device
 	int fd;              		/* file descriptor */
 	io_direction iodir;  		/* device direction */
 
-	volatile Core* int_core;	/* core to receive interrupts */
+	Core* volatile int_core;	/* core to receive interrupts */
 	volatile int ready;  		/* ready flag */
 	TimerDuration last_int;	    /* used by PIC for timeouts */
 } io_device;
@@ -410,7 +420,7 @@ typedef struct io_device
 /*
 	Determine device readiness without blocking
  */
-static int io_ready(int fd, io_direction dir) {
+static int io_device_ready(int fd, io_direction dir) {
 	struct pollfd pfd;
 	pfd.fd = fd;
 	int evt = (dir==IODIR_RX) ? POLLIN : POLLOUT;
@@ -418,6 +428,23 @@ static int io_ready(int fd, io_direction dir) {
 	CHECK(poll(&pfd, 1, 0));
 	return (pfd.revents & evt) ? 1 : 0;
 }
+
+
+/*
+	Check that the a device is connected and in a good state.
+ */
+static int io_device_check(io_device* dev)
+{
+	struct pollfd fds = { .fd=dev->fd, .events=POLLIN };
+	int rc;
+	while( (rc=poll(&fds, 1, 0)) == -1 && errno==EINTR );
+	CHECK(rc);
+	rc = (fds.revents & (POLLHUP|POLLERR))==0;
+	assert(rc);
+	return rc;
+}
+
+
 
 /*
 	Initialize device
@@ -427,7 +454,7 @@ static void io_device_init(io_device* this, int fd, io_direction iodir)
 	this->fd = fd;
 	this->iodir = iodir;
 	this->int_core = &CORE[0];
-	this->ready = io_ready(fd, iodir);
+	this->ready = io_device_ready(fd, iodir);
 	this->last_int = get_coarse_time();
 
 	/* Set file descriptor to non-blocking */
@@ -485,6 +512,9 @@ static int io_device_write(io_device* this, char value)
 }
 
 
+
+
+
 /*
 	A terminal encapsulates two io_devices: a console and a keyboard
  */
@@ -517,19 +547,6 @@ static int terminal_destroy(terminal* this)
 	      | io_device_destroy(& this->kbd);
 }
 
-
-/*
-	Check that the terminal is connected, without blocking
-	This is done by polling for errors on the kbd device.
- */
-static int terminal_check(terminal* term)
-{
-	struct pollfd fds = { .fd=term->kbd.fd, .events=POLLIN };
-	int rc;
-	while( (rc=poll(&fds, 1, 0)) == -1 && errno==EINTR );
-	CHECK(rc);
-	return (fds.revents & (POLLHUP|POLLERR))==0;
-}
 
 
 
@@ -574,15 +591,13 @@ static inline int read_signalfd(int sfd, struct signalfd_siginfo* sfdinfo)
 {
 	int rc = read(sfd, sfdinfo, sizeof(struct signalfd_siginfo));
 
-	assert(
-		    (rc==-1 || rc==sizeof(struct signalfd_siginfo))
-		&&  (rc!=-1 || errno==EAGAIN || errno==EWOULDBLOCK)
-		);
+	assert( (rc==-1 || rc==sizeof(struct signalfd_siginfo))
+		&&  (rc!=-1 || errno==EAGAIN || errno==EWOULDBLOCK) );
 
 	return rc;
 }
 
-static void pic_drain_signalfd(int sfd)
+static inline void drain_signalfd(int sfd)
 {
 	struct signalfd_siginfo sfdinfo;
 	while(read_signalfd(sfd, &sfdinfo)!=-1);
@@ -598,7 +613,7 @@ static int open_signalfd(sigset_t* set)
 
 static void close_signalfd(int sfd)
 {
-	pic_drain_signalfd(sfd);
+	drain_signalfd(sfd);
 	CHECK(close(sfd));
 }
 
@@ -626,9 +641,6 @@ static void pic_selector_reset(pic_selector* ps)
 }
 
 
-/*
-	Just a couple of helpers.
- */
 static inline void pic_add_fd(pic_selector* ps, io_direction dir, int fd)
 {
 	FD_SET(fd, ps->fds + dir);
@@ -636,34 +648,23 @@ static inline void pic_add_fd(pic_selector* ps, io_direction dir, int fd)
 }
 
 
-static inline void pic_add_io_device(pic_selector* ps, io_device* dev)
-{
-	if(! dev->ready) pic_add_fd(ps, dev->iodir, dev->fd);
-}
-
-static inline void pic_add_terminal(pic_selector* ps, terminal* term)
-{
-	if(terminal_check(term)) {
-		pic_add_io_device(ps, & term->kbd);
-		pic_add_io_device(ps, & term->con);
-	}
-}
 
 static int pic_select(pic_selector* ps)
 {
 	/* select will sleep for about SLOW_HZ usec (half the system_clock res.) */
 	struct timeval sleeptime = { .tv_sec=0, .tv_usec = SERIAL_TIMEOUT };
-	int selcode = select(ps->maxfd, &ps->fds[0], &ps->fds[1], NULL, &sleeptime);
+	int selcode = select(ps->maxfd, &ps->fds[IODIR_RX], &ps->fds[IODIR_TX], NULL, &sleeptime);
 
 	if(selcode == -1)  {
 		/* An error is likely EINTR */
-		if(errno != EINTR)  perror("PIC_loops: ");
+		if(errno != EINTR)  perror("PIC_loops: "); else perror("PIC_select:");
 	} else {
 		/* update system clock */
 		ps->system_clock = get_coarse_time();
 	}
 	return selcode;
 }
+
 
 static inline int pic_is_ready(pic_selector* ps, io_direction dir, int fd)
 {
@@ -672,7 +673,25 @@ static inline int pic_is_ready(pic_selector* ps, io_direction dir, int fd)
 
 
 
-static void io_device_raise_if_ready(io_device* dev, pic_selector* ps)
+
+static inline void pic_add_io_device(pic_selector* ps, io_device* dev)
+{
+	if(! dev->ready) pic_add_fd(ps, dev->iodir, dev->fd);
+}
+
+
+static inline void pic_add_terminal(pic_selector* ps, terminal* term)
+{
+	/* First check that terminal is connected, without blocking.
+	   This is done by polling for errors on the kbd device. */
+	if(io_device_check(& term->kbd)) {
+		pic_add_io_device(ps, & term->kbd);
+		pic_add_io_device(ps, & term->con);
+	}
+}
+
+
+static void term_dev_raise_if_ready(io_device* dev, pic_selector* ps)
 {
 	if(    pic_is_ready(ps, dev->iodir, dev->fd) 
 		|| (ps->system_clock - dev->last_int) > SERIAL_TIMEOUT 
@@ -690,13 +709,7 @@ static void io_device_raise_if_ready(io_device* dev, pic_selector* ps)
 	}
 }
 
-#if 0
-static inline void fdset_add(fd_set* set, int fd, int* nfds)
-{
-	FD_SET(fd, set);
-	if(fd >= *nfds) *nfds = fd+1;
-}
-#endif
+
 
 
 static void PIC_daemon(void)
@@ -719,9 +732,8 @@ static void PIC_daemon(void)
 	pthread_barrier_wait(& system_barrier);
 	
 	/* The PIC multiplexing loop */
-	while(__atomic_load_n(&PIC_active, __ATOMIC_ACQUIRE)) {
+	while(PIC_active) {
 
-#if 1
 		pic_selector ps;
 
 		pic_selector_reset(&ps);
@@ -748,101 +760,16 @@ static void PIC_daemon(void)
 
 
 		if( pic_is_ready(&ps, IODIR_RX, sigusr1fd)!=-1 ) {
-			pic_drain_signalfd(sigusr1fd);
+			drain_signalfd(sigusr1fd);
 		}
 
 
 		for(uint i=0; i<nterm; i++) {
 			terminal* term = & TERM[i];			
 
-			io_device_raise_if_ready(& term->con, &ps);
-			io_device_raise_if_ready(& term->kbd, &ps);
+			term_dev_raise_if_ready(& term->con, &ps);
+			term_dev_raise_if_ready(& term->kbd, &ps);
 		}
-
-#else
-		int maxfd = 0;
-		fd_set readfds, writefds;
-
-		/* Prepare to select() */
-		FD_ZERO(&readfds);
-		FD_ZERO(&writefds);
-
-		for(uint i=0; i<nterm; i++) {
-			terminal* term = & TERM[i];
-			if(! terminal_check(term)) continue;
-			if(! term->kbd.ready) fdset_add(&readfds, term->kbd.fd, &maxfd);
-			if(! term->con.ready) fdset_add(&writefds, term->con.fd, &maxfd);
-		}
-
-		fdset_add(&readfds, sigalrmfd, &maxfd);
-		fdset_add(&readfds, sigusr1fd, &maxfd);
-
-		/* select will sleep for about SLOW_HZ usec (half the system_clock res.) */
-		struct timeval sleeptime = { .tv_sec=0, .tv_usec = SERIAL_TIMEOUT };
-		int selcode = select(maxfd, &readfds, &writefds, NULL, &sleeptime);
-		if(selcode == -1)  {
-			/* An error is likely EINTR */
-			if(errno != EINTR) perror("PIC_loops: ");
-			continue;
-		}
-
-		/* update system clock */
-		TimerDuration system_clock = get_coarse_time();
-		PIC_loops++ ;
-
-		/* First raise ALRM as needed (timers have priority :-) */
-		if( FD_ISSET(sigalrmfd, &readfds) ) {
-			struct signalfd_siginfo sfdinfo;
-
-			while(1) {
-				int rc = read(sigalrmfd, &sfdinfo, sizeof(sfdinfo));
-				if(rc==-1) {
-					assert(errno==EAGAIN || errno==EWOULDBLOCK);
-					break;
-				}
-				assert(rc==sizeof(sfdinfo));
-
-				Core* core = & CORE[sfdinfo.ssi_int];
-				raise_interrupt(core, ALARM);
-			}
-		}
-
-
-		/* Discard any USR1 signals to PIC (their purpose was to unblock PIC 
-		   from select) */
-		if( FD_ISSET(sigusr1fd, &readfds) ) {
-			pic_drain_signalfd(sigusr1fd);
-		}
-
-
-
-		/* Handle the devices */
-		for(uint i=0; i<nterm; i++) {
-
-			terminal* term = & TERM[i];
-			if( FD_ISSET(term->con.fd, &writefds) 
-				|| (system_clock-term->con.last_int)>SERIAL_TIMEOUT
-				) 
-			{
-				term->con.ready = 1;
-				term->con.last_int = system_clock;
-				Core* core = (Core*) term->con.int_core;
-				raise_interrupt(core, SERIAL_TX_READY);
-			}
-
-
-			if( FD_ISSET(term->kbd.fd, &readfds) 
-				|| (system_clock-term->kbd.last_int)>SERIAL_TIMEOUT
-				) 
-			{
-				term->kbd.ready = 1;
-				term->kbd.last_int = system_clock;
-				Core* core = (Core*) term->kbd.int_core;
-				raise_interrupt(core, SERIAL_RX_READY);
-			}
-		}
-#endif
-
 
 
 	}
@@ -881,7 +808,8 @@ int vm_config_terminals(vm_config* vmc, uint serialno, int nowait)
 	/* If nowait is requested, we will open fifos with O_NONBLOCK.
 	   This will fail (for serial_out) if the fifos are not already open 
 	   on the terminal emulator side */
-	int BLOCK = nowait ? O_NONBLOCK : 0;
+	//int BLOCK = nowait ? O_NONBLOCK : 0;
+	int BLOCK = O_NONBLOCK;
 
 	/* Used to store the fifo fds temporarily */
 	unsigned int fdno = 0;
@@ -905,8 +833,10 @@ int vm_config_terminals(vm_config* vmc, uint serialno, int nowait)
 
 	for(uint i=0; i<serialno; i++) {
 		/* Open serial port. Order is important!!! */
-		if(! open_fifo("con", i, O_WRONLY | BLOCK)) return -1;
-		if(! open_fifo("kbd", i, O_RDONLY | BLOCK)) return -1;
+		//if(! open_fifo("con", i, O_WRONLY | BLOCK)) return -1;
+		//if(! open_fifo("kbd", i, O_RDONLY | BLOCK)) return -1;
+		if(! open_fifo("con", i, O_RDWR | BLOCK)) return -1;
+		if(! open_fifo("kbd", i, O_RDWR | BLOCK)) return -1;
 	}
 
 	/* Everything was successful, initialize vmc */
@@ -983,6 +913,10 @@ void vm_run(vm_config* vmc)
 		for(uint intno=0; intno<maximum_interrupt_no;intno++) {
 			CORE[c].irq_delivered[intno] = 0;
 			CORE[c].irq_raised[intno] = 0;
+			CORE[c].hlt_count = 0;
+			CORE[c].rst_count = 0;
+			CORE[c].hlt_time = 0;
+			CORE[c].run_time = get_coarse_time();
 		}
 #endif
 
@@ -1000,8 +934,13 @@ void vm_run(vm_config* vmc)
 	PIC_daemon();
 
 	/* Wait for core threads to finish */
-	for(uint c=0; c<ncores; c++) 
+	for(uint c=0; c<ncores; c++) {
 		CHECKRC(pthread_join(CORE[c].thread, NULL));
+
+#if defined(CORE_STATISTICS)
+		CORE[c].run_time = get_coarse_time() - CORE[c].run_time;
+#endif
+	}
 
 	/* Delete the Core table */
 	ncores = 0;
@@ -1021,15 +960,21 @@ void vm_run(vm_config* vmc)
 
 	/* print statistics */
 #if defined(CORE_STATISTICS)
-	fprintf(stderr,"PIC loops: %lu  queued/drained= %lu / %lu\n", 
-		PIC_loops, PIC_usr1_queued, PIC_usr1_drained);
-	for(uint c=0;c<cores;c++) {
-		fprintf(stderr,"Core %3d: irq_count=%6tu. deliv(raised):\t",
+	fprintf(stderr,"PIC loops: %lu \n", PIC_loops);
+	double total_util = 0.0;
+	for(uint c=0; c < vmc->cores; c++) {
+		fprintf(stderr,"Core %3d: irq_count=%6tu. deliv(raised):  ",
 			c, CORE[c].irq_count);
 		for(uint i=0;i<maximum_interrupt_no;i++) 
 			fprintf(stderr," %tu(%tu)",CORE[c].irq_delivered[i], CORE[c].irq_raised[i]);
+		fprintf(stderr, "  hlt(rst): %tu(%tu)", CORE[c].hlt_count, CORE[c].rst_count);
+		fprintf(stderr, "  hltt: %2.3lf", 1E-6*CORE[c].hlt_time);
+		double util = 100.0 - 100.0 * CORE[c].hlt_time / (double)CORE[c].run_time ;
+		total_util += util;
+		fprintf(stderr, "  util %%: %3.2lf", util);		
 		fprintf(stderr,"\n");
 	}
+	fprintf(stderr,"Avg(util)=%6.2lf\n", total_util);
 #endif
 }
 
@@ -1054,13 +999,36 @@ void cpu_core_halt()
 	Core* core = curr_core();
 	uint32_t cmask = 1 << cpu_core_id;
 
+#if defined(CORE_STATISTICS)
+	TimerDuration stime0 = get_coarse_time();
+#endif
+
+	/* Set halt bit */
 	__atomic_fetch_or(& halt_vector, cmask, __ATOMIC_RELAXED);
 
-	int _sig;
-	if(halt_vector & cmask) {
-		sigwait(&sigusr1_set, &_sig);
+#if defined(CORE_STATISTICS)
+	core->hlt_count ++;
+#endif
+
+	siginfo_t info;
+	struct timespec halt_time = {.tv_sec=0l, .tv_nsec=10000000l};
+
+	/* Sleep for 10 msec */
+	int rc = sigtimedwait(&sigusr1_set, &info, &halt_time);
+		
+
+	if(rc>0) {
+		/* Got signal, dispatch */
 		dispatch_interrupts(core);
 	}
+	else {
+		assert(rc==-1 &&  (errno == EINTR || errno == EAGAIN));
+	}
+
+#if defined(CORE_STATISTICS)
+	/* Unset halt bit */
+	core->hlt_time += get_coarse_time()-stime0;
+#endif
 
 	__atomic_fetch_and(& halt_vector, ~cmask, __ATOMIC_RELAXED);
 
@@ -1074,6 +1042,10 @@ static int __core_restart(uint c)
 	uint32_t prevhv = __atomic_fetch_and(& halt_vector, ~cmask, __ATOMIC_RELAXED);
 	if( prevhv & cmask ) {
 		interrupt_core(CORE+c);
+#if defined(CORE_STATISTICS)		
+		__atomic_fetch_add(& CORE[c].rst_count, 1 , __ATOMIC_RELAXED);
+#endif
+
 		return 1;
 	} else 
 		return 0;
@@ -1088,12 +1060,15 @@ void cpu_core_restart(uint c)
 
 void cpu_core_restart_one()
 {
+	/* Only restart if core_id < physical_cores */
 	uint32_t hv = halt_vector;
 
-	while( (hv=halt_vector)!=0 ) {
+	if( (hv=halt_vector)!=0 ) {
 		uint c = __builtin_ctz(hv);
-		if( __core_restart(c) ) return;
+		if(c < physical_cores)
+			__core_restart(c);
 	}
+
 }
 
 void cpu_core_restart_all()

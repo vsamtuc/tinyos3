@@ -57,12 +57,14 @@ int boot_symposium(int argl, void* args)
 
 void usage(const char* pname)
 {
-  printf("usage:\n  %s <ncores> <nterm> <philosophers> <bites>\n\n  \
+  printf("usage:\n  %s <ncores> <nterm> <philosophers> <bites> [<Dbase>] [<Dgap>]\n\n  \
     where:\n\
     <ncores> is the number of cpu cores to use,\n\
     <nterm> is the number of terminals to use,\n\
     <philosiphers> is from 1 to %d\n\
-    <bites> is the number of times each philisopher eats.\n",
+    <bites> is the number of times each philisopher eats.\n\n\
+    <Dbase> integers (maybe negative) control \n\
+    <Dgap>  the hardness of the computation (0 if omitted)\n",
 	 pname, MAX_PROC);
   exit(1);
 }
@@ -76,12 +78,15 @@ int main(int argc, const char** argv)
 {
   unsigned int ncores, nterm;
   int nphil, bites;
+  int dBase = 0, dGap = 0;
 
-  if(argc!=5) usage(argv[0]); 
+  if(argc < 5 || argc > 7) usage(argv[0]); 
   ncores = atoi(argv[1]);
   nterm = atoi(argv[2]);
   nphil = atoi(argv[3]);
   bites = atoi(argv[4]);
+  if(argc>=6) dBase = atoi(argv[5]);
+  if(argc==7) dGap = atoi(argv[6]);
 
   /* check arguments */
 
@@ -92,12 +97,12 @@ int main(int argc, const char** argv)
   symposium_t symp;
   symp.N = nphil;
   symp.bites = bites;
-  adjust_symposium(&symp, 0, 0);
-  printf("FMIN = %d    FMAX = %d\n",symp.fmin,symp.fmax);
+  adjust_symposium(&symp, dBase, dGap);
 
   /* boot TinyOS */
   printf("*** Booting TinyOS\n");
   boot(ncores, nterm, boot_symposium, sizeof(symp), &symp);
+  fprintf(stderr,"FMIN = %d    FMAX = %d\n",symp.fmin,symp.fmax);
   printf("*** TinyOS halted. Bye!\n");
 
   return 0;
