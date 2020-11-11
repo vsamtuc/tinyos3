@@ -1058,12 +1058,13 @@ BOOT_TEST(test_join_many_threads,
 		int rc = ThreadJoin(joined_tid,&retval);
 		if(rc==0) some_thread_joined = 1;
 		ASSERT(rc==-1 || retval==5213);
+		sleep_thread(argl);
 		return 0;
 	}
 
 	Tid_t tids[5];
 	for(int i=0;i<5;i++) {
-		tids[i] = CreateThread(joiner_thread,0,NULL);
+		tids[i] = CreateThread(joiner_thread,i+1,NULL);
 		ASSERT(tids[i]!=NOTHREAD);
 	}
 
@@ -1092,6 +1093,7 @@ BOOT_TEST(test_join_main_thread,
 	int main_thread(int argl, void* args) {
 		mttid = ThreadSelf();
 		ASSERT(CreateThread(notmain_thread,0,NULL)!=NOTHREAD);
+		sleep_thread(1);
 		return 42;
 	}
 
@@ -1148,12 +1150,13 @@ BOOT_TEST(test_detach_after_join,
 		int retval;
 		int rc = ThreadJoin(joined_tid,&retval);
 		ASSERT(rc==-1);
+		sleep_thread(argl);
 		return 0;
 	}
 
 	Tid_t tids[5];
 	for(int i=0;i<5;i++) {
-		tids[i] = CreateThread(joiner_thread,0,NULL);
+		tids[i] = CreateThread(joiner_thread,i+1,NULL);
 		ASSERT(tids[i]!=NOTHREAD);
 	}
 
@@ -1263,6 +1266,9 @@ BOOT_TEST(test_cyclic_joins,
 	int join_thread(int argl, void* args) {
 		BarrierSync(&B, N+1);
 		ThreadJoin(tids[argl], NULL);
+		if (argl != 0){ // don't wait for detached thread
+			sleep_thread(5-argl);
+		}
 		return argl;
 	}
 
@@ -1279,8 +1285,8 @@ BOOT_TEST(test_cyclic_joins,
 	   detach thread 0. */
 	ThreadDetach(tids[0]);
 	/* To make sure that other threads escape deadlock, join them! */
-	for(unsigned int i=1; i<N; i++)
-		ASSERT(ThreadJoin(tids[i], NULL)==0);	
+	for(unsigned int i=N-1; i>0; i--)
+		ASSERT(ThreadJoin(tids[i], NULL)==0);
 
 	return 0;
 }
