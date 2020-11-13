@@ -1258,13 +1258,11 @@ BOOT_TEST(test_cyclic_joins,
 {
 	const unsigned int N=5;
 	barrier B = BARRIER_INIT;
-	barrier B2 = BARRIER_INIT;
 	Tid_t tids[N];
 
 	int join_thread(int argl, void* args) {
 		BarrierSync(&B, N+1);
 		ThreadJoin(tids[argl], NULL);
-		BarrierSync(&B2, N+1);
 		return argl;
 	}
 
@@ -1281,12 +1279,12 @@ BOOT_TEST(test_cyclic_joins,
 	   detach thread 0. */
 	ThreadDetach(tids[0]);
 
-	/* Wait for all threads to unblock from ThreadJoin */
-	BarrierSync(&B2, N+1);
-
-	/* Finally join all threads but the detached one! */
+	/* Finally join any threads that may not be joined.
+	   Some of these ThreadJoin() may fail, but this thread will 
+	   exit after all 'join_thread' threads.
+	 */
 	for(unsigned int i=1; i<N; i++)
-		ASSERT(ThreadJoin(tids[i], NULL)==0);	
+		ThreadJoin(tids[i], NULL);	
 
 	return 0;
 }
