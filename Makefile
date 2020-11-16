@@ -55,7 +55,7 @@ EXAMPLE_PROG= $(wildcard *_example*.c)
 #
 #  Add kernel source files here
 #
-C_SRC= bios.c $(wildcard kernel_*.c) tinyoslib.c symposium.c util.c unit_testing.c console.c
+C_SRC= bios.c $(wildcard kernel_*.c) tinyoslib.c symposium.c util.c unit_testing.c console.c coroutines.c
 C_OBJ=$(C_SRC:.c=.o)
 
 C_SOURCES= $(C_PROG) $(C_SRC)

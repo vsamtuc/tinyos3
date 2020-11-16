@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdint.h>
+#include <stddef.h>
 #include <string.h>
 #include <errno.h>
 #include <setjmp.h>
@@ -99,6 +100,20 @@ __FILE__, __LINE__, __FUNCTION__, (msg)); abort(); }
 	This is similar to @c assert(...), but will not be turned off.
 */
 #define CHECK_CONDITION(expr) { if(!(expr)) FATAL("Failed constraint: " # expr) }
+
+
+/**
+	@brief Compute the address of a containing struct from the address of a field.
+
+	If @c ptr is a pointer to some field 'bar' of some struct FOO object pointed by @c x, 
+	then the expression
+	@c container(ptr,struct FOO,bar) 
+	returns the object pointer x, where it is @c  ptr == &x->bar
+
+	A similar macro is defined in the Linux codebase.
+ */
+#define containerof(ptr, type, member) ((type *)((char *)(ptr) - offsetof(type, member)))
+
 
 
 /**
@@ -573,6 +588,99 @@ static inline void rlist_select(rlnode* Lsrc, rlnode* Ldest, int (*pred)(rlnode*
 		}
 	}
 }
+
+
+
+/*
+	@brief Declare custom functions for lists.
+
+	
+	This macro defines custom versions of list functions, specific 
+	to some struct type. For example:
+	@code
+	struct resource_foo {
+	    ...
+	    rlnode foolist_node;
+	};
+
+	CUSTOM_RLIST(foolist, struct resource_foo, foolist_node)
+	@endcode
+
+	The above code will declare the following functions:
+	@verbatim
+	foolist_head()
+	foolist_tail()
+	foolist_remove()
+	foolist_push_front()
+	foolist_push_back()
+	foolist_pop_front()
+	foolist_pop_back()
+	foolist_find()
+	foolist_select()
+	@endverbatim
+
+	These functions will take as argument and/or return pointers to  
+	objects of @c struct resource_foo, instead of @c rlnode.
+	Thus, we can for example say:
+	@code
+	rlnode some_list;
+	struct foo_resource* foocb;
+
+	foocb = foolist_head(& some_list);
+	...
+	foocb = foolist_pop_front(& some_list);
+	...
+	foolist_push_back(&some_list, foocb);
+	...
+	@endcode	
+
+	That is, the declared functions manipulate rlists as lists of objects,
+	instead of lists of rlnode. Thus, they allow for cleaner, more readable
+	code.
+
+	Note: other rlist functions (e.g. rlist_append) operate only on lists,
+	not on a list and an element.
+
+	@param Name  the prefix for the custom functions
+	@param Container a struct type with an rlnode field
+	@param Field  the field name inside Container used to build lists
+ */
+#define CUSTOM_RLIST(Name, Container, Field)\
+static inline Container* Name##_remove(Container* obj) { \
+	rl_splice(& obj->Field, obj->Field.prev); return obj; \
+}\
+static inline void Name##_push_front(rlnode* list, Container* obj) \
+	{ rl_splice(list, &obj->Field); } \
+static inline void Name##_push_back(rlnode* list, Container* obj) \
+	{ rl_splice(list->prev, &obj->Field); } \
+static inline Container* Name##_pop_front(rlnode* list) \
+	{ return containerof(rl_splice(list, list->next), Container, Field); }\
+static inline Container* Name##_pop_back(rlnode* list) \
+	{ return containerof(rl_splice(list, list->prev), Container, Field); }\
+static inline Container* Name##_find(rlnode* List, Container* key, Container* fail) \
+{ \
+	rlnode* i= List->next; \
+	while(i!=List) { \
+		if(containerof(i, Container, Field) == key) \
+			return containerof(i, Container, Field); \
+		else \
+			i = i->next; \
+	} \
+	return fail; \
+} \
+static inline Container* Name##_head(rlnode* list) \
+	{ return (list->next != list)? containerof(list->next, Container, Field): NULL; } \
+static inline Container* Name##_tail(rlnode* list) \
+	{ return (list->prev != list)? containerof(list->prev, Container, Field): NULL; } \
+static inline void Name##_select(rlnode* Lsrc, rlnode* Ldest, int (*pred)(Container*)) \
+{ \
+	int lpred(rlnode* node) { return pred(containerof(node,Container,Field)); }; \
+	rlist_select(Lsrc, Ldest, lpred); \
+} 
+
+
+
+
 
 
 /* @} rlists */
