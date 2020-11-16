@@ -198,6 +198,7 @@ static inline struct co_call* co_call_await(struct co_awaitable* awaitable,
 static inline struct co_call* co_call_return(struct co_call* frame)
 {
 	struct co_call* caller = frame->stack;
+	co_call_free(frame);
 	return caller;
 }
 
@@ -250,12 +251,21 @@ static inline struct co_call* co_call_return(struct co_call* frame)
 
 
 /*
-	We are trying to tell the compiler the return type of coroutines.
+	We need to handle the return type of coroutines, since the compiler
+	cannot be used directly.
 
-	(a) We cannot use void, so we use an empty struct Void. This is 
+	ISSUE 1:
+	We cannot use void, so we use an empty struct Void. This is 
 	another GCC extension.
 
-	(b) We declare our  c-call  ___constructors___  (not the coroutines) 
+	ISSUE 2:
+	The return type size must not exceed sizeof(argbuffer_t)
+	(which is currently 32 bytes, i.e. 4 64-bit words).
+
+	This is checked by some static asserts, mainly through CO_CHECK_RETTYPE(T)
+
+	ISSUE 3:
+	We declare our  c-call  ___constructors___  (not the coroutines) 
 	as returning type tags (actually pointer to suitable union), 
 
 	For example, the tag for a return type of 'int' is declared as follows, 
@@ -273,6 +283,7 @@ static inline struct co_call* co_call_return(struct co_call* frame)
 	means
 	int x;
 
+	ISSUE 4:
 	(d) Declare the actual coroutine by e.g.
 
 	CO_DEFINE(my_coro, int) {
@@ -293,6 +304,10 @@ static inline struct co_call* co_call_return(struct co_call* frame)
  */
 
 
+#define CO_CHECK_RETTYPE(Type) \
+ _Static_assert( sizeof(Type) <= sizeof(argbuffer_t), "Return type too large" )
+
+
 /*
 	Tag definition (a typedef)
 
@@ -305,8 +320,15 @@ static inline struct co_call* co_call_return(struct co_call* frame)
 	co_int_t x;
 	return x->__frame;
  */
+
+
 #define CO_TYPEDEF_TAG(Type, Name) \
- typedef union Name##_async_tag { struct co_call __frame; Type __return; }*  Name;
+ typedef union Name##_async_tag { \
+ 	struct co_call __frame; \
+ 	Type __return; \
+ 	CO_CHECK_RETTYPE(Type); \
+ }*  Name; \
+
 
 
 /*
@@ -345,7 +367,9 @@ CO_TYPEDEF_TAG(int, co_int_t)
 /*
 	Used to define coroutine bodies
  */
-#define  CO_DEFINE(CoName, RetType)  void* CoName(struct CoName* __frame, RetType* __return, void* __arg)
+#define  CO_DEFINE(CoName, RetType)  \
+ CO_CHECK_RETTYPE(RetType); \
+ void* CoName(struct CoName* __frame, RetType* __return, void* __arg)
 
 
 

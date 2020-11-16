@@ -99,7 +99,7 @@ struct add_number_co {
 	int m;		
 	int s;
 };
-
+ 
 
 CO_DEFINE(add_number_co, int) 
 {
@@ -127,6 +127,7 @@ co_int_t add_number(int m)
 {
 	CO_FRAME_BEGIN(add_number_co);
 	$(m) = m;
+	$(s) = 0;
 	CO_FRAME_END
 }
 

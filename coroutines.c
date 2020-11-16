@@ -137,7 +137,6 @@ int co_task_invoke(struct co_task* curtask)
 	struct co_call* curcall = curtask->stack;
 	assert(curcall != NULL);
 
-	struct co_call* nextcall;
 
 	/* 
 		Copy return value to argument buffer.
@@ -151,54 +150,58 @@ int co_task_invoke(struct co_task* curtask)
 	 */
 	argbuffer_t argbuf = curtask->arg;
 
+	/*
+		We save curcall's stack, to detect a return
+	 */
+	struct co_call* curcall_stack = curcall->stack;
+
 	/* 
 		We invoke with the call frame, the location for the return value and
 		the location of a possible argument.
 	 */
- 	nextcall = curcall->co_func(curcall, &curtask->arg, &argbuf);
+
+	struct co_call* nextcall = curcall->co_func(curcall, &curtask->arg, &argbuf);
+
+ 	/* 
+ 		We first check the case of return, since then curcall
+ 		has beed deleted. This is also the most frequent case.
+ 	 */
+	if( nextcall == curcall_stack ) { 		/* A return to caller */
+
+		/*
+			NULL should only be returned when the task terminates, that is,
+			its initial c-call has completed.
+		 */		
+		if(nextcall==NULL) {
+			/* 
+				This was the last item in the stack, we are done. 
+				This is a return, so we update the task.
+			 */
+			curtask-> ready = 0;
+			curtask-> finished = 1;
+			curtask-> stack = NULL;
+			co_task_decref(curtask);
+			return 0;
+		}
+
+		curtask-> stack = nextcall;
+		return 1;
+	} 
 
 
 	/* 
-		If the c-call returned itself, it means that the task suspended
+		The c-call returned itself, task suspended
 	 */
 	if( nextcall == curcall ) {
 		curtask->ready = 0;
 		return 0;
 	}
 
-	/*
-		NULL should only be returned when the task terminates, that is,
-		its initial c-call has completed.
-	 */
-	if(nextcall==NULL) {
-		/* 
-			This was the last item in the stack, we are done. 
-			This is a return, so we update the task.
-		 */
-		curtask-> ready = 0;
-		curtask-> finished = 1;
-		curtask-> stack = NULL;
 
-		assert(curcall->stack == NULL);
-		co_call_free(curcall);
-		co_task_decref(curtask);
-		return 0;
-	}
+	/* Final case: a new call. This is frequent but we got here by elimination... */
 
-	/*
-		Ok, so the task is still ready. Differentiate between
-		a return and a deeper call.
-	 */
-	if( nextcall == curcall->stack ) { 		/* A return to caller */
-
-		curtask-> stack = nextcall;
-		co_call_free(curcall);		/* TODO: generators? */
-
-	} else {										/* A new call */
-
-		nextcall->stack = curcall;
-		curtask-> stack = nextcall;
-	}
+	nextcall->stack = curcall;
+	curtask-> stack = nextcall;	
 
 	return 1;
 }

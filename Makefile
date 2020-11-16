@@ -95,7 +95,7 @@ test_util: test_util.o util.o unit_testing.o $(C_OBJ)
 test_example: test_example.o util.o unit_testing.o $(C_OBJ)
 	$(CC) $(LDFLAGS) -o $@ $^ $(LIBS)
 
-test_kernel: test_kernel.o util.o unit_testing.o $(C_OBJ)
+test_kernel: test_kernel.o util.o unit_testing.o coroutines.o $(C_OBJ)
 	$(CC) $(LDFLAGS) -o $@ $^ $(LIBS)
 
 validate_api: validate_api.o $(C_OBJ)
