@@ -122,9 +122,17 @@ static void initialize()
 {
 	physical_cores = get_nprocs();
 
+	/* 
+		Sigaction object for core interrupts.
+		A core interrupt is delivered as signal USR1.
+
+		Note that USR1 will be blocked during execution
+		of interrupt handlers; 
+	 */
 	USR1_sigaction.sa_sigaction = sigusr1_handler;
 	USR1_sigaction.sa_flags = SA_SIGINFO;
 	sigemptyset(& USR1_sigaction.sa_mask);
+
 
 	/* Create the sigmask to block all signals, except USR1 */
 	CHECK(sigfillset(&core_signal_set));
@@ -139,7 +147,7 @@ static void initialize()
 	CHECK(sigaddset(&sigalrm_set, SIGALRM));
 
 
-	/* Create signaldf_set */
+	/* Create signalfd_set */
 	CHECK(sigemptyset(&signalfd_set));
 	CHECK(sigaddset(&signalfd_set, SIGUSR1));
 	CHECK(sigaddset(&signalfd_set, SIGALRM));
@@ -362,13 +370,23 @@ static void sigusr1_handler(int signo, siginfo_t* si, void* ctx)
  */
 
 
-/* Coarse clock */
-static TimerDuration get_coarse_time()
+/* Return time in nanoseconds from given clock */
+static inline uint64_t get_clock_nsec(clockid_t clk_id)
 {
 	struct timespec curtime;
-	CHECK(clock_gettime(CLOCK_REALTIME_COARSE, &curtime));
-	return curtime.tv_nsec / 1000ul + curtime.tv_sec*1000000ull;
+	CHECK(clock_gettime(clk_id, &curtime));
+	return curtime.tv_nsec + curtime.tv_sec*1000000000ull;	
 }
+
+
+/* Coarse clock return time in microseconds */
+static TimerDuration get_coarse_time()
+{
+	return get_clock_nsec(CLOCK_MONOTONIC_COARSE) / 1000ull;
+}
+
+
+
 
 
 
@@ -787,6 +805,7 @@ static void PIC_daemon(void)
 
 	/* Reset name */
 	CHECKRC(pthread_setname_np(pthread_self(), oldname));
+
 }
 
 
@@ -967,14 +986,14 @@ void vm_run(vm_config* vmc)
 			c, CORE[c].irq_count);
 		for(uint i=0;i<maximum_interrupt_no;i++) 
 			fprintf(stderr," %tu(%tu)",CORE[c].irq_delivered[i], CORE[c].irq_raised[i]);
-		fprintf(stderr, "  hlt(rst): %tu(%tu)", CORE[c].hlt_count, CORE[c].rst_count);
-		fprintf(stderr, "  hltt: %2.3lf", 1E-6*CORE[c].hlt_time);
+		fprintf(stderr, "  hlt(rst): %4tu(%4tu)", CORE[c].hlt_count, CORE[c].rst_count);
+		fprintf(stderr, "  hltt: %7.3lf", 1E-6*CORE[c].hlt_time);
 		double util = 100.0 - 100.0 * CORE[c].hlt_time / (double)CORE[c].run_time ;
 		total_util += util;
-		fprintf(stderr, "  util %%: %3.2lf", util);		
+		fprintf(stderr, "  util %%: %5.1lf", util);		
 		fprintf(stderr,"\n");
 	}
-	fprintf(stderr,"Avg(util)=%6.2lf\n", total_util);
+	fprintf(stderr,"Avg(util)=%8.2lf\n", total_util);
 #endif
 }
 
@@ -991,6 +1010,11 @@ uint cpu_cores()
 }
 
 
+uint32_t cpu_halt_state()
+{
+	return halt_vector;
+}
+
 
 void cpu_core_halt()
 {
@@ -999,41 +1023,50 @@ void cpu_core_halt()
 	Core* core = curr_core();
 	uint32_t cmask = 1 << cpu_core_id;
 
-#if defined(CORE_STATISTICS)
-	TimerDuration stime0 = get_coarse_time();
-#endif
-
 	/* Set halt bit */
 	__atomic_fetch_or(& halt_vector, cmask, __ATOMIC_RELAXED);
 
 #if defined(CORE_STATISTICS)
 	core->hlt_count ++;
+	TimerDuration stime0 = get_clock_nsec(CLOCK_MONOTONIC);
 #endif
 
+	int int_raised=0;
 	siginfo_t info;
-	struct timespec halt_time = {.tv_sec=0l, .tv_nsec=10000000l};
+	while( (halt_vector & cmask)  && ! core->intr_pending  ) {
 
-	/* Sleep for 10 msec */
-	int rc = sigtimedwait(&sigusr1_set, &info, &halt_time);
-		
+		/* Sleep for 10 msec or until a signal arrives */
+		struct timespec halt_time = {.tv_sec=0l, .tv_nsec=10000000l};
+		int rc = sigtimedwait(&sigusr1_set, &info, &halt_time);
 
-	if(rc>0) {
-		/* Got signal, dispatch */
-		dispatch_interrupts(core);
+		if(rc>0) {
+			/* Got interrupt, exit loop */
+			assert(rc == SIGUSR1);
+			int_raised = 1;
+			break;
+		}
 	}
-	else {
-		assert(rc==-1 &&  (errno == EINTR || errno == EAGAIN));
-	}
 
-#if defined(CORE_STATISTICS)
 	/* Unset halt bit */
-	core->hlt_time += get_coarse_time()-stime0;
-#endif
-
 	__atomic_fetch_and(& halt_vector, ~cmask, __ATOMIC_RELAXED);
 
+
+#if defined(CORE_STATISTICS)
+	core->hlt_time += (get_clock_nsec(CLOCK_MONOTONIC)-stime0)/1000ull;
+#endif
+
+	if(int_raised)
+		sigusr1_handler(SIGUSR1, &info, NULL);
+	else
+		dispatch_interrupts(core);
+
 	CHECKRC(pthread_sigmask(SIG_UNBLOCK, &sigusr1_set, NULL));
+
+
 }
+
+
+
 
 static int __core_restart(uint c)
 {
@@ -1060,13 +1093,12 @@ void cpu_core_restart(uint c)
 
 void cpu_core_restart_one()
 {
-	/* Only restart if core_id < physical_cores */
-	uint32_t hv = halt_vector;
+	uint32_t hv;
 
-	if( (hv=halt_vector)!=0 ) {
+	while( (hv=halt_vector)!=0 ) {
 		uint c = __builtin_ctz(hv);
-		if(c < physical_cores)
-			__core_restart(c);
+		/* Only restart if core_id < physical_cores */
+		if(__core_restart(c)) break;
 	}
 
 }
@@ -1127,7 +1159,7 @@ void cpu_initialize_context(cpu_context_t* ctx, void* ss_sp, size_t ss_size, voi
   ctx->uc_stack.ss_size = ss_size;
   ctx->uc_stack.ss_flags = 0;
 
-  //CHECKRC(pthread_sigmask(0, NULL, & ctx->uc_sigmask));  /* We don't want any signals changed */
+  /* Interrupts are blocked when context is first executed */
   sigfillset( & ctx->uc_sigmask );
   makecontext(ctx, (void*) ctx_func, 0);
 }

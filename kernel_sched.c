@@ -22,6 +22,7 @@
 CCB cctx[MAX_CORES];
 
 
+
 /* 
 	The current core's CCB. This must only be used in a 
 	non-preemtpive context.
@@ -82,8 +83,14 @@ TCB* cur_thread()
   A counter for active threads. By "active", we mean 'existing',
   with the exception of idle threads (they don't count).
  */
-volatile unsigned int active_threads = 0;
-Mutex active_threads_spinlock = MUTEX_INIT;
+_Atomic unsigned int active_threads = 0;
+
+/*
+  Count the number of runnable (RUNNING or READY) threads
+  at each point time
+ */
+_Atomic unsigned int runnable_threads = 0;
+
 
 /* This is specific to Intel Pentium! */
 #define SYSTEM_PAGE_SIZE (1 << 12)
@@ -182,9 +189,7 @@ TCB* spawn_thread(PCB* pcb, void (*func)())
 #endif
 
 	/* increase the count of active threads */
-	Mutex_Lock(&active_threads_spinlock);
-	active_threads++;
-	Mutex_Unlock(&active_threads_spinlock);
+	__atomic_add_fetch(&active_threads, 1, __ATOMIC_SEQ_CST);
 
 	return tcb;
 }
@@ -200,9 +205,7 @@ void release_TCB(TCB* tcb)
 
 	free_thread(tcb, THREAD_SIZE);
 
-	Mutex_Lock(&active_threads_spinlock);
-	active_threads--;
-	Mutex_Unlock(&active_threads_spinlock);
+	__atomic_sub_fetch(&active_threads, 1, __ATOMIC_SEQ_CST);
 }
 
 /*
@@ -226,6 +229,8 @@ void release_TCB(TCB* tcb)
 */
 
 rlnode SCHED; /* The scheduler queue */
+
+
 rlnode TIMEOUT_LIST; /* The list of threads with a timeout */
 Mutex sched_spinlock = MUTEX_INIT; /* spinlock for scheduler queue */
 
@@ -271,7 +276,13 @@ static void sched_queue_add(TCB* tcb)
 	rlist_push_back(&SCHED, &tcb->sched_node);
 
 	/* Restart possibly halted cores */
-	cpu_core_restart_one();
+	// cpu_core_restart_one();
+	uint32_t hlt = cpu_halt_state();
+	unsigned int cores_halted = __builtin_popcount(hlt);
+	unsigned int cores_running = cpu_cores() - cores_halted;
+
+	if(cores_halted>0 && cores_running < runnable_threads)
+		cpu_core_restart_one();
 }
 
 /*
@@ -293,6 +304,9 @@ static void sched_make_ready(TCB* tcb)
 
 	/* Mark as ready */
 	tcb->state = READY;
+	__atomic_add_fetch(&runnable_threads, 1, __ATOMIC_RELAXED);
+	//if(CORES_running < cpu_cores() && CORES_running < SCHED_runnable)
+	//	cpu_core_restart_one();
 
 	/* Possibly add to the scheduler queue */
 	if (tcb->phase == CTX_CLEAN)
@@ -380,6 +394,8 @@ void sleep_releasing(Thread_state state, Mutex* mx, enum SCHED_CAUSE cause,
 	Mutex_Lock(&sched_spinlock);
 
 	/* mark the thread as stopped or exited */
+	if(tcb->state  == RUNNING || tcb->state == READY) 
+		__atomic_sub_fetch(&runnable_threads, 1, __ATOMIC_RELAXED);
 	tcb->state = state;
 
 	/* register the timeout (if any) for the sleeping thread */
@@ -523,6 +539,7 @@ void initialize_scheduler()
 {
 	rlnode_init(&SCHED, NULL);
 	rlnode_init(&TIMEOUT_LIST, NULL);
+	runnable_threads = 0;
 }
 
 void run_scheduler()
