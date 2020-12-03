@@ -219,26 +219,7 @@ typedef struct vm_config {
 	@param nowait flag that this function should not block
 	@return 0 on success, -1 on failure
 */
-int vm_config_terminals(vm_config* vmc, uint serialno, int nowait);
-
-
-/**
-	@brief Initialize a VM configuration with passed parameters.
-
-	Prepare a VM configuration with the given parameters.
-	This is a convenience function to initialize the VM configuration
-	with serial devices using the terminal emulator program provided 
-	in the distribution of @c TinyOS.
-
-	Note that this function will block until the terminal emulators
-	are executed.
-
-	@param vmc the configuration to initialize
-	@param bootfunc the boot function to execute on cores
-	@param cores the number of cores
-	@param serialno the number of serial devices
-*/
-void vm_configure(vm_config* vmc, interrupt_handler bootfunc, uint cores, uint serialno);
+int vm_config_serial(vm_config* vmc, uint serialno, int nowait);
 
 
 /**
@@ -261,8 +242,6 @@ void vm_configure(vm_config* vmc, interrupt_handler bootfunc, uint cores, uint s
 	@see vm_config
  */
 void vm_run(vm_config* vmc);
-
-
 
 
 /**

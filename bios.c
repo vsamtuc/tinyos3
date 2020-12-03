@@ -66,24 +66,29 @@ typedef struct core
 
 } Core;
 
-
-/* Used to store the set of core threads' signal mask */
-static sigset_t core_signal_set;
-
-/* Uset to store the singleton set containing SIGUSR1 */
-static sigset_t sigusr1_set;
-
-/* Uset to store the singleton set containing SIGALRM */
-static sigset_t sigalrm_set;
-
-/* Used to create the signalfd */
-static sigset_t signalfd_set;
-
 /* Array of Core objects, one per core */
 static Core CORE[MAX_CORES];
 
 /* Number of cores */
 static unsigned int ncores = 0;
+
+/* Bit vector denoting halted cores */
+static _Atomic uint32_t halt_vector;
+
+
+
+/* Used to store the set of core threads' signal mask */
+static sigset_t core_signal_set;
+
+/* Used to store the singleton set containing SIGUSR1 */
+static sigset_t sigusr1_set;
+
+/* Used to store the singleton set containing SIGALRM */
+static sigset_t sigalrm_set;
+
+/* Used to create the signalfd */
+static sigset_t signalfd_set;
+
 
 /* Core barrier */
 static pthread_barrier_t system_barrier, core_barrier;
@@ -91,11 +96,11 @@ static pthread_barrier_t system_barrier, core_barrier;
 /* Flag that signals that PIC daemon should be active */
 static volatile sig_atomic_t PIC_active;
 
-/* Bit vector denoting halted cores */
-static _Atomic uint32_t halt_vector;
-
 /* PIC thread id */
 static pthread_t PIC_thread;
+
+/* PIC daemon statistics */
+static unsigned long PIC_loops;
 
 /* Save the sigaction for SIGUSR1 */
 static struct sigaction USR1_saved_sigaction;
@@ -108,9 +113,6 @@ static struct sigaction USR1_sigaction;
 
 /* Forward decl. of per-core signal handler */
 static void sigusr1_handler(int signo, siginfo_t* si, void* ctx);
-
-/* PIC daemon statistics */
-static unsigned long PIC_loops;
 
 /* Physical cores (needed for some heuristics) */
 static unsigned int physical_cores;
@@ -193,6 +195,7 @@ static void* core_thread(void* _core)
 	for(int i=0; i<maximum_interrupt_no; i++) 
 		core->intvec[i] = NULL;
 
+	/* Initialize the thread-local id variable */
 	cpu_core_id = core->id;
 
 	/* Set core signal mask */
@@ -202,7 +205,6 @@ static void* core_thread(void* _core)
 	core->timer_sigevent.sigev_notify = SIGEV_SIGNAL;
 	core->timer_sigevent.sigev_signo = SIGALRM;
 	core->timer_sigevent.sigev_value.sival_int = core->id;
-	// Could also be CLOCK_REALTIME
 	CHECK(timer_create(CLOCK_MONOTONIC, & core->timer_sigevent, & core->timer_id));
 
 	/* sync with all cores */
@@ -338,9 +340,10 @@ static inline void dispatch_interrupts(Core* core)
 		if(handler != NULL) handler();
 	
 		/* 
-			Note: after a successful dispatch, we may not
+			Note: after a handler dispatch, we may not
 			be running on the core any more (!), if the
-			dispatch action has been scheduled...
+			dispatch action changed to a thread that was
+			scheduled on another cpu...
 		*/
 		if(cpu_core_id != core->id) {
 			//if(core->intr_pending) interrupt_core(core);
@@ -675,7 +678,7 @@ static int pic_select(pic_selector* ps)
 
 	if(selcode == -1)  {
 		/* An error is likely EINTR */
-		if(errno != EINTR)  perror("PIC_loops: "); else perror("PIC_select:");
+		perror("pic_select:");
 	} else {
 		/* update system clock */
 		ps->system_clock = get_coarse_time();
@@ -820,15 +823,14 @@ static void PIC_daemon(void)
  */
 
 
-int vm_config_terminals(vm_config* vmc, uint serialno, int nowait)
+int vm_config_serial(vm_config* vmc, uint serialno, int nowait)
 {
 	if(serialno>MAX_TERMINALS) return -1;
 
 	/* If nowait is requested, we will open fifos with O_NONBLOCK.
 	   This will fail (for serial_out) if the fifos are not already open 
 	   on the terminal emulator side */
-	//int BLOCK = nowait ? O_NONBLOCK : 0;
-	int BLOCK = O_NONBLOCK;
+	int BLOCK = nowait ? O_NONBLOCK : 0;
 
 	/* Used to store the fifo fds temporarily */
 	unsigned int fdno = 0;
@@ -852,8 +854,13 @@ int vm_config_terminals(vm_config* vmc, uint serialno, int nowait)
 
 	for(uint i=0; i<serialno; i++) {
 		/* Open serial port. Order is important!!! */
+
 		//if(! open_fifo("con", i, O_WRONLY | BLOCK)) return -1;
 		//if(! open_fifo("kbd", i, O_RDONLY | BLOCK)) return -1;
+		/* By opening O_RDWR we are guaranteed that even if the other
+		   end (terminals) closes the connection, we will not
+		   get SIGPIPE or read 0.
+		  */
 		if(! open_fifo("con", i, O_RDWR | BLOCK)) return -1;
 		if(! open_fifo("kbd", i, O_RDWR | BLOCK)) return -1;
 	}
@@ -869,19 +876,17 @@ int vm_config_terminals(vm_config* vmc, uint serialno, int nowait)
 }
 
 
-void vm_configure(vm_config* vmc, interrupt_handler bootfunc, uint cores, uint serialno)
-{
-	vmc->bootfunc = bootfunc;
-	vmc->cores = cores;
-	CHECK(vm_config_terminals(vmc, serialno, 0));
-}
-
-
 
 void vm_boot(interrupt_handler bootfunc, uint cores, uint serialno)
 {
 	vm_config VMC;
-	vm_configure(&VMC, bootfunc, cores, serialno);
+
+	/* Prepare the VMC */
+	VMC.bootfunc = bootfunc;
+	VMC.cores = cores;
+	CHECK(vm_config_serial(&VMC, serialno, 0));
+
+	/* Run ! */
 	vm_run(&VMC);
 }
 
@@ -1097,7 +1102,6 @@ void cpu_core_restart_one()
 
 	while( (hv=halt_vector)!=0 ) {
 		uint c = __builtin_ctz(hv);
-		/* Only restart if core_id < physical_cores */
 		if(__core_restart(c)) break;
 	}
 

@@ -20,6 +20,10 @@
 #include <assert.h>
 #include <stdarg.h>
 
+#ifndef NVALGRIND
+#include <valgrind/valgrind.h>
+#endif
+
 #include "unit_testing.h"
 #include "util.h"
 
@@ -198,21 +202,16 @@ typedef struct proxy_daemon {
 	pthread_cond_t pat; /* Signal that there is a new pattern, or that the VM is done. */
 } proxy_daemon;
 
-/* A proxy has a terminal and a keyboard daemon */
-typedef struct term_proxy
-{
-	uint term;
-	proxy_daemon con, kbd;
-} term_proxy;
 
-
+/* Function run by the term_proxy daemon thread */
 void* term_proxy_daemon(void*);
 
-void term_proxy_daemon_init(proxy_daemon* this, const char* fifoname, uint fifono, PatternProc proc)
+
+void term_proxy_daemon_init(proxy_daemon* this, const char* thread_name, int fd, PatternProc proc)
 {
 	this->proc = proc;
 	this->complete = 0;
-	this->fd = open_fifo(fifoname, fifono);
+	this->fd = fd;
 	rlnode_init(&this->pattern, NULL);
 	CHECKRC(pthread_mutex_init(& this->mx, NULL));
 	CHECKRC(pthread_cond_init(& this->pat, NULL));
@@ -222,8 +221,6 @@ void term_proxy_daemon_init(proxy_daemon* this, const char* fifoname, uint fifon
 	CHECK(sigfillset(&fullmask));
 	CHECKRC(pthread_sigmask(SIG_SETMASK, &fullmask, &oldmask));
 	CHECKRC(pthread_create(& this->thread, NULL, term_proxy_daemon, this));
-	char thread_name[16];
-	CHECK(snprintf(thread_name, 16, "%s%d",fifoname,fifono));
 	CHECKRC(pthread_setname_np(this->thread, thread_name));
 
 	/* Restore signal mask */
@@ -280,24 +277,7 @@ void* term_proxy_daemon(void* arg)
 		this->proc(this, pattern);
 		free(pattern);
 	}
-	CHECK(close(this->fd));
 	return NULL;
-}
-
-void term_proxy_close(term_proxy* this)
-{
-	term_proxy_daemon_close(& this->con);
-	term_proxy_daemon_close(& this->kbd);
-}
-
-void term_proxy_expect(term_proxy* this, const char* pattern)
-{
-	term_proxy_daemon_add(& this->con, pattern);
-}
-
-void term_proxy_sendme(term_proxy* this, const char* pattern)
-{
-	term_proxy_daemon_add(& this->kbd, pattern);
 }
 
 
@@ -437,18 +417,65 @@ finish:
 }
 
 
+
+/* A proxy has a terminal and a keyboard daemon */
+typedef struct term_proxy
+{
+	uint term;
+	proxy_daemon con, kbd;
+	int con_pipe[2];
+	int kbd_pipe[2];
+} term_proxy;
+
+
 void term_proxy_init(term_proxy* this, uint term)
 {
 	assert(term < MAX_TERMINALS);
 	this->term = term;
 
-	/* Start the daemons */
-	term_proxy_daemon_init(&this->con, "con", term, con_proc);
-	term_proxy_daemon_init(&this->kbd, "kbd", term, kbd_proc);
+	int setup_daemon(proxy_daemon* pd, const char* base_name, uint term, int pfd[2], int dir, PatternProc proc)
+	{
+		int rc;
+		char name[16];
+
+		rc = snprintf(name, 16, "%s%u", base_name, term);
+		if(rc>=16) { errno = EOVERFLOW; return -1; }
+		else if(rc<0) return rc;
+
+		rc = pipe(pfd);
+		if(rc) return rc;
+
+		term_proxy_daemon_init(pd, name, pfd[dir], proc);
+		return 0;
+	}
+
+	CHECK(setup_daemon(&this->con, "con", term, this->con_pipe, 0, con_proc));
+	CHECK(setup_daemon(&this->kbd, "kbd", term, this->kbd_pipe, 1, kbd_proc));
+}
+
+void term_proxy_close(term_proxy* this)
+{
+	term_proxy_daemon_close(& this->con);
+	term_proxy_daemon_close(& this->kbd);
+
+	CHECK(close(this->con.fd));
+	CHECK(close(this->kbd.fd));
+}
+
+void term_proxy_expect(term_proxy* this, const char* pattern)
+{
+	term_proxy_daemon_add(& this->con, pattern);
 }
 
 
+void term_proxy_sendme(term_proxy* this, const char* pattern)
+{
+	term_proxy_daemon_add(& this->kbd, pattern);
+}
+
 term_proxy PROXY[MAX_TERMINALS];
+
+
 
 
 void expect(uint term, const char* pattern)
@@ -564,10 +591,18 @@ int execute_boot(int ncores, int nterm, Task bootfunc, int argl, void* args, uns
 {
 	void run_boot() 
 	{
-		for(uint i=0;i<nterm; i++)
-			term_proxy_init(&PROXY[i], i);
+		vm_config vmc;
 
-		boot(ncores, nterm, bootfunc, argl, args);		
+		vmc.cores = ncores;
+		vmc.serialno = nterm;
+
+		for(uint i=0;i<nterm; i++) {
+			term_proxy_init(&PROXY[i], i);
+			vmc.serial_out[i] = PROXY[i].con_pipe[1];
+			vmc.serial_in[i] = PROXY[i].kbd_pipe[0];
+		}
+
+		tinyos_boot(&vmc, bootfunc, argl, args);		
 
 
 		for(uint i=0;i<nterm; i++)
@@ -1013,8 +1048,11 @@ void show_suite(const Test* suite)
 
 int run_program(int argc, char**argv, const Test* default_test)
 {
+	
 	__default_test = default_test;
-	ARGS.fork = ! isDebuggerAttached();
+	ARGS.fork = ! (isDebuggerAttached() || isValgrindAttached());
+
+    argp_program_version = argv[0];
 	argp_parse(&argp, argc, argv, 0, 0, &ARGS);
 
 	if(ARGS.show_tests)
@@ -1024,6 +1062,19 @@ int run_program(int argc, char**argv, const Test* default_test)
 					run_test(ARGS.tests[k]);
 	}
 	return 0;
+}
+
+
+int isValgrindAttached()
+{
+#ifndef NVALGRIND
+    unsigned int isOnValgrind = RUNNING_ON_VALGRIND;
+    if(isOnValgrind)
+            VALGRIND_PRINTF("unit testing: VALGRIND is detected, tests will not fork\n");
+#else
+    unsigned int isOnValgrind = 0;
+#endif
+    return isOnValgrind;
 }
 
 

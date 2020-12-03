@@ -405,6 +405,21 @@ int run_program(int argc, char**argv, const Test* default_test);
   */
 int isDebuggerAttached();
 
+
+/** @brief Detect if the test process is running under valgrind.
+
+	Note: if the file unit_testing.c is compiled with -DNVALGRIND (e.g., when
+	valgrind is not installed on the system), then this always returns false.
+
+	This function can be used inside test code to call on the valgrind API,
+	for additional output from tests.
+
+	@return 0 if the process is not running under valgrind else non-zero.
+  */
+int isValgrindAttached();
+
+
+
 /** @} */
 
 #endif

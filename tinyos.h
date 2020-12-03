@@ -768,17 +768,33 @@ Fid_t OpenInfo();
  *
  *******************************************/
 
+
+
+
+
 /** @brief Boot tinyos3. 
 
-   The function must initialize the simulated computer with the given number of
-   cpu cores and terminals, initialize tinyos and then execute
+   The function initializes a virtual machine with the given number of
+   cpu cores and terminals, initializes tinyos and then execute
    the initial process using function boot_task with parameters argl and args. 
    The boot_task execution can then create more processes.
 
    When the boot_task process finishes, this call halts and cleans up TinyOS structures 
    and then returns. 
    */
+struct vm_config;
+void tinyos_boot(struct vm_config* vmc, Task boot_task, int argl, void* args);
+
+/** @brief Boot tinyos3 with default vm configuration.
+
+   The function initializes a virtual machine configuration with the given number of
+   cpu cores and terminals (calling vm_config_serial), and invokes tinyos_boot().
+
+   @see tinyos_boot()
+  */
 void boot(unsigned int ncores, unsigned int terminals, Task boot_task, int argl, void* args);
+
+
 
 
 /** @} */

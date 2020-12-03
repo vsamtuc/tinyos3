@@ -54,19 +54,34 @@ void boot_tinyos_kernel()
   run_scheduler();
 
   if(cpu_core_id==0) {
-    /* Here, we could add cleanup after the scheduler has ended. */    
+    /* Here, we could add cleanup after the scheduler has ended. */
   }
 }
 
 
-void boot(uint ncores, uint nterm, Task boot_task, int argl, void* args)
+
+void tinyos_boot(vm_config* vmc, Task boot_task, int argl, void* args)
 {
   boot_rec.init_task = boot_task;
   boot_rec.argl = argl;
   boot_rec.args = args;
 
-  vm_boot(boot_tinyos_kernel, ncores, nterm);
+  vmc->bootfunc = boot_tinyos_kernel;
+  vm_run(vmc);
 }
+
+
+
+void boot(uint ncores, uint nterm, Task boot_task, int argl, void* args)
+{
+  vm_config VMC;
+
+  VMC.cores = ncores;
+  vm_config_serial(&VMC, nterm, 0);
+
+  tinyos_boot(&VMC, boot_task, argl, args);
+}
+
 
 
 
