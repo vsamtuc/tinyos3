@@ -236,63 +236,17 @@ static void* core_thread(void* _core)
 }
 
 
-/*
-	Set pending interrupt, return previous value
- */
-static inline int intr_fetch_set(Core* core, Interrupt intno)
-{
-	uint32_t sel = 1<<intno;
-	uint32_t old = __atomic_fetch_or(& core->intr_pending, sel, __ATOMIC_ACQ_REL);
-	return (old & sel) != 0;
-}
-
-/*
-	Clear pending interrupt for core, return previous value
- */
-static inline int intr_fetch_clear(Core* core, Interrupt intno)
-{
-	uint32_t sel = 1<<intno;
-	uint32_t old = __atomic_fetch_and(& core->intr_pending, ~sel, __ATOMIC_ACQ_REL);
-	return (old & sel) != 0;
-}
-
-
-/*
-	If there are pending interrupts for core, clear lowest pending interrupt,
-	store in intp and return 1, else return 0.
- */
-static inline int intr_fetch_lowest(Core* core, Interrupt* intp)
-{
-	Interrupt irq;
-	uint32_t ipnvec;
-	uint32_t ipvec = core->intr_pending;
-
-	do {
-		if(! ipvec) return 0;
-
-		irq = __builtin_ctz(ipvec);
-		assert(irq < maximum_interrupt_no);
-
-		ipnvec = ipvec & ~(1 << irq);
-
-	} while(! __atomic_compare_exchange_n(& core->intr_pending, &ipvec, ipnvec, 0, 
-		__ATOMIC_ACQ_REL, __ATOMIC_RELAXED));
-
-	*intp = irq;
-	return 1;
-}
-
 
 /* 
-	Cause the given core to be interrupted in the future.
-	This function does not add a pending interrupt, but
-	causes a signal to be sent to the core.
+	Send SIGUSR1 to the specified core.
+
+	This function does not raise any interrupt flags.
  */
 static inline void interrupt_core(Core* core)
 {
 	union sigval coreval;
 	coreval.sival_ptr = NULL; /* This is to silence valgrind */
-	coreval.sival_int = core->id;	
+	coreval.sival_int = core->id;
 
 	CHECKRC(pthread_sigqueue(core->thread, SIGUSR1, coreval));
 }
@@ -306,7 +260,16 @@ static inline void interrupt_core(Core* core)
  */
 static inline void raise_interrupt(Core* core, Interrupt intno) 
 {
-	if(! intr_fetch_set(core, intno) ) {
+	uint32_t imask = 1<<intno;
+
+	/* Atomically set the intno bit and return previous value */
+	uint32_t prev = __atomic_fetch_or(& core->intr_pending, imask, __ATOMIC_ACQ_REL);
+
+	if(! (prev & imask)) {
+		/* 
+			We only signal the core on a 0->1 transition of the
+			irq bit.
+		*/
 
 #if defined(CORE_STATISTICS)
 		core->irq_raised[intno] ++;
@@ -320,35 +283,91 @@ static inline void raise_interrupt(Core* core, Interrupt intno)
 
 
 /*
-	Dispatch any pending interrupts, lowest first.
-	Cease if an interrupt causes core change.
+	If there are pending interrupts for core, clear lowest pending interrupt,
+	store in intp and return 1, else return 0.
+ */
+static inline int intr_get_pending(Core* core, Interrupt* intp, uint32_t* ipnvec)
+{
+	Interrupt irq;
+	uint32_t ipvec = core->intr_pending;
+
+	do {
+		if(! ipvec) return 0;
+
+		irq = __builtin_ctz(ipvec);
+		assert(irq < maximum_interrupt_no);
+
+		*ipnvec = ipvec & ~(1 << irq);
+
+	} while(! __atomic_compare_exchange_n(& core->intr_pending, &ipvec, *ipnvec, 0, 
+		__ATOMIC_ACQ_REL, __ATOMIC_RELAXED));
+
+	*intp = irq;
+	return 1;
+}
+
+
+
+/*
+	This is called by the SIGUSR1 signal handler to
+	dispatch a pending interrupt, lowest first.
+	Therefore, it is called with SIGUSR1 masked.
+
+	If there are more interrupts, a new SIGUSR1 will be
+	sent to the core, before the chosen handler is called.
  */
 static inline void dispatch_interrupts(Core* core)
 {
 	assert(cpu_core_id==core->id);
 
+	/*
+		We loop until we have some handler, or no irqs are pending
+	 */
 	while(1) {
 
 		Interrupt irq;
-		if(! intr_fetch_lowest(core, &irq)) break;
-	
-		assert(0 <= irq  && irq < maximum_interrupt_no);
+		uint32_t ipnvec;
+
+		/* Get the lowest interrupt with an atomic operation */
+		uint32_t ipvec = core->intr_pending;
+		do {
+
+			/* Nothing, return */
+			if(! ipvec) return;
+
+			irq = __builtin_ctz(ipvec);
+			assert(irq < maximum_interrupt_no);
+
+			ipnvec = ipvec & ~(1 << irq);
+
+		} while(! __atomic_compare_exchange_n(& core->intr_pending, &ipvec, ipnvec, 
+					1, /* weak CAS */
+					__ATOMIC_ACQ_REL, 
+					__ATOMIC_RELAXED)
+		);
+
 #if defined(CORE_STATISTICS)
 		core->irq_delivered[irq]++;
 #endif
+
 		interrupt_handler* handler =  core->intvec[irq];
-		if(handler != NULL) handler();
-	
-		/* 
-			Note: after a handler dispatch, we may not
-			be running on the core any more (!), if the
-			dispatch action changed to a thread that was
-			scheduled on another cpu...
-		*/
-		if(cpu_core_id != core->id) {
-			//if(core->intr_pending) interrupt_core(core);
-			break;
+		if(handler != NULL) {
+
+			/* 
+				If more interrupts are pending, we need to
+				deliver them. To this effect, send yourself
+				another signal
+			*/
+			if(ipnvec) 
+				interrupt_core(core);
+
+			/* 
+				Now, call the handler 
+			 */
+			handler();
+			return;
 		}
+
 	}
 }
 
@@ -1021,54 +1040,41 @@ uint32_t cpu_halt_state()
 }
 
 
+
+
 void cpu_core_halt()
 {
+	/* 
+		First, close interrupts so we do not miss a restart, and
+		we are not rescheduled...
+	 */
 	CHECKRC(pthread_sigmask(SIG_BLOCK, &sigusr1_set, NULL));
 
 	Core* core = curr_core();
-	uint32_t cmask = 1 << cpu_core_id;
-
-	/* Set halt bit */
-	__atomic_fetch_or(& halt_vector, cmask, __ATOMIC_RELAXED);
+	uint32_t cmask = 1 << core->id;
 
 #if defined(CORE_STATISTICS)
 	core->hlt_count ++;
 	TimerDuration stime0 = get_clock_nsec(CLOCK_MONOTONIC);
 #endif
 
-	int int_raised=0;
-	siginfo_t info;
-	while( (halt_vector & cmask)  && ! core->intr_pending  ) {
+	/* Set halt bit */
+	__atomic_fetch_or(& halt_vector, cmask, __ATOMIC_RELAXED);
 
-		/* Sleep for 10 msec or until a signal arrives */
-		struct timespec halt_time = {.tv_sec=0l, .tv_nsec=10000000l};
-		int rc = sigtimedwait(&sigusr1_set, &info, &halt_time);
+	/* Sleep until a signal arrives */
+	int rc = pselect(0, NULL, NULL, NULL, NULL, &core_signal_set);
+	assert(rc==-1 && errno == EINTR);
 
-		if(rc>0) {
-			/* Got interrupt, exit loop */
-			assert(rc == SIGUSR1);
-			int_raised = 1;
-			break;
-		}
-	}
-
-	/* Unset halt bit */
+	/* Unset halt bit, since we may be awoken by an interrupt not coming from restart... */
 	__atomic_fetch_and(& halt_vector, ~cmask, __ATOMIC_RELAXED);
-
 
 #if defined(CORE_STATISTICS)
 	core->hlt_time += (get_clock_nsec(CLOCK_MONOTONIC)-stime0)/1000ull;
 #endif
 
-	if(int_raised)
-		sigusr1_handler(SIGUSR1, &info, NULL);
-	else
-		dispatch_interrupts(core);
-
 	CHECKRC(pthread_sigmask(SIG_UNBLOCK, &sigusr1_set, NULL));
-
-
 }
+
 
 
 
