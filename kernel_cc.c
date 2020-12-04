@@ -32,27 +32,35 @@
  	The implementation is based on GCC atomics, as the standard C11 primitives
  	are not supported by all recent compilers. Eventually, this will change.
  */
+
+/*
+	Mutex statistics
+ */
+
+
+#define MUTEX_SPINS 500
+
+
 void Mutex_Lock(Mutex* lock)
 {
-#define MUTEX_SPINS (cpu_cores()>1 ?  1000 : 10000)
-
   while(__atomic_test_and_set(lock,__ATOMIC_ACQUIRE)) {
+
     int spin=MUTEX_SPINS;
     while(__atomic_load_n(lock, __ATOMIC_RELAXED)) {
-#if defined(__x86__) || defined(__x86_64__)
+
       __builtin_ia32_pause();
-#endif
+
       if(spin>0) 
       	spin--; 
       else { 
       	spin=MUTEX_SPINS; 
-      	if(cpu_interrupts_enabled())
-      		yield(SCHED_MUTEX); 
+      	if(cpu_interrupts_enabled()) 
+      		yield(SCHED_MUTEX);
       }
     }
   }
-#undef MUTEX_SPINS
 }
+
 
 
 void Mutex_Unlock(Mutex* lock)

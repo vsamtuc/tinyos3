@@ -70,6 +70,7 @@ typedef struct serial_device_control_block {
   uint devno;
   Mutex spinlock;
   CondVar rx_ready;
+  CondVar tx_ready;
 } serial_dcb_t;
 
 serial_dcb_t serial_dcb[MAX_TERMINALS];
@@ -133,6 +134,17 @@ int serial_read(void* dev, char *buf, unsigned int size)
 void serial_tx_handler()
 {
   /* There is nothing to do */
+  int pre = preempt_off;
+
+  /* 
+    We do not know which terminal is
+    ready, so we must signal them all !
+   */
+  for(int i=0;i<bios_serial_ports();i++) {
+    serial_dcb_t* dcb = &serial_dcb[i];
+    Cond_Broadcast(&dcb->tx_ready);
+  }
+  if(pre) preempt_on;
 }
 
 /* 
@@ -141,6 +153,36 @@ void serial_tx_handler()
 */
 int serial_write(void* dev, const char* buf, unsigned int size)
 {
+
+  serial_dcb_t* dcb = (serial_dcb_t*)dev;
+
+  preempt_off;            /* Stop preemption */
+
+  uint count =  0;
+
+  while(count<size) {
+    int valid = bios_write_serial(dcb->devno, buf[count]);
+    
+    if (valid) {
+      count++;
+    }
+    else 
+      kernel_wait(&dcb->tx_ready, SCHED_IO);
+      
+#if 0
+    if(count==0) {
+      kernel_wait(&dcb->tx_ready, SCHED_IO);
+    }
+    else
+      break;
+#endif
+  }
+
+  preempt_on;           /* Restart preemption */
+
+  return count;
+
+#if 0
   serial_dcb_t* dcb = (serial_dcb_t*)dev;
 
   unsigned int count = 0;
@@ -159,6 +201,7 @@ int serial_write(void* dev, const char* buf, unsigned int size)
   }
 
   return count;  
+#endif
 }
 
 
@@ -210,6 +253,7 @@ void initialize_devices()
   for(int i=0; i<bios_serial_ports(); i++) {
     serial_dcb[i].devno = i;
     serial_dcb[i].rx_ready = COND_INIT;
+    serial_dcb[i].tx_ready = COND_INIT;
     serial_dcb[i].spinlock = MUTEX_INIT;
   }
 

@@ -21,6 +21,11 @@
 /* Core control blocks */
 CCB cctx[MAX_CORES];
 
+/*
+	This type must have at least as many bits as there are cores
+ */
+typedef uint32_t core_flags_t;
+_Static_assert( MAX_CORES <=  8*sizeof(core_flags_t) );
 
 
 /* 
@@ -82,14 +87,15 @@ TCB* cur_thread()
 /*
   A counter for active threads. By "active", we mean 'existing',
   with the exception of idle threads (they don't count).
+
+  This counter must be accessed atomically, as follows:
+  - on creation of a new thread, atomically increment
+  - on destruction of a thread, atomically decrement
+  - compare to zero  (atomic load). Note that, once it reaches
+    0, it will never be incremented again.
  */
 _Atomic unsigned int active_threads = 0;
 
-/*
-  Count the number of runnable (RUNNING or READY) threads
-  at each point time
- */
-_Atomic unsigned int runnable_threads = 0;
 
 
 /* This is specific to Intel Pentium! */
@@ -189,7 +195,7 @@ TCB* spawn_thread(PCB* pcb, void (*func)())
 #endif
 
 	/* increase the count of active threads */
-	__atomic_add_fetch(&active_threads, 1, __ATOMIC_SEQ_CST);
+	active_threads ++; 
 
 	return tcb;
 }
@@ -205,7 +211,7 @@ void release_TCB(TCB* tcb)
 
 	free_thread(tcb, THREAD_SIZE);
 
-	__atomic_sub_fetch(&active_threads, 1, __ATOMIC_SEQ_CST);
+	active_threads --; 
 }
 
 /*
@@ -232,7 +238,103 @@ rlnode SCHED; /* The scheduler queue */
 
 
 rlnode TIMEOUT_LIST; /* The list of threads with a timeout */
+
 Mutex sched_spinlock = MUTEX_INIT; /* spinlock for scheduler queue */
+
+
+/*
+  Current number of runnable (RUNNING or READY) threads.
+
+  This must be accessed with the scheduler lock held.
+ */
+unsigned int runnable_threads = 0;
+
+
+/* 
+	Each bit corresponds to a core, 1 if about to halt, 0 otherwise.
+	This is used to choreograph core halting and restarting.
+	This choreography is as follows:
+
+	1. A core which finds no ready threads to run (thus has decided to 
+	   swap to the idle thread), calls sched_mark_idle(), and halt_state 
+	   bit is set.
+
+	   This must be called with sched_spinlock HELD.
+	   
+ 
+	2. At a later time, it calls sched_halt_idle(). If halt_state bit
+	   is still set, the core halts, else it continues.
+
+	   This must be called with sched_spinlock  NOT  HELD.
+
+
+	3. Running cores call sched_restart_cores()  when runnable threads
+	   become available in the scheduler queue. 
+
+	   This must be called with sched_spinlock HELD.
+
+ */
+static core_flags_t  halt_state;
+
+
+static void sched_mark_idle()
+{
+	halt_state |=  1 << cpu_core_id;
+}
+
+
+/*
+	Halts the core executing this.
+	A good place to call it is inside the idle thread.
+
+    Must be called with sched_spinlock NOT HELD.
+ */
+static void sched_halt_idle()
+{
+	/* Preemption off */
+	int oldpre = preempt_off;
+
+	/* To touch halt_state, we must get the spinlock. */
+	Mutex_Lock(&sched_spinlock);
+	int should_halt =  (halt_state & (1 << cpu_core_id)) != 0;
+	Mutex_Unlock(&sched_spinlock);
+
+	/* Note that we are calling cpu_core_halt() with interrupts disabled */
+	if(should_halt)
+		cpu_core_halt();
+
+	/* Restore preemption state */
+	if (oldpre) preempt_on;
+}
+
+
+/*
+	Restart one halted core, if any.
+
+    *** MUST BE CALLED WITH sched_spinlock HELD ***
+ */
+static void sched_restart_cores()
+{
+	unsigned int cores_halted = __builtin_popcount(halt_state);
+	unsigned int cores_running = cpu_cores() - cores_halted;
+
+	if(cores_halted>0 && cores_running < runnable_threads) 
+	{
+		/* Pick some core to restart */
+		uint rcore = __builtin_ctz(halt_state);
+
+		/* Unmark it in halt_state */
+		halt_state &= ~ (1 << rcore);
+		cores_halted --;
+		cores_running ++;
+
+		/* Signal it to restart */
+		cpu_core_restart(rcore);
+	}
+}
+
+
+
 
 /* Interrupt handler for ALARM */
 void yield_handler() { yield(SCHED_QUANTUM); }
@@ -241,6 +343,7 @@ void yield_handler() { yield(SCHED_QUANTUM); }
 void ici_handler()
 { /* noop for now... */
 }
+
 
 /*
   Possibly add TCB to the scheduler timeout list.
@@ -265,6 +368,7 @@ static void sched_register_timeout(TCB* tcb, TimerDuration timeout)
 	}
 }
 
+
 /*
   Add TCB to the end of the scheduler list.
 
@@ -275,15 +379,11 @@ static void sched_queue_add(TCB* tcb)
 	/* Insert at the end of the scheduling list */
 	rlist_push_back(&SCHED, &tcb->sched_node);
 
-	/* Restart possibly halted cores */
-	// cpu_core_restart_one();
-	uint32_t hlt = cpu_halt_state();
-	unsigned int cores_halted = __builtin_popcount(hlt);
-	unsigned int cores_running = cpu_cores() - cores_halted;
 
-	if(cores_halted>0 && cores_running < runnable_threads)
-		cpu_core_restart_one();
+	/* Restart possibly halted cores as needed */
+	sched_restart_cores();
 }
+
 
 /*
 	Adjust the state of a thread to make it READY.
@@ -304,9 +404,7 @@ static void sched_make_ready(TCB* tcb)
 
 	/* Mark as ready */
 	tcb->state = READY;
-	__atomic_add_fetch(&runnable_threads, 1, __ATOMIC_RELAXED);
-	//if(CORES_running < cpu_cores() && CORES_running < SCHED_runnable)
-	//	cpu_core_restart_one();
+	runnable_threads ++;
 
 	/* Possibly add to the scheduler queue */
 	if (tcb->phase == CTX_CLEAN)
@@ -395,7 +493,7 @@ void sleep_releasing(Thread_state state, Mutex* mx, enum SCHED_CAUSE cause,
 
 	/* mark the thread as stopped or exited */
 	if(tcb->state  == RUNNING || tcb->state == READY) 
-		__atomic_sub_fetch(&runnable_threads, 1, __ATOMIC_RELAXED);
+		runnable_threads --;
 	tcb->state = state;
 
 	/* register the timeout (if any) for the sleeping thread */
@@ -449,6 +547,10 @@ void yield(enum SCHED_CAUSE cause)
 
 	/* Save the current TCB for the gain phase */
 	CURCORE.previous_thread = current;
+
+	/* If the core is about to idle, mark it */
+	if(next->type == IDLE_THREAD)
+		sched_mark_idle();
 
 	Mutex_Unlock(&sched_spinlock);
 
@@ -522,14 +624,13 @@ static void idle_thread()
 	yield(SCHED_IDLE);
 
 	/* We come here whenever we cannot find a ready thread for our core */
-	while (active_threads > 0) {
-		cpu_core_halt();
-		yield(SCHED_IDLE);
-	}
+	while (active_threads > 0) 
+		sched_halt_idle();
 
 	/* If the idle thread exits here, we are leaving the scheduler! */
 	bios_cancel_timer();
-	cpu_core_restart_all();
+	for(uint c=0; c < cpu_cores(); c++)
+		cpu_core_restart(c);
 }
 
 /*
@@ -540,6 +641,7 @@ void initialize_scheduler()
 	rlnode_init(&SCHED, NULL);
 	rlnode_init(&TIMEOUT_LIST, NULL);
 	runnable_threads = 0;
+	halt_state = 0;
 }
 
 void run_scheduler()

@@ -370,31 +370,6 @@ void cpu_core_halt();
 void cpu_core_restart(uint c);
 
 
-/**
-	@brief Return the halt state of all CPU cores.
-
-	Return a 32-bit value where the k-th least significant bit
-	indicates whether core k is halted (1) or not (0).
-
-	@return A bitmap of the current halt state.
- */
-uint32_t cpu_halt_state();
-
-
-/**
-	@brief Restart some halted core.
-
-	This call will restart some halted core, if at least one exists.
-*/
-void cpu_core_restart_one();
-
-/**
-	@brief Signal all halted cores to restart.
-
-	When this function is called, all halted cores will be restarted. 
-*/
-void cpu_core_restart_all();
-
 
 /**
 	@brief A type for saving CPU context into.

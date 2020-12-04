@@ -5,15 +5,14 @@
 #include <pthread.h>
 #include <signal.h>
 #include <time.h>
-#include <sys/select.h>
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <sys/select.h>
-#include <sys/signalfd.h>
-#include <sys/sysinfo.h>
 #include <unistd.h>
 #include <fcntl.h>
-#include <poll.h>
+#include <sys/select.h>
+#include <sys/epoll.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <sys/timerfd.h>
+#include <sys/eventfd.h>
 
 #include "util.h"
 #include "bios.h"
@@ -46,12 +45,8 @@ typedef struct core
 	interrupt_handler* bootfunc;
 	pthread_t thread;
 
-	struct sigevent timer_sigevent;
-	timer_t timer_id;
-
 	volatile uint32_t intr_pending;
 	interrupt_handler* intvec[maximum_interrupt_no];
-
 
 #if defined(CORE_STATISTICS)
 	/* Statistics */
@@ -72,9 +67,6 @@ static Core CORE[MAX_CORES];
 /* Number of cores */
 static unsigned int ncores = 0;
 
-/* Bit vector denoting halted cores */
-static _Atomic uint32_t halt_vector;
-
 
 
 /* Used to store the set of core threads' signal mask */
@@ -83,21 +75,10 @@ static sigset_t core_signal_set;
 /* Used to store the singleton set containing SIGUSR1 */
 static sigset_t sigusr1_set;
 
-/* Used to store the singleton set containing SIGALRM */
-static sigset_t sigalrm_set;
-
-/* Used to create the signalfd */
-static sigset_t signalfd_set;
-
-
 /* Core barrier */
 static pthread_barrier_t system_barrier, core_barrier;
 
-/* Flag that signals that PIC daemon should be active */
-static volatile sig_atomic_t PIC_active;
 
-/* PIC thread id */
-static pthread_t PIC_thread;
 
 /* PIC daemon statistics */
 static unsigned long PIC_loops;
@@ -111,19 +92,20 @@ static struct sigaction USR1_sigaction;
 /* This gives a rough serial port timeout of 300 msec */
 #define SERIAL_TIMEOUT 300000
 
+
+
 /* Forward decl. of per-core signal handler */
 static void sigusr1_handler(int signo, siginfo_t* si, void* ctx);
 
-/* Physical cores (needed for some heuristics) */
-static unsigned int physical_cores;
+/* Forward decl. of routine that signals PIC shutdown */
+static void pic_signal();
+
 
 
 /* Initialize static vars. This is called via pthread_once() */
 static pthread_once_t init_control = PTHREAD_ONCE_INIT;
 static void initialize()
 {
-	physical_cores = get_nprocs();
-
 	/* 
 		Sigaction object for core interrupts.
 		A core interrupt is delivered as signal USR1.
@@ -143,19 +125,14 @@ static void initialize()
 	/* Create the mask for blocking SIGUSR1 */
 	CHECK(sigemptyset(&sigusr1_set));
 	CHECK(sigaddset(&sigusr1_set, SIGUSR1));
-
-	/* Create the mask for  SIGALRM */
-	CHECK(sigemptyset(&sigalrm_set));
-	CHECK(sigaddset(&sigalrm_set, SIGALRM));
-
-
-	/* Create signalfd_set */
-	CHECK(sigemptyset(&signalfd_set));
-	CHECK(sigaddset(&signalfd_set, SIGUSR1));
-	CHECK(sigaddset(&signalfd_set, SIGALRM));
 }
 
 
+/***
+ *
+ *   CPU simulation
+ *
+ ****/
 
 
 /*
@@ -165,20 +142,6 @@ _Thread_local uint cpu_core_id;
 static inline Core* curr_core() {
 	return CORE+cpu_core_id;
 }
-
-
-/*
-	Cause PIC daemon to loop. This needs to happen when we wish 
-	the PIC daemon to refresh the list of fds it is polling.
- */
-static inline void interrupt_pic_thread()
-{
-	union sigval coreval;
-	coreval.sival_ptr = NULL; /* This is silly, but silences valgrind */
-	coreval.sival_int = -1;
-	CHECKRC(pthread_sigqueue(PIC_thread, SIGUSR1, coreval));
-}
-
 
 
 /*
@@ -201,13 +164,7 @@ static void* core_thread(void* _core)
 	/* Set core signal mask */
 	CHECKRC(pthread_sigmask(SIG_BLOCK, &core_signal_set, NULL));
 
-	/* create a thread-specific timer */
-	core->timer_sigevent.sigev_notify = SIGEV_SIGNAL;
-	core->timer_sigevent.sigev_signo = SIGALRM;
-	core->timer_sigevent.sigev_value.sival_int = core->id;
-	CHECK(timer_create(CLOCK_MONOTONIC, & core->timer_sigevent, & core->timer_id));
-
-	/* sync with all cores */
+	/* sync with all cores and PIC */
 	pthread_barrier_wait(& system_barrier);
 
 	/* execute the boot code */
@@ -218,18 +175,13 @@ static void* core_thread(void* _core)
 		core->intvec[i] = NULL;
 	}		
 
-	/* Delete the core timer */
-	CHECK(timer_delete(core->timer_id));
-
+	/* sync with all cores */
 	pthread_barrier_wait(& core_barrier);
 
 	/* Stop PIC daemon */
-	if(core->id==0) {
-		PIC_active = 0;
-		interrupt_pic_thread();
-	}
+	if(core->id==0) pic_signal();
 
-	/* sync with all cores */
+	/* sync with all cores and PIC */
 	pthread_barrier_wait(& system_barrier);
 
 	return _core;
@@ -257,6 +209,8 @@ static inline void interrupt_core(Core* core)
 
 	Adds intno as pending for the core and causes a signal to
 	be delivered.
+
+	This is called mainly by the PIC (except for ICI...)
  */
 static inline void raise_interrupt(Core* core, Interrupt intno) 
 {
@@ -277,33 +231,6 @@ static inline void raise_interrupt(Core* core, Interrupt intno)
 
 		interrupt_core(core);
 	}
-}
-
-
-
-
-/*
-	If there are pending interrupts for core, clear lowest pending interrupt,
-	store in intp and return 1, else return 0.
- */
-static inline int intr_get_pending(Core* core, Interrupt* intp, uint32_t* ipnvec)
-{
-	Interrupt irq;
-	uint32_t ipvec = core->intr_pending;
-
-	do {
-		if(! ipvec) return 0;
-
-		irq = __builtin_ctz(ipvec);
-		assert(irq < maximum_interrupt_no);
-
-		*ipnvec = ipvec & ~(1 << irq);
-
-	} while(! __atomic_compare_exchange_n(& core->intr_pending, &ipvec, *ipnvec, 0, 
-		__ATOMIC_ACQ_REL, __ATOMIC_RELAXED));
-
-	*intp = irq;
-	return 1;
 }
 
 
@@ -410,349 +337,369 @@ static TimerDuration get_coarse_time()
 
 
 
+/*****************************************
 
+	I/O subsystem
+	--------------
 
-/*
+	The I/O subsystem consists of io_device objects.
+
 	An io_device handles a file descriptor that is connected to some
-	'peripheral' in stream (byte-oriented) mode. The file descriptor must be
-	'select-able' (i.e. not a disk file) and support non-blocking mode.
+	'peripheral'.  The file descriptor must be 'pollable-able' (i.e. not a disk file) 
+	and support non-blocking mode.
 
 	Model outline:
 
 	A fd (e.g., a FIFO) is operated at two ends: the cores, via I/O *transfers*,
 	and the 'actual device' (e.g., a terminal), via I/O *operations*.
 
-	Each io_device is unidirectional: the fd is either only read or only written to,
-	by this program (bidirectional fds, such as sockets, can be handled by a pair of
-	io_device objects).  
+	An io_device is ready if I/O (read/write) operations may succeed (as reported by epoll).
+	When epoll returns devices as ready, interrupts are raised. 
+	For regular IPC facilities (pipes etc), epoll shoud be used in Edge-Triggered mode,
+	vs.  Level-Triggered mode, in order to save CPU.
 
-	An io_device is ready if I/O operations may succeed (as reported by select()).
 
-	A not-ready device is made ready when select() returns it as such.
+ *****************************************/
 
-	A ready device is made not-ready on each failed attempt to do an I/O transfer.
-
-	When a not-ready device becomes ready, an interrupt is raised.
- */
 
 typedef enum io_direction
 {
-	IODIR_RX = 0,
-	IODIR_TX = 1
+	IODIR_RX = 1,         /* Data incoming from peripheral */
+	IODIR_TX = 2,         /* Data outgoing to peripheral */
+	IODIR_BX = IODIR_RX|IODIR_TX   /* Bidirectional flow */
 } io_direction;
 
 
 
+struct io_device;
+
 /*
-	An io_device is a file descriptor from which we either read or write bytes.
+	An event handler, called by the event loop to process an I/O event
+	on a io_device's fd.
+
+	In particular, the event loop calls handlers of all reported events,
+	as follows:
+	(a)  the event is described by a  struct epoll_event object E (see epoll)
+	(b)  E->data.ptr of the event is cast to  io_device  D
+	(c)  D->handler( D, E ) is called
  */
-typedef struct io_device
-{
+typedef void (*event_handler)(struct io_device*, 
+	struct epoll_event* evt);
+
+/*
+	This is the main abstraction of a simulated peripheral device
+ */
+typedef struct io_device {
 	int fd;              		/* file descriptor */
 	io_direction iodir;  		/* device direction */
+	int events;					/* epoll events */
 
+	event_handler handler;		/* called by the event loop */
 	Core* volatile int_core;	/* core to receive interrupts */
-	volatile int ready;  		/* ready flag */
-	TimerDuration last_int;	    /* used by PIC for timeouts */
+	Interrupt irq;				/* interrupt to send */
+
+	/* Status of the last I/O operation */
+	int ok;						/* 1 if ok, 0 if error */
+	int errcode;				/* if !ok, the error code from errno */
 } io_device;
 
 
-/*
-	Determine device readiness without blocking
- */
-static int io_device_ready(int fd, io_direction dir) {
-	struct pollfd pfd;
-	pfd.fd = fd;
-	int evt = (dir==IODIR_RX) ? POLLIN : POLLOUT;
-	pfd.events = evt;
-	CHECK(poll(&pfd, 1, 0));
-	return (pfd.revents & evt) ? 1 : 0;
-}
+
+/**************************
+
+	Some utilities 
+
+  
+  *************************/
 
 
 /*
-	Check that the a device is connected and in a good state.
+	This very basic handler simply raises an interrupt
+	as determined by the fields of the io_device.
+
  */
-static int io_device_check(io_device* dev)
+static void io_basic_handler(io_device* dev, 
+							  struct epoll_event* evt)
 {
-	struct pollfd fds = { .fd=dev->fd, .events=POLLIN };
-	int rc;
-	while( (rc=poll(&fds, 1, 0)) == -1 && errno==EINTR );
-	CHECK(rc);
-	rc = (fds.revents & (POLLHUP|POLLERR))==0;
-	assert(rc);
-	return rc;
-}
-
-
-
-/*
-	Initialize device
- */
-static void io_device_init(io_device* this, int fd, io_direction iodir)
-{
-	this->fd = fd;
-	this->iodir = iodir;
-	this->int_core = &CORE[0];
-	this->ready = io_device_ready(fd, iodir);
-	this->last_int = get_coarse_time();
-
-	/* Set file descriptor to non-blocking */
-	CHECK(fcntl(fd, F_SETFL, O_NONBLOCK));
-}
-
-/*
-	Destroy device
- */
-static int io_device_destroy(io_device* this)
-{
-	int rc;
-	while((rc = close(this->fd))==-1 && errno==EINTR);
-	if(rc==-1) perror("io_device_destroy: ");
-	return rc;
-}
-
-
-static int io_device_read(io_device* this, char* ptr)
-{
-	assert(this->iodir == IODIR_RX);
-	int rc;
-	while((rc=read(this->fd, ptr, 1))==-1 && errno == EINTR);
-
-	int ok = rc==0 || rc==1 || (rc==-1 && (errno==EAGAIN || errno==EWOULDBLOCK));
-	if(!ok) perror("io_device_read:");
-	assert(ok);
-
-	if(rc!=1 && this->ready) {
-		this->ready = 0;
-		interrupt_pic_thread();
+	if(evt->events & (EPOLLHUP|EPOLLERR)) {
+		return;
 	}
-	return rc==1;
+
+	int eflag = dev->iodir==IODIR_RX ? EPOLLIN : EPOLLOUT;
+
+	if(evt->events & eflag) {
+		raise_interrupt(dev->int_core, dev->irq);
+	}
 }
-
-
-static int io_device_write(io_device* this, char value)
-{
-	assert(this->iodir == IODIR_TX);
-
-	/* Try to write */
-	int rc;
-	while((rc = write(this->fd, &value, 1))==-1 && errno == EINTR);
-
-	int ok = rc==1 || (rc==-1 && (errno == EAGAIN || errno==EWOULDBLOCK || errno == EPIPE));
-	if(! ok) perror("io_device_write:");
-	assert(ok);
-
-	if(rc!=1 && this->ready) {
-		this->ready = 0;
-		interrupt_pic_thread();
-	} 
-
-	return rc==1;
-}
-
-
-
 
 
 /*
-	A terminal encapsulates two io_devices: a console and a keyboard
+	This function performs a  read()/write() on the file descriptor of the
+	given device, depending on the argument iodir:
+	   if iodir==IODIR_RX  a read is performed.
+	   if iodir==IODIR_TX  a write is performed.
+	   else abort().
+
+	Success is defined as either returning data, or End-of-stream (for read),
+	or EAGAIN status is returned. 
+	Any other outcome to the operation is a serious error and should not happen
+	(note that on EINTR the operation repeats)
  */
-typedef struct terminal
+static ssize_t io_xfer(io_device* dev, io_direction iodir, void* buffer, size_t count)
 {
-	io_device con, kbd;            /* fds for terminal fifos */
-} terminal;
+	ssize_t (*io_syscall)(int,void*,size_t);
 
-/* The terminal table */
-static terminal TERM[MAX_TERMINALS];
-
-/* Current number of terminals */
-static uint nterm = 0;
-
-/*
-	Init the devices for this terminal
- */
-static void terminal_init(terminal* this, int fdin, int fdout)
-{
-	io_device_init(& this->kbd, fdin, IODIR_RX);
-	io_device_init(& this->con, fdout, IODIR_TX);
-}
-
-/*
-	Destroy the terminal devices
- */
-static int terminal_destroy(terminal* this)
-{
-	return  io_device_destroy(& this->con)
-	      | io_device_destroy(& this->kbd);
-}
-
-
-
-
-
-/*
-	The PIC daemon dispatches interrupts to core threads,
-	by calling raise_interrupt().
-
-	Interrupts sent include
-	(a) ALARM, when the core timer expires
-	(b) SERIAL_RX_READY  &  SERIAL_TX_READY, when some 
-		io_device becomes ready.
-
-	Implementation:
-	- Use Linux signal file descriptors to receive signals. Currently,
-	  two signals are used:
-	  * SIGUSR1 is sent by io_device to signify that some io_device is NOT READY.
-	    Otherwise it is discarded. The signal simply wakes up the PIC_daemon thread.
-	    This however causes the PIC loop to include the devices to the ones monitored.
-
-	  * SIGALRM is sent to indicate that some core timer has expired. This
-	    results to an interrupt on the core.
-
-	- Monitor these fds together with the fds of the terminals.
+	if(iodir==IODIR_RX) 
+		io_syscall = (void*)read;
+	else if(iodir==IODIR_TX)
+		io_syscall = (void*)write;
+	else
+		abort();
 	
-	- At each loop dispatch interrupts as needed:
-	  * ALARM interrupts to those cores whose timer has expired
-	  * SERIAL_RX/TX_READY to those cores handling the interrupts of
-	    an io_device which is now READY.		
- */
+	ssize_t rc;
+	while((rc=io_syscall(dev->fd, buffer, count))==-1 && errno == EINTR);
 
-
-
-/******************************
-
-	Helpers for signal fds
-
- ******************************/
-
-
-static inline int read_signalfd(int sfd, struct signalfd_siginfo* sfdinfo)
-{
-	int rc = read(sfd, sfdinfo, sizeof(struct signalfd_siginfo));
-
-	assert( (rc==-1 || rc==sizeof(struct signalfd_siginfo))
-		&&  (rc!=-1 || errno==EAGAIN || errno==EWOULDBLOCK) );
+	dev->ok = (rc>=0) || (rc==-1 && (errno==EAGAIN || errno==EWOULDBLOCK));
+	if(! dev->ok) {
+		dev->errcode = errno;
+		perror("io_tranfer:");
+	}
 
 	return rc;
 }
 
-static inline void drain_signalfd(int sfd)
+
+/*
+	A convenience function, calls io_xfer with dev->iodir (the "default" direction).
+	This MUST NOT be IODIR_BX
+ */
+static ssize_t io_transfer(io_device* dev, void* buffer, size_t count)
 {
-	struct signalfd_siginfo sfdinfo;
-	while(read_signalfd(sfd, &sfdinfo)!=-1);
+	return io_xfer(dev, dev->iodir, buffer, count);
 }
 
 
-static int open_signalfd(sigset_t* set)
+/*
+	Checks the return value of close for errors.
+ */
+static int checked_close(int fd)
 {
-	int fd = signalfd(-1, set, SFD_NONBLOCK);
-	CHECK(fd);
-	return fd;
-}
-
-static void close_signalfd(int sfd)
-{
-	drain_signalfd(sfd);
-	CHECK(close(sfd));
-}
-
-
-
-/********************************
-
-	PIC loop state and helpers
-
- ********************************/
-
-typedef struct pic_selector
-{
-	fd_set fds[2];
-	int maxfd;
-	TimerDuration system_clock;
-} pic_selector;
-
-
-static void pic_selector_reset(pic_selector* ps)
-{
-	FD_ZERO(& ps->fds[0]);
-	FD_ZERO(& ps->fds[1]);
-	ps->maxfd = 0;
-}
-
-
-static inline void pic_add_fd(pic_selector* ps, io_direction dir, int fd)
-{
-	FD_SET(fd, ps->fds + dir);
-	if(fd >= ps->maxfd) ps->maxfd = fd+1;
-}
-
-
-
-static int pic_select(pic_selector* ps)
-{
-	/* select will sleep for about SLOW_HZ usec (half the system_clock res.) */
-	struct timeval sleeptime = { .tv_sec=0, .tv_usec = SERIAL_TIMEOUT };
-	int selcode = select(ps->maxfd, &ps->fds[IODIR_RX], &ps->fds[IODIR_TX], NULL, &sleeptime);
-
-	if(selcode == -1)  {
-		/* An error is likely EINTR */
-		perror("pic_select:");
-	} else {
-		/* update system clock */
-		ps->system_clock = get_coarse_time();
-	}
-	return selcode;
-}
-
-
-static inline int pic_is_ready(pic_selector* ps, io_direction dir, int fd)
-{
-	return FD_ISSET(fd, & ps->fds[dir]);
+	int rc;
+	while((rc = close(fd))==-1 && errno==EINTR);
+	if(rc==-1) perror("checked_xclose: ");
+	return rc;
 }
 
 
 
 
-static inline void pic_add_io_device(pic_selector* ps, io_device* dev)
+/*********************
+
+	PIC   (Programmable Interrupt Controller)
+
+ *********************/
+
+/*
+	A virtual PIC, implemented as an event loop dispatching interrupts
+	to cores.
+ */
+struct PIC {
+
+	int active;		   /* flags this pic as active */
+	int epfd;		   /* epoll fd    */
+	io_device evt;    /* event device, used to signal termination */
+
+};
+
+static struct PIC pic;
+
+
+/* 
+	Register a device to the PIC.
+
+	This is a convenience function.
+ */
+static void pic_register(io_device* dev)
 {
-	if(! dev->ready) pic_add_fd(ps, dev->iodir, dev->fd);
+	struct epoll_event evt;
+	evt.events = dev->events;
+	evt.data.ptr = dev;
+
+	CHECK(epoll_ctl(pic.epfd, EPOLL_CTL_ADD, dev->fd, &evt));
+}
+
+/*
+	Delivers an event that causes the PIC to deactivate.
+ */
+static void pic_signal()
+{
+	uint64_t sigval = 1ul;
+
+	CHECK(io_xfer(&pic.evt, IODIR_TX, &sigval, sizeof(sigval)));
 }
 
 
-static inline void pic_add_terminal(pic_selector* ps, terminal* term)
+static void pic_evt_handler(io_device* dev, struct epoll_event* evt)
 {
-	/* First check that terminal is connected, without blocking.
-	   This is done by polling for errors on the kbd device. */
-	if(io_device_check(& term->kbd)) {
-		pic_add_io_device(ps, & term->kbd);
-		pic_add_io_device(ps, & term->con);
-	}
+	assert(dev==&pic.evt);
+	pic.active = 0;
 }
 
 
-static void term_dev_raise_if_ready(io_device* dev, pic_selector* ps)
+/* Initialize the PIC */
+static void initialize_pic()
 {
-	if(    pic_is_ready(ps, dev->iodir, dev->fd) 
-		|| (ps->system_clock - dev->last_int) > SERIAL_TIMEOUT 
-		)
-	{
-		dev->ready = 1;
-		dev->last_int = ps->system_clock;
-		Core* core = (Core*) dev->int_core;
-		switch(dev->iodir) {
-			case IODIR_RX:
-				raise_interrupt(core, SERIAL_RX_READY); break;
-			case IODIR_TX:
-				raise_interrupt(core, SERIAL_TX_READY); break;
+	pic.epfd = epoll_create1(0);
+	CHECK(pic.epfd);
+
+	pic.active = 1;
+
+	pic.evt.fd = eventfd(0, EFD_NONBLOCK);
+	CHECK(pic.evt.fd);
+
+	pic.evt.iodir = IODIR_RX;
+	pic.evt.events = EPOLLIN;
+	pic.evt.handler = pic_evt_handler;
+	pic.evt.int_core = NULL;
+	pic.evt.irq = maximum_interrupt_no;
+
+	pic_register(& pic.evt);
+}
+
+
+static void finalize_pic()
+{
+	CHECK(checked_close(pic.evt.fd));
+	CHECK(checked_close(pic.epfd));
+}
+
+
+static void pic_event_loop()
+{
+#define EVENT_QUEUE_SIZE 16
+
+	while(pic.active) {
+		struct epoll_event equeue[EVENT_QUEUE_SIZE];
+
+		int eqlen;
+
+		while( (eqlen = epoll_wait(pic.epfd, equeue, EVENT_QUEUE_SIZE, 100000))==-1 
+			&& errno==EINTR) {}
+		CHECK(eqlen);
+
+		PIC_loops ++;
+
+		for(int i=0; i<eqlen; i++) {
+			/* Invoke handler in each event */
+			io_device* dev = equeue[i].data.ptr;
+
+			dev->handler(dev, &equeue[i]);
 		}
 	}
 }
 
 
 
+/*****
 
-static void PIC_daemon(void)
+	Timers
+
+	Used to deliver ALARM interrupts to cores. Based on the
+	linux-specific 'timerfd' API.
+
+ ****/
+static io_device TIMER[MAX_CORES];
+
+
+static void initialize_timers(vm_config* vmc)
+{
+	for(uint c=0; c<vmc->cores; c++) {
+		int fd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK);
+
+		CHECK(TIMER[c].fd = fd);
+		TIMER[c].iodir = IODIR_RX;
+
+		TIMER[c].handler = io_basic_handler;
+		TIMER[c].int_core = CORE+c;
+		TIMER[c].irq = ALARM;
+
+		TIMER[c].events = EPOLLIN;
+
+		pic_register(&TIMER[c]);
+	}
+}
+
+
+static void finalize_timers(vm_config* vmc)
+{
+	for(uint c=0; c<vmc->cores; c++) {
+		CHECK(checked_close(TIMER[c].fd));
+	}	
+}
+
+
+/*****
+
+	Serial devices
+
+	Each serial device is implemented as a pair of pipes
+
+ ****/
+
+/* Current number of terminals */
+static uint nterm = 0;
+
+static io_device CON[MAX_TERMINALS];  /* The consoles */
+
+static io_device KBD[MAX_TERMINALS];  /* The keyboards */
+
+
+static void init_serial_device(io_device* dev, int fd, io_direction iodir)
+{
+	dev->fd = fd;
+	/* Set file descriptor to non-blocking */
+	CHECK(fcntl(fd, F_SETFL, O_NONBLOCK));
+	dev->iodir = iodir;
+
+	dev->handler = io_basic_handler;
+	dev->int_core = & CORE[0];
+	dev->irq = (iodir==IODIR_RX)? SERIAL_RX_READY : SERIAL_TX_READY;
+
+	dev->events = (iodir==IODIR_RX)? EPOLLIN : EPOLLOUT;
+
+	/* Set edge-triggered behaviour */
+	dev->events |= EPOLLET;
+	dev->ok = 1;
+
+	pic_register(dev);
+}
+
+
+static void initialize_terminals(vm_config* vmc) 
+{
+	for(uint i=0; i < vmc->serialno; i++) {
+		init_serial_device(&KBD[i], vmc->serial_in[i], IODIR_RX);
+		init_serial_device(&CON[i], vmc->serial_out[i], IODIR_TX);
+	}
+}
+
+static void finalize_terminals(vm_config* vmc)
+{
+	for(uint i=0; i < vmc->serialno; i++) {
+		CHECK(checked_close(CON[i].fd));
+		CHECK(checked_close(KBD[i].fd));
+	}
+}
+
+
+
+/*
+	I/O system initialization
+
+	This is run by the main thread.
+ */
+
+static void pic_daemon(vm_config* vmc)
 {
 
 	/* Change the thread name */
@@ -760,74 +707,42 @@ static void PIC_daemon(void)
 	CHECKRC(pthread_getname_np(pthread_self(), oldname, 16));
 	CHECKRC(pthread_setname_np(pthread_self(), "tinyos_vm"));
 
-	/* Open signal queues */
-	int sigusr1fd = open_signalfd(&sigusr1_set);
-	int sigalrmfd = open_signalfd(&sigalrm_set);
-
-	/* Set signal mask to block the signals monitored by signalfd */
+	/* Set signal mask to block SIGUSR1 (just in case!) */
 	sigset_t saved_mask;
-	CHECKRC(pthread_sigmask(SIG_BLOCK, &signalfd_set, &saved_mask));
-		
-	/* sync with all cores */
-	pthread_barrier_wait(& system_barrier);
-	
-	/* The PIC multiplexing loop */
-	while(PIC_active) {
+	CHECKRC(pthread_sigmask(SIG_BLOCK, &sigusr1_set, &saved_mask));
 
-		pic_selector ps;
+	/* Setup the pic */
+	initialize_pic();
 
-		pic_selector_reset(&ps);
+	/* Setup the devices */
+	initialize_timers(vmc);
+	initialize_terminals(vmc);
 
-		for(uint i=0; i<nterm; i++)
-			pic_add_terminal(&ps, & TERM[i]);
-
-		pic_add_fd(&ps, IODIR_RX, sigalrmfd);
-		pic_add_fd(&ps, IODIR_RX, sigusr1fd);
-
-		if(pic_select(&ps) == -1)
-			continue;
-
-		PIC_loops++ ;
-
-		if( pic_is_ready(&ps, IODIR_RX, sigalrmfd)!=-1 ) {
-			struct signalfd_siginfo sfdinfo;
-
-			while(read_signalfd(sigalrmfd, &sfdinfo) != -1) {
-				Core* core = & CORE[sfdinfo.ssi_int];
-				raise_interrupt(core, ALARM);
-			}
-		}
-
-
-		if( pic_is_ready(&ps, IODIR_RX, sigusr1fd)!=-1 ) {
-			drain_signalfd(sigusr1fd);
-		}
-
-
-		for(uint i=0; i<nterm; i++) {
-			terminal* term = & TERM[i];			
-
-			term_dev_raise_if_ready(& term->con, &ps);
-			term_dev_raise_if_ready(& term->kbd, &ps);
-		}
-
-
-	}
-
+	/* Initialize PIC statistics */
+	PIC_loops = 0;
 
 	/* sync with all cores */
 	pthread_barrier_wait(& system_barrier);
 
-	/* Close signal fds */
-	close_signalfd(sigusr1fd);
-	close_signalfd(sigalrmfd);
+	/* enter the event loop */
+	pic_event_loop();
+
+	/* sync with all cores */
+	pthread_barrier_wait(& system_barrier);
+
+	/* Cleanup pic */
+	finalize_pic();
+
+	/* Cleanup devices */
+	finalize_timers(vmc);
+	finalize_terminals(vmc);
+
 
 	/* Restore sigmask */
 	CHECKRC(pthread_sigmask(SIG_SETMASK, &saved_mask, NULL));
 
 	/* Reset name */
-	CHECKRC(pthread_setname_np(pthread_self(), oldname));
-
+	CHECKRC(pthread_setname_np(pthread_self(), oldname));	
 }
 
 
@@ -874,14 +789,14 @@ int vm_config_serial(vm_config* vmc, uint serialno, int nowait)
 	for(uint i=0; i<serialno; i++) {
 		/* Open serial port. Order is important!!! */
 
-		//if(! open_fifo("con", i, O_WRONLY | BLOCK)) return -1;
-		//if(! open_fifo("kbd", i, O_RDONLY | BLOCK)) return -1;
+		if(! open_fifo("con", i, O_WRONLY | BLOCK)) return -1;
+		if(! open_fifo("kbd", i, O_RDONLY | BLOCK)) return -1;
 		/* By opening O_RDWR we are guaranteed that even if the other
 		   end (terminals) closes the connection, we will not
 		   get SIGPIPE or read 0.
 		  */
-		if(! open_fifo("con", i, O_RDWR | BLOCK)) return -1;
-		if(! open_fifo("kbd", i, O_RDWR | BLOCK)) return -1;
+		//if(! open_fifo("con", i, O_RDWR | BLOCK)) return -1;
+		//if(! open_fifo("kbd", i, O_RDWR | BLOCK)) return -1;
 	}
 
 	/* Everything was successful, initialize vmc */
@@ -924,14 +839,13 @@ void vm_run(vm_config* vmc)
 	/* Install signal handler for SIGUSR1 */
 	CHECK(sigaction(SIGUSR1, &USR1_sigaction, &USR1_saved_sigaction));
 
-	/* Set pic_active to 1 */
-	PIC_thread = pthread_self();
-	PIC_active = 1;	
 
 	/* Initialize terminals */
 	nterm = vmc->serialno;
+#if 0
 	for(uint i=0; i<nterm; i++)
 		terminal_init(& TERM[i], vmc->serial_in[i], vmc->serial_out[i]);
+#endif
 
 	/* Init the cores */
 	ncores = vmc->cores;
@@ -940,8 +854,6 @@ void vm_run(vm_config* vmc)
 	pthread_barrier_init(& system_barrier, NULL, ncores+1);
 	pthread_barrier_init(& core_barrier, NULL, ncores);
 
-	/* Initialize the halted vector */
-	halt_vector = 0;
 
 	/* Launch the core threads */
 	for(uint c=0; c < ncores; c++) {
@@ -970,11 +882,8 @@ void vm_run(vm_config* vmc)
 		CHECKRC(pthread_setname_np(CORE[c].thread, thread_name));
 	}
 
-	/* Initialize PIC statistics */
-	PIC_loops = 0;
-
 	/* Run the interrupt controller daemon on this thread */	
-	PIC_daemon();
+	pic_daemon(vmc);
 
 	/* Wait for core threads to finish */
 	for(uint c=0; c<ncores; c++) {
@@ -993,8 +902,10 @@ void vm_run(vm_config* vmc)
 	pthread_barrier_destroy(& core_barrier);
 
 	/* Finalize terminals */
+#if 0
 	for(uint i=0; i<nterm; i++)
 		CHECK(terminal_destroy(& TERM[i]));
+#endif
 	nterm = 0;
 
 	/* Restore signal mask before VM execution */
@@ -1034,90 +945,53 @@ uint cpu_cores()
 }
 
 
-uint32_t cpu_halt_state()
-{
-	return halt_vector;
-}
-
-
-
 
 void cpu_core_halt()
 {
+#if defined(CORE_STATISTICS)
 	/* 
 		First, close interrupts so we do not miss a restart, and
 		we are not rescheduled...
 	 */
-	CHECKRC(pthread_sigmask(SIG_BLOCK, &sigusr1_set, NULL));
+	sigset_t saved_mask;
+	CHECKRC(pthread_sigmask(SIG_BLOCK, &sigusr1_set, &saved_mask));
 
 	Core* core = curr_core();
 	uint32_t cmask = 1 << core->id;
 
-#if defined(CORE_STATISTICS)
 	core->hlt_count ++;
 	TimerDuration stime0 = get_clock_nsec(CLOCK_MONOTONIC);
 #endif
 
-	/* Set halt bit */
-	__atomic_fetch_or(& halt_vector, cmask, __ATOMIC_RELAXED);
-
-	/* Sleep until a signal arrives */
+	/* 
+		Sleep until a SIGUSR1 signal interrupts us.
+	 */
 	int rc = pselect(0, NULL, NULL, NULL, NULL, &core_signal_set);
+	if( errno != EINTR ) perror("cpu_core_halt:" );
 	assert(rc==-1 && errno == EINTR);
 
-	/* Unset halt bit, since we may be awoken by an interrupt not coming from restart... */
-	__atomic_fetch_and(& halt_vector, ~cmask, __ATOMIC_RELAXED);
 
 #if defined(CORE_STATISTICS)
 	core->hlt_time += (get_clock_nsec(CLOCK_MONOTONIC)-stime0)/1000ull;
-#endif
 
-	CHECKRC(pthread_sigmask(SIG_UNBLOCK, &sigusr1_set, NULL));
+	if(sigismember(&saved_mask, SIGUSR1))
+		CHECKRC(pthread_sigmask(SIG_UNBLOCK, &sigusr1_set, NULL));
+#endif
 }
 
 
-
-
-
-static int __core_restart(uint c)
-{
-	uint32_t cmask = 1 << c;
-
-	uint32_t prevhv = __atomic_fetch_and(& halt_vector, ~cmask, __ATOMIC_RELAXED);
-	if( prevhv & cmask ) {
-		interrupt_core(CORE+c);
-#if defined(CORE_STATISTICS)		
-		__atomic_fetch_add(& CORE[c].rst_count, 1 , __ATOMIC_RELAXED);
-#endif
-
-		return 1;
-	} else 
-		return 0;
-}
 
 
 void cpu_core_restart(uint c)
 {
-	__core_restart(c);
+#if defined(CORE_STATISTICS)		
+	__atomic_fetch_add(& CORE[c].rst_count, 1 , __ATOMIC_RELAXED);
+#endif
+
+	interrupt_core(CORE+c);
 }
 
 
-void cpu_core_restart_one()
-{
-	uint32_t hv;
-
-	while( (hv=halt_vector)!=0 ) {
-		uint c = __builtin_ctz(hv);
-		if(__core_restart(c)) break;
-	}
-
-}
-
-void cpu_core_restart_all()
-{
-	for(uint c=0; c < ncores; c++)
-		__core_restart(c);
-}
 
 void cpu_core_barrier_sync()
 {
@@ -1199,11 +1073,12 @@ TimerDuration bios_set_timer(TimerDuration usec)
 
 	struct itimerspec oldtime;
 	
-	timer_settime(curr_core()->timer_id, 0, &newtime, &oldtime);
+	timerfd_settime(TIMER[cpu_core_id].fd, 0, &newtime, &oldtime);
 
 	assert(oldtime.it_interval.tv_sec ==0 && oldtime.it_interval.tv_nsec==0);
 	return 1000000*oldtime.it_value.tv_sec + oldtime.it_value.tv_nsec/1000ull;
 }
+
 
 TimerDuration bios_cancel_timer()
 {
@@ -1237,9 +1112,9 @@ void bios_serial_interrupt_core(uint serial, Interrupt intno, uint coreid)
 	Core* core = & CORE[coreid];
 
 	if(intno==SERIAL_RX_READY)
-		TERM[serial].kbd.int_core = core;
+		KBD[serial].int_core = core;
 	else 
-		TERM[serial].con.int_core = core;
+		CON[serial].int_core = core;
 }
 
 
@@ -1249,7 +1124,7 @@ void bios_serial_interrupt_core(uint serial, Interrupt intno, uint coreid)
  */
 int bios_read_serial(uint serial, char* ptr)
 {
-	return io_device_read(& TERM[serial].kbd, ptr);
+	return io_transfer(& KBD[serial], ptr, 1)==1;
 }
 
 
@@ -1259,7 +1134,7 @@ int bios_read_serial(uint serial, char* ptr)
  */
 int bios_write_serial(uint serial, char value)
 {
-	return io_device_write(& TERM[serial].con, value);
+	return io_transfer(& CON[serial], &value, 1)==1;
 }
 
 
