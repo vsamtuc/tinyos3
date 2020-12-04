@@ -163,45 +163,15 @@ int serial_write(void* dev, const char* buf, unsigned int size)
   while(count<size) {
     int valid = bios_write_serial(dcb->devno, buf[count]);
     
-    if (valid) {
+    if (valid) 
       count++;
-    }
     else 
       kernel_wait(&dcb->tx_ready, SCHED_IO);
-      
-#if 0
-    if(count==0) {
-      kernel_wait(&dcb->tx_ready, SCHED_IO);
-    }
-    else
-      break;
-#endif
   }
 
   preempt_on;           /* Restart preemption */
 
   return count;
-
-#if 0
-  serial_dcb_t* dcb = (serial_dcb_t*)dev;
-
-  unsigned int count = 0;
-  while(count < size) {
-    int success = bios_write_serial(dcb->devno, buf[count] );
-
-    if(success) {
-      count++;
-    } 
-    else if(count==0)
-    {
-      yield(SCHED_IO);
-    }
-    else
-      break;
-  }
-
-  return count;  
-#endif
 }
 
 

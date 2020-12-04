@@ -957,7 +957,6 @@ void cpu_core_halt()
 	CHECKRC(pthread_sigmask(SIG_BLOCK, &sigusr1_set, &saved_mask));
 
 	Core* core = curr_core();
-	uint32_t cmask = 1 << core->id;
 
 	core->hlt_count ++;
 	TimerDuration stime0 = get_clock_nsec(CLOCK_MONOTONIC);
@@ -966,8 +965,9 @@ void cpu_core_halt()
 	/* 
 		Sleep until a SIGUSR1 signal interrupts us.
 	 */
-	int rc = pselect(0, NULL, NULL, NULL, NULL, &core_signal_set);
-	if( errno != EINTR ) perror("cpu_core_halt:" );
+	int rc __attribute__((unused)) 
+		= pselect(0, NULL, NULL, NULL, NULL, &core_signal_set);
+	if(  errno != EINTR ) perror("cpu_core_halt:" );
 	assert(rc==-1 && errno == EINTR);
 
 
