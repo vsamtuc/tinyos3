@@ -25,7 +25,7 @@ CCB cctx[MAX_CORES];
 	This type must have at least as many bits as there are cores
  */
 typedef uint32_t core_flags_t;
-_Static_assert( MAX_CORES <=  8*sizeof(core_flags_t) );
+_Static_assert( MAX_CORES <=  8*sizeof(core_flags_t), "core_flags_t type does not have enough bits to fit maximum cores" );
 
 
 /* 
