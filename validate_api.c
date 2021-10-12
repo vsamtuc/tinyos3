@@ -101,23 +101,25 @@ BOOT_TEST(test_pid_of_init_is_one,
 
 
 
+static void waitchild_error()
+{
+	/* Cannot wait on myself */
+	ASSERT(WaitChild(GetPid(),NULL)==NOPROC);
+	ASSERT(WaitChild(MAX_PROC, NULL)==NOPROC);
+	ASSERT(WaitChild(GetPid()+1, NULL)==NOPROC);
+}
+static int subprocess(int argl, void* args) 
+{
+	ASSERT(GetPid()!=1);
+	waitchild_error();
+	return 0;
+}
+
+
 BOOT_TEST(test_waitchild_error_on_invalid_pid,
 	"Test that WaitChild returns an error when the pid is invalid."
 	)
 {
-	void waitchild_error()
-	{
-		/* Cannot wait on myself */
-		ASSERT(WaitChild(GetPid(),NULL)==NOPROC);
-		ASSERT(WaitChild(MAX_PROC, NULL)==NOPROC);
-		ASSERT(WaitChild(GetPid()+1, NULL)==NOPROC);
-	}
-	int subprocess(int argl, void* args) 
-	{
-		ASSERT(GetPid()!=1);
-		waitchild_error();
-		return 0;
-	}
 	waitchild_error();
 	Pid_t cpid = Exec(subprocess, 0, NULL);
 	ASSERT(WaitChild(NOPROC, NULL)==cpid);
