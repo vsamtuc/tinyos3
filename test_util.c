@@ -150,6 +150,11 @@ void build_list(rlnode* L, rlnode* from, rlnode* to, void* key, size_t esize)
 }
 
 
+static int gt5(rlnode* p) { 
+	return *((short int*)(p->obj)) >= 5; 
+}
+
+
 BARE_TEST(test_list_select,
 	"Test list selection"
 	)
@@ -170,9 +175,6 @@ BARE_TEST(test_list_select,
 
 	// test select
 	rlnode Q; rlnode_new(&Q);
-	int gt5(rlnode* p) { 
-		return *((short int*)(p->obj)) >= 5; 
-	}
 	rlist_select(&L, &Q, gt5);
 	ASSERT(rlist_len(&Q)==4);
 	ASSERT(rlist_len(&L)==5);
@@ -314,242 +316,12 @@ BARE_TEST(test_pack_unpack,"Test packing and unpacking a argvuence of strings in
 }
 
 
-/*****************************************************
- *
- *  Tests for exceptions
- *
- ******************************************************/
-
-
-struct exception_stack_frame* unwind_context;
-
-#define TRY  TRY_WITH(&unwind_context)
-#define RAISE_ERROR raise_exception(&unwind_context)
-
-
-BARE_TEST(test_exc_empty_body,
-	"Test exceptions whose body is empty."
-	)
-{
-	volatile int count = 0;
-
-	TRY {		
-	};
-
-	TRY {
-		FINALLY(e) {
-			ASSERT(e==0);
-			ASSERT(count==0);
-			count++;			
-		}
-		ON_ERROR{
-			ASSERT(0);
-		}
-
-	}
-	ASSERT(count==1);
-
-	count = 0;
-	TRY {
-		FINALLY(e) {
-			count++;
-			ASSERT(count==2);
-		}
-	
-		FINALLY(e) {
-			count++;
-			ASSERT(count==1);
-		}
-	
-	}
-	ASSERT(count==2);
-
-	count = 10;
-	TRY {
-		FINALLY(e) {
-			TRY {
-				FINALLY(e) {
-					count++;
-				}
-			}
-			count++;
-		}
-		ASSERT(count==10);
-	}
-	ASSERT(count==12);
-}
-
-
-BARE_TEST(test_exc_catcher_match,
-	"Test the matching of catchers"
-	)
-{
-	int count;
-
-	count=0;
-	TRY {
-		ON_ERROR{
-			count++;
-		};
-		ON_ERROR{
-			count++;
-		}
-		RAISE_ERROR;
-	}
-	ASSERT(count==2);
-
-	count=0;
-	TRY {
-		RAISE_ERROR;
-		ON_ERROR{
-			ASSERT(0);
-		};
-		ON_ERROR{
-			ASSERT(0);
-		}
-	}
-	ASSERT(count==0);
-
-
-	count=0;
-	TRY {
-		ON_ERROR{
-			count++;			
-		};
-		RAISE_ERROR;
-		ON_ERROR{
-			ASSERT(0);
-		}
-	}
-	ASSERT(count==1);
-
-}
-
-
-static void __foo2() {
-	RAISE_ERROR;
-}
-static void __foo(int* c) {
-	TRY {
-		FINALLY(e) {
-			(*c)++;
-		}
-		__foo2();
-		ASSERT(0);
-	}
-}
-static int __bar() {
-	int count=0;
-	ASSERT(unwind_context!=NULL);
-	TRY {
-		ON_ERROR{
-			ASSERT(count==1);
-			count++;
-		}
-		__foo(&count);
-	}
-	ASSERT(count==2);
-	return count;
-}
-
-BARE_TEST(test_exc_unwind,
-	"Test that exceptions will unwind the stack"
-	)
-{
-	TRY {
-		ON_ERROR{
-			ASSERT(0);
-		}		
-		ASSERT(__bar()==2);
-	}
-	ASSERT(unwind_context==NULL);
-}
-
-
-void report_time(struct timespec* t1, struct timespec* t2, int n)
-{
-	double T1 = t1->tv_nsec + t1->tv_sec*1E9;
-	double T2 = t2->tv_nsec + t2->tv_sec*1E9;
-	MSG("Performance: %f nsec/loop\n", (T2-T1)/n);
-}
-
-void compute_func(int m)
-{
-	RAISE_ERROR;
-}
-BARE_TEST(test_exc_inloop,
-	"Test the performance of exceptions in a loop"
-	)
-{
-	long long int sum = 0l, sum2=0l;
-	const long long int n = 10000000;
-	struct timespec tbegin, tend;
-	clock_gettime(CLOCK_REALTIME, &tbegin);
-	for(int i=1;i<=n;i++) {
-		TRY {
-			FINALLY(e) {
-				sum += i;
-			}
-
-			__atomic_signal_fence(__ATOMIC_ACQUIRE);
-			sum2+=i;
-
-			compute_func(i);
-		}
-	}
-	clock_gettime(CLOCK_REALTIME, &tend);
-	report_time(&tbegin, &tend, n);
-	MSG("sum=%lld,  sum2=%lld, expected %lld\n",sum,sum2, n*(n+1)/2ll);
-	ASSERT(sum2== n*(n+1)/2ll );
-}
-
-int compute_func2(int m)
-{
-	return(m*3);
-}
-
-BARE_TEST(test_exc_inloop2,
-	"Test the performance of exceptions in a loop, non throwing"
-	)
-{
-	long long int sum = 0l, sum2=0l;
-	const int n = 10000000;
-	struct timespec tbegin, tend;
-	clock_gettime(CLOCK_REALTIME, &tbegin);
-	for(int i=1;i<=n;i++) {
-		TRY {
-			sum2+=3*i;
-			sum += compute_func2(i);
-		}
-	}
-	clock_gettime(CLOCK_REALTIME, &tend);
-	report_time(&tbegin, &tend, n);
-	ASSERT(sum==sum2);
-	ASSERT(sum== 3ll*n*(n+1)/2ll );
-}
-
-
-
-TEST_SUITE(exception_tests,
-	"Tests for exceptions.")
-{
-	&test_exc_empty_body,
-	&test_exc_catcher_match,
-	&test_exc_unwind,
-	&test_exc_inloop,
-	&test_exc_inloop2,
-	NULL
-};
-
-
-
 
 TEST_SUITE(all_tests,
 	"All tests")
 {
 	&rlist_tests,
 	&test_pack_unpack,
-	&exception_tests,	
 	NULL
 };
 

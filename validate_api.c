@@ -101,26 +101,39 @@ BOOT_TEST(test_pid_of_init_is_one,
 
 
 
+static void waitchild_error()
+{
+	/* Cannot wait on myself */
+	ASSERT(WaitChild(GetPid(),NULL)==NOPROC);
+	ASSERT(WaitChild(MAX_PROC, NULL)==NOPROC);
+	ASSERT(WaitChild(GetPid()+1, NULL)==NOPROC);
+}
+
+static int subprocess(int argl, void* args) 
+{
+	ASSERT(GetPid()!=1);
+	waitchild_error();
+	return 0;
+}
+
+
 BOOT_TEST(test_waitchild_error_on_invalid_pid,
 	"Test that WaitChild returns an error when the pid is invalid."
 	)
 {
-	void waitchild_error()
-	{
-		/* Cannot wait on myself */
-		ASSERT(WaitChild(GetPid(),NULL)==NOPROC);
-		ASSERT(WaitChild(MAX_PROC, NULL)==NOPROC);
-		ASSERT(WaitChild(GetPid()+1, NULL)==NOPROC);
-	}
-	int subprocess(int argl, void* args) 
-	{
-		ASSERT(GetPid()!=1);
-		waitchild_error();
-		return 0;
-	}
 	waitchild_error();
 	Pid_t cpid = Exec(subprocess, 0, NULL);
 	ASSERT(WaitChild(NOPROC, NULL)==cpid);
+	return 0;
+}
+
+
+static int void_child(int argl, void* args) { return 0; }
+
+static int bad_child(int argl, void* args)
+{
+	Pid_t cpid = *(Pid_t*)args;
+	ASSERT(WaitChild(cpid, NULL)==NOPROC);
 	return 0;
 }
 
@@ -130,14 +143,10 @@ BOOT_TEST(test_waitchild_error_on_nonchild,
 	"its child."
 	)
 {
-	int void_child(int argl, void* args) { return 0; }
+	
 	Pid_t cpid = Exec(void_child, 0, NULL);
-	int bad_child(int argl, void* args)
-	{
-		ASSERT(WaitChild(cpid, NULL)==NOPROC);
-		return 0;
-	}
-	Pid_t badpid = Exec(bad_child, 0, NULL);
+	Pid_t badpid = Exec(bad_child, sizeof(cpid), &cpid);
+
 	ASSERT(badpid != NOPROC);
 	ASSERT(WaitChild(badpid, NULL)==badpid);
 	ASSERT(WaitChild(cpid, NULL)==cpid);
@@ -194,20 +203,21 @@ BOOT_TEST(test_exec_getpid_wait,
 }
 
 
+static int copyarg_child(int argl, void* args)
+{
+	*(int*)args = 1;
+	return 0;
+}
+
 
 BOOT_TEST(test_exec_copies_arguments,
 	"Test that Exec creates of copy of the arguments of the new process."
 	)
 {
-	int child(int argl, void* args)
-	{
-		*(int*)args = 1;
-		return 0;
-	}
 
 	Pid_t cpid;
 	int value = 0;
-	ASSERT((cpid = Exec(child, sizeof(value), &value))!=NOPROC);
+	ASSERT((cpid = Exec(copyarg_child, sizeof(value), &value))!=NOPROC);
 	WaitChild(cpid, NULL);
 	ASSERT(value==0);
 	return 0;
@@ -262,18 +272,20 @@ BOOT_TEST(test_wait_for_any_child,
 }
 
 
+int exiting_child(int arg, void* args) {
+	Exit(GetPid());
+	ASSERT(0);
+	return 1;
+}
+
+
 BOOT_TEST(test_exit_returns_status,
 	"Test that the exit status is returned by Exit"
 	)
 {
- 	int child(int arg, void* args) {
-		Exit(GetPid());
-		ASSERT(0);
-		return 1;
-	}
 	Pid_t children[100];
 	for(int i=0;i<100;i++)
-		children[i] = Exec(child, 0, NULL);
+		children[i] = Exec(exiting_child, 0, NULL);
 
 	for(int i=0;i<100;i++) {
 		int status;
@@ -283,17 +295,20 @@ BOOT_TEST(test_exit_returns_status,
 	return 0;
 }
 
+
+static int pid_returning_child(int arg, void* args) {
+	return GetPid();
+}
+
+
 BOOT_TEST(test_main_return_returns_status,
 	"Test that the exit status is returned by return from main task"
 	)
 {
- 	int child(int arg, void* args) {
-		return GetPid();
-	}
 	const int N=10;
 	Pid_t children[N];
 	for(int i=0;i<N;i++)
-		children[i] = Exec(child, 0, NULL);
+		children[i] = Exec(pid_returning_child, 0, NULL);
 	for(int i=0;i<N;i++) {
 		int status;
 		WaitChild(children[i], &status);
@@ -303,23 +318,25 @@ BOOT_TEST(test_main_return_returns_status,
 }
 
 
+static int orphan_grandchild(int argl, void* args)
+{
+	return 1;
+}
+static int dying_child(int arg, void* args)
+{
+	for(int i=0;i<5;i++)
+		ASSERT(Exec(orphan_grandchild, 0, NULL)!=NOPROC);
+	return 100;
+}
+
+
 BOOT_TEST(test_orphans_adopted_by_init,
 	"Test that when a process exits leaving orphans, init becomes the new parent."
 	)
 {
-	int grandchild(int argl, void* args)
-	{
-		return 1;
-	}
-	int child(int arg, void* args)
-	{
-		for(int i=0;i<5;i++)
-			ASSERT(Exec(grandchild, 0, NULL)!=NOPROC);
-		return 100;
-	}
 
 	for(int i=0;i<3; i++)
-		ASSERT(Exec(child,0,NULL)!=NOPROC);
+		ASSERT(Exec(dying_child,0,NULL)!=NOPROC);
 
 
 	/* Now wait for 18 children (3 child + 15 grandchild) */
@@ -356,37 +373,38 @@ BOOT_TEST(test_orphans_adopted_by_init,
 	Test that a timed wait on a condition variable terminates after the timeout.
  */
 
+static unsigned long tspec2msec(struct timespec t)
+{
+	return 1000ul*t.tv_sec + t.tv_nsec/1000000ul;
+}
+
+
+static int do_timeout(int argl, void* args) {
+	timeout_t t = *((timeout_t *) args);
+
+	Mutex mx = MUTEX_INIT;
+	CondVar cv = COND_INIT;
+
+	struct timespec t1, t2;
+	clock_gettime(CLOCK_REALTIME, &t1);
+
+	Mutex_Lock(&mx);
+	Cond_TimedWait(&mx, &cv, t);
+
+	clock_gettime(CLOCK_REALTIME, &t2);
+
+	unsigned long Dt = tspec2msec(t2)-tspec2msec(t1);
+
+	/* Allow a large, 20% error */
+	ASSERT(abs(Dt-t)*5 <= Dt);
+
+	return 0;
+}
+
 BOOT_TEST(test_cond_timedwait_timeout, 
 	"Test that timed waits on a condition variable terminate without blocking after the timeout."
 	)
 {
-
-	unsigned long tspec2msec(struct timespec t)
-	{
-		return 1000ul*t.tv_sec + t.tv_nsec/1000000ul;
-	}
-
-	int do_timeout(int argl, void* args) {
-		timeout_t t = *((timeout_t *) args);
-
-		Mutex mx = MUTEX_INIT;
-		CondVar cv = COND_INIT;
-
-		struct timespec t1, t2;
-		clock_gettime(CLOCK_REALTIME, &t1);
-
-		Mutex_Lock(&mx);
-		Cond_TimedWait(&mx, &cv, t);
-
-		clock_gettime(CLOCK_REALTIME, &t2);
-
-		unsigned long Dt = tspec2msec(t2)-tspec2msec(t1);
-
-		/* Allow a large, 20% error */
-		ASSERT(abs(Dt-t)*5 <= Dt);
-
-		return 0;
-	}
 
 	for(timeout_t t=500; t < 1000; t+=100) {
 		Exec(do_timeout, sizeof(t), &t);
@@ -408,6 +426,25 @@ BOOT_TEST(test_cond_timedwait_timeout,
 	Test that a timed wait on a condition variable terminates at a signal.
  */
 
+struct long_blocking_args {
+	Mutex* m;
+	CondVar* cv;
+	CondVar* pcv;
+	int* flag;
+};
+
+static int long_blocking(int argl, void* args)
+{
+	struct long_blocking_args A = *(struct long_blocking_args*)args;
+
+	Mutex_Lock(A.m);
+	* A.flag = 1;
+	Cond_Signal(A.cv);
+	Cond_TimedWait(A.m, A.cv, 10000000); // 3 hour wait
+	Mutex_Unlock(A.m);
+	return 0;
+}
+
 BOOT_TEST(test_cond_timedwait_signal,
 	"Test that timed waits on a condition variable terminates immediately on signal."
 	)
@@ -416,17 +453,10 @@ BOOT_TEST(test_cond_timedwait_signal,
 	CondVar cv = COND_INIT;
 	int flag=0;
 
-	int long_blocking(int argl, void* args)
-	{
-		Mutex_Lock(&m);
-		flag = 1;
-		Cond_Signal(&cv);
-		Cond_TimedWait(&m, &cv, 10000000); // 3 hour wait
-		Mutex_Unlock(&m);
-		return 0;
-	}
+	struct long_blocking_args A = {.m = &m, .cv=&cv, .flag=&flag};
+	
+	Pid_t child = Exec(long_blocking, sizeof(A), &A);
 
-	Pid_t child = Exec(long_blocking, 0, NULL);
 	Mutex_Lock(&m);
 	while(! flag)
 		Cond_Wait(&m, &cv);
@@ -434,6 +464,18 @@ BOOT_TEST(test_cond_timedwait_signal,
 	Mutex_Unlock(&m);
 
 	WaitChild(child, NULL);
+	return 0;
+}
+
+
+static int long_blocking2(int argl, void* args)
+{
+	struct long_blocking_args A = *(struct long_blocking_args*)args;
+	Mutex_Lock(A.m);
+	(* A.flag) ++;
+	Cond_Signal(A.pcv);
+	Cond_TimedWait(A.m, A.cv, 10000000); // 3 hour wait
+	Mutex_Unlock(A.m);
 	return 0;
 }
 
@@ -448,20 +490,12 @@ BOOT_TEST(test_cond_timedwait_broadcast,
 	CondVar pcv = COND_INIT;
 	int flag=0;
 
-	int long_blocking(int argl, void* args)
-	{
-		Mutex_Lock(&m);
-		flag ++;
-		Cond_Signal(&pcv);
-		Cond_TimedWait(&m, &cv, 10000000); // 3 hour wait
-		Mutex_Unlock(&m);
-		return 0;
-	}
-
 	const int N=100;  // spawn 100 children
 
+	struct long_blocking_args A = {.m=&m, .cv=&cv, .pcv=&pcv, .flag=&flag };
+
 	// create N children
-	for(int i=0; i<N; i++) Exec(long_blocking, 0, NULL);
+	for(int i=0; i<N; i++) Exec(long_blocking2, sizeof(A), &A);
 
 	Mutex_Lock(&m);
 	// wait for all children to sleep
@@ -697,6 +731,12 @@ BOOT_TEST(test_read_from_many_terminals,
 }
 
 
+static int greeted_child(int argl, void* args)
+{
+	checked_read(0, "Hello child");
+	checked_read(0, "Hello again");
+	return 0;
+}
 
 BOOT_TEST(test_child_inherits_files,
 	"Test that a child process inherits files.",
@@ -707,13 +747,6 @@ BOOT_TEST(test_child_inherits_files,
 	ASSERT(fterm!=NOFILE);
 	if(fterm!=0)
 		ASSERT(Dup2(fterm, 0)==0);
-
-	int greeted_child(int argl, void* args)
-	{
-		checked_read(0, "Hello child");
-		checked_read(0, "Hello again");
-		return 0;
-	}
 
 	sendme(0, "Hello child");
 	Pid_t cpid = Exec(greeted_child, 0, NULL);
@@ -989,20 +1022,24 @@ BOOT_TEST(test_detach_illegal_tid_gives_error,
 }
 
 
+
+static int create_join_thread_flag;
+
+static int create_join_thread_task(int argl, void* args) {
+	ASSERT(args == &create_join_thread_flag);
+	*(int*)args = 1;
+	return 2;
+}
+
+
 BOOT_TEST(test_create_join_thread,
 	"Test that a process thread can be created and joined. Also, that "
 	"the argument of the thread is passed correctly."
 	)
 {
-	int flag = 0;
+	create_join_thread_flag = 0;
 
-	int task(int argl, void* args) {
-		ASSERT(args == &flag);
-		*(int*)args = 1;
-		return 2;
-	}
-
-	Tid_t t = CreateThread(task, sizeof(flag), &flag);
+	Tid_t t = CreateThread(create_join_thread_task, sizeof(create_join_thread_flag), &create_join_thread_flag);
 
 	/* Success in creating thread */
 	ASSERT(t!=NOTHREAD);
@@ -1015,7 +1052,7 @@ BOOT_TEST(test_create_join_thread,
 	ASSERT(exitval==2);
 
 	/* Shared variable should be updates */
-	ASSERT(flag==1);
+	ASSERT(create_join_thread_flag==1);
 
 	/* A second Join should fail! */
 	ASSERT(ThreadJoin(t, NULL)==-1);
@@ -1033,22 +1070,25 @@ BOOT_TEST(test_detach_self,
 
 
 
+
+
+
+static int tdo_thread(int argl, void* args) {
+	fibo(40);
+	return 100;
+}
+
+/* The detached thread will finish last */
+static int myproc(int argl, void* args) {
+	Tid_t t = CreateThread(tdo_thread, 0, NULL);
+	ASSERT(ThreadDetach(t)==0);
+	ASSERT(ThreadJoin(t, NULL)==-1);
+	return 42;
+}
+
 BOOT_TEST(test_detach_other,
 	"Test that a thread can detach another thread.")
 {
-
-	/* The detached thread will finish last */
-	int tdo_thread(int argl, void* args) {
-		fibo(40);
-		return 100;
-	}
-
-	int myproc(int argl, void* args) {
-		Tid_t t = CreateThread(tdo_thread, 0, NULL);
-		ASSERT(ThreadDetach(t)==0);
-		ASSERT(ThreadJoin(t, NULL)==-1);
-		return 42;
-	}
 
 
 	ASSERT(run_get_status(myproc, 0, NULL) == 42);
@@ -1071,228 +1111,271 @@ BOOT_TEST(test_multiple_detach,
 
 
 
+/* A thread to be joined */
+static int joined_thread(int argl, void* args) {
+	sleep_thread(1);
+	return 5213;
+}
+
+static int joiner_thread(int argl, void* args) {
+	int retval;
+	Tid_t joined_tid = *(Tid_t*) args;	
+	int rc = ThreadJoin(joined_tid,&retval);
+	ASSERT(rc==-1 || retval==5213);
+	return (rc==0)? 1 : 0;
+}
+
+
+int join_many_threads_main(int argl, void* args) {
+	Tid_t tids[5];
+
+	Tid_t joined_tid = CreateThread(joined_thread, 0, NULL);
+	ASSERT(joined_tid != NOTHREAD);
+
+	for(int i=0;i<5;i++) {
+		tids[i] = CreateThread(joiner_thread,0,&joined_tid);
+		ASSERT(tids[i]!=NOTHREAD);
+	}
+
+	/* Wait for all joiner_threads to finish */
+	int threads_joined = 0;
+	for(int i=0;i<5;i++) {
+		int this_thread_joined = -100;
+		ASSERT(ThreadJoin(tids[i], &this_thread_joined)==0);
+		ASSERT(this_thread_joined >= 0);
+		threads_joined += this_thread_joined;
+		/* tids[i] should be cleaned by ThreadJoin */
+		ASSERT(ThreadDetach(tids[i])==-1);
+	}
+
+	/* Check that at least one succeeded at joining */
+	ASSERT(threads_joined>0);
+	return 0;
+}
+
+
 BOOT_TEST(test_join_many_threads,
 	"Test that many threads joining the same thread work ok")
 {
-	/* A thread to be joined */
-	int joined_thread(int argl, void* args) {
-		sleep_thread(1);
-		return 5213;
-	}
-
-	Tid_t joined_tid = NOTHREAD; 
-
-	int some_thread_joined = 0;
-
-	int joiner_thread(int argl, void* args) {
-		int retval;
-		int rc = ThreadJoin(joined_tid,&retval);
-		if(rc==0) some_thread_joined = 1;
-		ASSERT(rc==-1 || retval==5213);
-		return 0;
-	}
-
-
-	int mymain(int argl, void* args) {
-		Tid_t tids[5];
-
-
-		joined_tid = CreateThread(joined_thread, 0, NULL);
-		ASSERT(joined_tid != NOTHREAD);
-
-		for(int i=0;i<5;i++) {
-			tids[i] = CreateThread(joiner_thread,0,NULL);
-			ASSERT(tids[i]!=NOTHREAD);
-		}
-
-		/* Wait for all joiner_threads to finish */
-		for(int i=0;i<5;i++) {
-			ASSERT(ThreadJoin(tids[i], NULL)==0);
-			/* tids[i] should be cleaned by ThreadJoin */
-			ASSERT(ThreadDetach(tids[i])==-1);
-		}
-
-		/* Check that at least one succeeded at joining */
-		ASSERT(some_thread_joined);
-		return 0;
-	}
-
-
-	ASSERT(run_get_status(mymain, 0, NULL)==0);
+	ASSERT(run_get_status(join_many_threads_main, 0, NULL)==0);
 	return 0;
+}
+
+
+
+static Tid_t mttid;
+
+static int join_notmain_thread(int argl, void* args) {
+	ASSERT(ThreadJoin(mttid, NULL)==0);
+	return 0;
+}
+
+static int join_main_thread(int argl, void* args) {
+	mttid = ThreadSelf();
+	ASSERT(CreateThread(join_notmain_thread,0,NULL)!=NOTHREAD);
+	return 42;
 }
 
 
 BOOT_TEST(test_join_main_thread,
 	"Test that the main thread can be joined by another thread")
 {
-
-	Tid_t mttid;
-
-	int notmain_thread(int argl, void* args) {
-		ASSERT(ThreadJoin(mttid, NULL)==0);
-		return 0;
-	}
-
-	int main_thread(int argl, void* args) {
-		mttid = ThreadSelf();
-		ASSERT(CreateThread(notmain_thread,0,NULL)!=NOTHREAD);
-		return 42;
-	}
-
-	ASSERT(run_get_status(main_thread, 0, NULL) == 42);
+	ASSERT(run_get_status(join_main_thread, 0, NULL) == 42);
 	return 0;
 }
+
+
+
+int detach_notmain_thread(int argl, void* args) {
+	ASSERT(ThreadJoin(mttid, NULL)==-1);
+	return 0;
+}
+
+int detach_main_thread(int argl, void* args) {
+	mttid = ThreadSelf();
+	ASSERT(CreateThread(detach_notmain_thread,0,NULL)!=NOTHREAD);
+	sleep_thread(1);
+	ASSERT(ThreadDetach(ThreadSelf())==0);
+	return 42;
+}
+
 
 
 BOOT_TEST(test_detach_main_thread,
 	"Test that the main thread can be detached")
 {
-	Tid_t mttid;
-
-	int notmain_thread(int argl, void* args) {
-		ASSERT(ThreadJoin(mttid, NULL)==-1);
-		return 0;
-	}
-
-	int main_thread(int argl, void* args) {
-		mttid = ThreadSelf();
-		ASSERT(CreateThread(notmain_thread,0,NULL)!=NOTHREAD);
-		sleep_thread(1);
-		ASSERT(ThreadDetach(ThreadSelf())==0);
-		return 42;
-	}
-
-
-	ASSERT(run_get_status(main_thread, 0, NULL) == 42);
+	ASSERT(run_get_status(detach_main_thread, 0, NULL) == 42);
 	return 0;
 }
 
+
+
+
+
+/* A thread to be joined */
+int detach_after_join_joined_thread(int argl, void* args) {
+	sleep_thread(1);
+	ThreadDetach(ThreadSelf());
+	return 5213;
+}
+
+int detach_after_join_joiner_thread(int argl, void* args) 
+{
+	int retval;
+	Tid_t joined_tid = *(Tid_t*) args;
+	int rc = ThreadJoin(joined_tid,&retval);
+	ASSERT(rc==-1);
+	return 0;
+}
+
+
+int detach_after_join_main_thread(int argl, void* args) 
+{
+
+ 	Tid_t joined_tid = CreateThread(detach_after_join_joined_thread, 0, NULL);
+ 	ASSERT(joined_thread != NOTHREAD);
+
+	Tid_t tids[5];
+	for(int i=0;i<5;i++) {
+		tids[i] = CreateThread(detach_after_join_joiner_thread,0, &joined_tid);
+		ASSERT(tids[i]!=NOTHREAD);
+	}
+
+	for(int i=0;i<5;i++) {
+		ASSERT(ThreadJoin(tids[i], NULL)==0);
+	}
+
+	return 0;		
+}
 
 BOOT_TEST(test_detach_after_join,
 	"Test that a thread can be detached after joining")
 {
-	/* A thread to be joined */
-	int joined_thread(int argl, void* args) {
-		sleep_thread(1);
-		ThreadDetach(ThreadSelf());
-		return 5213;
-	}
 
-	Tid_t joined_tid;
-
-
-	int joiner_thread(int argl, void* args) 
-	{
-		int retval;
-		int rc = ThreadJoin(joined_tid,&retval);
-		ASSERT(rc==-1);
-		return 0;
-	}
-
-
-	int main_thread(int argl, void* args) 
-	{
-
-	 	joined_tid = CreateThread(joined_thread, 0, NULL);
-	 	ASSERT(joined_thread != NOTHREAD);
-
-		Tid_t tids[5];
-		for(int i=0;i<5;i++) {
-			tids[i] = CreateThread(joiner_thread,0,NULL);
-			ASSERT(tids[i]!=NOTHREAD);
-		}
-
-		for(int i=0;i<5;i++) {
-			ASSERT(ThreadJoin(tids[i], NULL)==0);
-		}
-
-		return 0;		
-	}
-
-
-	run_get_status(main_thread, 0, NULL);
+	run_get_status(detach_after_join_main_thread, 0, NULL);
 	return 0;
 }
 
+
+
+static int exit_many_threads_task(int argl, void* args) {
+	fibo(40);
+	Exit(40 + argl);
+	return 0;
+}
+
+static int exit_many_threads_mthread(int argl, void* args){
+	for(int i=0;i<5;i++)
+		ASSERT(CreateThread(exit_many_threads_task, i, NULL) != NOTHREAD);
+
+	/* This thread calls ThreadExit probably before the children all exit */
+	ThreadExit(0);
+	return 0;
+}
 
 
 BOOT_TEST(test_exit_many_threads,
 	"Test that if many process threads call Exit, the process will clean up correctly."
 	)
 {
-
-	int task(int argl, void* args) {
-		fibo(40);
-		Exit(40 + argl);
-		return 0;
-	}
-
-	int mthread(int argl, void* args){
-		for(int i=0;i<5;i++)
-			ASSERT(CreateThread(task, i, NULL) != NOTHREAD);
-
-		/* This thread calls ThreadExit probably before the children all exit */
-		ThreadExit(0);
-		return 0;
-	}
-
-
-	int status = run_get_status(mthread, 0, NULL);
+	int status = run_get_status(exit_many_threads_mthread, 0, NULL);
 	ASSERT(40 <= status && status < 45);
 	return 0;
 }
 
 
+
+
+static int main_exit_cleanup_task(int argl, void* args) {
+	fibo(40);
+	ThreadExit(2);
+	FAIL("We should not be here");
+	return 0;
+}
+
+static int main_exit_cleanup_main_thread(int argl, void* args){
+	for(int i=0;i<5;i++)
+		ASSERT(CreateThread(main_exit_cleanup_task, 0, NULL) != NOTHREAD);
+
+	/* This thread calls exit probably before the children all exit */
+	return 42;
+}
+
 BOOT_TEST(test_main_exit_cleanup,
 	"Test that a process where only the main thread calls Exit, will clean up correctly."
 	)
 {
-
-	int task(int argl, void* args) {
-		fibo(40);
-		ThreadExit(2);
-		FAIL("We should not be here");
-		return 0;
-	}
-
-	int main_thread(int argl, void* args){
-		for(int i=0;i<5;i++)
-			ASSERT(CreateThread(task, 0, NULL) != NOTHREAD);
-
-		/* This thread calls exit probably before the children all exit */
-		return 42;
-	}
-
-	ASSERT(run_get_status(main_thread, 0, NULL)==42);
+	ASSERT(run_get_status(main_exit_cleanup_main_thread, 0, NULL)==42);
 	return 0;
 }
 
+
+
+
+
+int noexit_cleanup_task(int argl, void* args) {
+	fibo(40);
+	ThreadExit(2);
+	FAIL("We should not be here");
+	return 0;
+}
+
+int noexit_cleanup_mthread(int argl, void* args){
+	for(int i=0;i<5;i++)
+		ASSERT(CreateThread(noexit_cleanup_task, 0, NULL) != NOTHREAD);
+
+	/* This thread calls exit probably before the children all exit */
+	ThreadExit(0);
+	FAIL("We should not be here");
+	return 42;
+}
 
 BOOT_TEST(test_noexit_cleanup,
 	"Test that a process where no thread calls Exit, will clean up correctly."
 	)
 {
+	run_get_status(noexit_cleanup_mthread, 0, NULL);
+	return 0;
+}
 
-	int task(int argl, void* args) {
-		fibo(40);
-		ThreadExit(2);
-		FAIL("We should not be here");
-		return 0;
+
+
+
+struct cyclic_joins
+{
+	unsigned int N;
+	barrier* B;
+	Tid_t* tids;
+};
+
+static int cyclic_joins_join_thread(int argl, void* args) {
+	struct cyclic_joins* P = args;
+	BarrierSync(P->B, P->N+1);
+	ThreadJoin( (P->tids)[argl], NULL);
+	return argl;
+}
+
+static int cyclic_joins_main_thread(int argl, void* args) 
+{
+	struct cyclic_joins A = *(struct cyclic_joins*)args;
+	unsigned int N = A.N;
+
+	/* spawn all N threads */
+	for(unsigned int i=0;i<N;i++) {
+		A.tids[i] = CreateThread(cyclic_joins_join_thread, (i+1)%N, &A);
+		assert(A.tids[i]!=NOTHREAD); /* small assert! do not proceed unless threads are created! */
 	}
 
-	int mthread(int argl, void* args){
-		for(int i=0;i<5;i++)
-			ASSERT(CreateThread(task, 0, NULL) != NOTHREAD);
+	/* allow threads to join */
+	BarrierSync(A.B, A.N+1);
 
-		/* This thread calls exit probably before the children all exit */
-		ThreadExit(0);
-		FAIL("We should not be here");
-		return 42;
-	}
+	/* Wait for threads to proceed */
+	sleep_thread(1);
 
+	/* Now, threads are in deadlock! To break the deadlock,
+	   detach thread 0. */
+	ThreadDetach(A.tids[0]);
 
-	run_get_status(mthread, 0, NULL);
 	return 0;
 }
 
@@ -1304,36 +1387,9 @@ BOOT_TEST(test_cyclic_joins,
 	barrier B = BARRIER_INIT;
 	Tid_t tids[N];
 
-	int join_thread(int argl, void* args) {
-		BarrierSync(&B, N+1);
-		ThreadJoin(tids[argl], NULL);
-		return argl;
-	}
+	struct cyclic_joins A = {.N = N, .B = & B, .tids = tids };
 
-
-	int main_thread(int argl, void* args) 
-	{
-
-		/* spawn all N threads */
-		for(unsigned int i=0;i<N;i++) {
-			tids[i] = CreateThread(join_thread, (i+1)%N, NULL);
-			assert(tids[i]!=NOTHREAD); /* small assert! do not proceed unless threads are created! */
-		}
-
-		/* allow threads to join */
-		BarrierSync(&B, N+1);
-
-		/* Wait for threads to proceed */
-		sleep_thread(1);
-
-		/* Now, threads are in deadlock! To break the deadlock,
-		   detach thread 0. */
-		ThreadDetach(tids[0]);
-
-		return 0;
-	}
-
-	run_get_status(main_thread, 0, NULL);
+	run_get_status(cyclic_joins_main_thread, sizeof(A), &A);
 	return 0;
 }
 
@@ -1599,30 +1655,31 @@ TEST_SUITE(pipe_tests,
  *
  *********************************************/
 
+struct connect_sockets
+{
+	Fid_t sock1, lsock, *sock2;
+	port_t port;
+};
 
-
+static int connect_sockets_connect_process(int argl, void* args) {
+	struct connect_sockets* A = args;
+	ASSERT(Connect(A->sock1, A->port, 1000)==0);
+	return 0;
+}
 
 void connect_sockets(Fid_t sock1, Fid_t lsock, Fid_t* sock2, port_t port)
 {
-	int accept_thread(int argl, void* args) {
-		*sock2 = Accept(lsock);
-		ASSERT(*sock2 != NOFILE);
-		return 0;
-	}
-	int connect_thread(int argl, void* args) {
-		ASSERT(Connect(sock1, port, 1000)==0);
-		return 0;
-	}
+	struct connect_sockets A = { 
+		.sock1=sock1, .lsock=lsock, .sock2=sock2, .port=port
+	};
 
-	Tid_t t1,t2;
-	t1 = CreateThread(accept_thread, 0, NULL);
-	t2 = CreateThread(connect_thread, 0, NULL);
-	ASSERT(t1!=NOTHREAD);
-	ASSERT(t2!=NOTHREAD);
-	ASSERT(ThreadJoin(t1, NULL)==0);
-	ASSERT(ThreadJoin(t2, NULL)==0);
+	ASSERT(run_get_status(connect_sockets_connect_process, sizeof(A), &A)==0);
 
+	*sock2 = Accept(lsock);
+	ASSERT(*sock2 != NOFILE);
 }
+
+
 void check_transfer(Fid_t from, Fid_t to)
 {
 	char buffer[12] = {[0]=0};
@@ -1817,17 +1874,21 @@ BOOT_TEST(test_accept_fails_on_exhausted_fid,
 	Fid_t cli = Socket(NOPORT); ASSERT(cli!=NOFILE);
 
 	/* Now, if we try a connection we should fail! */
-	int accept_connection(int argl, void* args) {
-		ASSERT(Accept(lsock)==NOFILE);
-		return 0;
-	}
-
-	Tid_t t = CreateThread(accept_connection, 0, NULL);
+	ASSERT(Accept(lsock)==NOFILE);
 	ASSERT(Connect(cli, 100, 1000)==-1);
 
-	ThreadJoin(t,NULL);
 	return 0;
 }
+
+
+
+static int unblocking_accept_connection(int argl, void* args) 
+{
+	Fid_t lsock = argl;
+	ASSERT(Accept(lsock)==NOFILE);
+	return 0;
+}
+
 
 BOOT_TEST(test_accept_unblocks_on_close,
 	"Test that Accept will unblock if the listening socket is closed."
@@ -1837,11 +1898,7 @@ BOOT_TEST(test_accept_unblocks_on_close,
 	ASSERT(lsock!=NOFILE);
 	ASSERT(Listen(lsock)==0);
 
-	int accept_connection(int argl, void* args) {
-		ASSERT(Accept(lsock)==NOFILE);
-		return 0;
-	}
-	Tid_t t = CreateThread(accept_connection, 0, NULL);
+	Tid_t t = CreateThread(unblocking_accept_connection, lsock, NULL);
 
 	/* Here, we just wait some time, (of course, this is technically a race condition :-( */
 	fibo(30);
@@ -1850,6 +1907,7 @@ BOOT_TEST(test_accept_unblocks_on_close,
 	ThreadJoin(t,NULL);
 	return 0;
 }
+
 
 
 BOOT_TEST(test_connect_fails_on_bad_fid,

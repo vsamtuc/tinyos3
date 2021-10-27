@@ -324,7 +324,7 @@ typedef struct Test
 	Test_type type;	    				/**< Bare, boot or suite */
 	const char* name;   				/**< Test name */
 	union {
-		void (*bare)(void);
+		void (*bare)(void*);
 		Task boot;
 		const struct Test ** suite;
 	};									/**< Test function, or list of tests */
