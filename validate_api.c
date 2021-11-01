@@ -1233,7 +1233,7 @@ int detach_after_join_main_thread(int argl, void* args)
 {
 
  	Tid_t joined_tid = CreateThread(detach_after_join_joined_thread, 0, NULL);
- 	ASSERT(joined_thread != NOTHREAD);
+ 	ASSERT(joined_tid != NOTHREAD);
 
 	Tid_t tids[5];
 	for(int i=0;i<5;i++) {
