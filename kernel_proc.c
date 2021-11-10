@@ -43,8 +43,21 @@ static inline void initialize_PCB(PCB* pcb)
   rlnode_init(& pcb->exited_list, NULL);
   rlnode_init(& pcb->children_node, pcb);
   rlnode_init(& pcb->exited_node, pcb);
+
+  /**********************************************/
+  /*arxikopoihsh listas*/
+  rlnode_init(&pcb->ptcb_list,NULL);
+
   pcb->child_exit = COND_INIT;
 }
+
+static inline void initialize_PTCB(PTCB* ptcb)
+{
+  ptcb->argl = 0;
+  ptcb->args = NULL;
+  rlnode_init(&ptcb->ptcb_list_node,ptcb);
+}
+
 
 
 static PCB* pcb_freelist;
