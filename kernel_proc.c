@@ -45,8 +45,9 @@ static inline void initialize_PCB(PCB* pcb)
   rlnode_init(& pcb->exited_node, pcb);
 
   /**********************************************/
-  /*arxikopoihsh listas*/
+  /*arxikopoihsh listas kai thread_count*/
   rlnode_init(&pcb->ptcb_list,NULL);
+  pcb->thread_count = 0;
 
   pcb->child_exit = COND_INIT;
 }
@@ -56,6 +57,8 @@ static inline void initialize_PTCB(PTCB* ptcb)
   ptcb->argl = 0;
   ptcb->args = NULL;
   rlnode_init(&ptcb->ptcb_list_node,ptcb);
+
+
 }
 
 
@@ -145,6 +148,16 @@ Pid_t sys_Exec(Task call, int argl, void* args)
 {
   PCB *curproc, *newproc;
   
+  /******************************************************************/
+  /*gia to multithread prepei na exw mia endiamesh domh PTCB*/
+
+  /*pointer se ptcb kai malloc gia ena ptcb*/
+  PTCB* ptcb;
+  ptcb = (PTCB*)xmalloc(sizeof(PTCB));
+  /*arxikopoihsh PTCB*/
+  initialize_PTCB(ptcb); 
+
+
   /* The new process PCB */
   newproc = acquire_PCB();
 
@@ -192,6 +205,25 @@ Pid_t sys_Exec(Task call, int argl, void* args)
    */
   if(call != NULL) {
     newproc->main_thread = spawn_thread(newproc, start_main_thread);
+    newproc->thread_count++;
+
+    ptcb->tcb = newproc->main_thread;         //to ptcb deixnei sto pcb
+
+    ptcb->tcb->ptcb = ptcb;                   //to tcb deixnei sto ptcb 
+
+    ptcb->task = call;
+    ptcb->argl = argl;
+    ptcb->args = args;
+
+    ptcb->exited = 0;
+    ptcb->detached = 0;
+    ptcb->exit_cv = COND_INIT; //???????????????
+
+    ptcb->refcount = 0;
+
+    //vazw sth process sth lista me ta ptcb to kainourio ptcb
+    rlist_push_back(&newproc->ptcb_list,&ptcb->ptcb_list_node);
+
     wakeup(newproc->main_thread);
   }
 
