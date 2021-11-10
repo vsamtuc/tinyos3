@@ -440,6 +440,8 @@ static inline void rlist_push_back(rlnode* list, rlnode* node) { rl_splice(list-
 
 	When it is applied to an empty list, the function will return the
 	list itself.
+
+	This function is equivalent to @c splice(list,node->next). 
 */
 static inline rlnode* rlist_pop_front(rlnode* list) { return rl_splice(list, list->next); }
 
@@ -448,6 +450,11 @@ static inline rlnode* rlist_pop_front(rlnode* list) { return rl_splice(list, lis
 
 	This function, applied on a non-empty list, will remove the tail of 
 	the list and return in.
+
+	When it is applied to an empty list, the function will return the
+	list itself.
+
+	This function is equivalent to @c splice(list,node->prev). 
 */
 static inline rlnode* rlist_pop_back(rlnode* list) { return rl_splice(list, list->prev); }
 
