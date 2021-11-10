@@ -128,6 +128,10 @@ typedef struct thread_control_block {
 	  */
 #endif
 
+  /****************************************/
+  /*update*/
+  PTCB* ptcb;
+
 } TCB;
 
 /** @brief Thread stack size.

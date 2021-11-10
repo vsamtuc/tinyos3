@@ -290,6 +290,9 @@ typedef struct core_control_block CCB;		/**< @brief Forward declaration */
 typedef struct device_control_block DCB;	/**< @brief Forward declaration */
 typedef struct file_control_block FCB;		/**< @brief Forward declaration */
 
+/***************************************************/
+typedef struct process_thread_control_block PTCB;
+
 /** @brief A convenience typedef */
 typedef struct resource_list_node * rlnode_ptr;
 
@@ -309,6 +312,9 @@ typedef struct resource_list_node {
      \endcode
      */
   union {
+  	/***********************************/
+  	PTCB* ptcb;
+
     PCB* pcb; 
     TCB* tcb;
     CCB* ccb;

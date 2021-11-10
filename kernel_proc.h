@@ -60,9 +60,35 @@ typedef struct process_control_block {
 
   FCB* FIDT[MAX_FILEID];  /**< @brief The fileid table of the process */
 
+/***********************************************/
+  /*update*/
+  rlnode ptcb_list;
+  int thread_count;
+
 } PCB;
 
+/**********************************************************/
+/*orizw ta pedia tou PTCB*/
+typedef struct process_thread_control_block
+{
+  TCB* tcb;
 
+  Task task;
+  int argl;
+  void* args;
+
+  int exitval; 
+
+  int exited;           //[0,1]
+  int detached;         //[0,1]
+  CondVar exit_cv;
+
+  int refcount;
+
+  rlnode ptcb_list_node;
+}PTCB;
+
+/******************************************************/
 /**
   @brief Initialize the process table.
 
