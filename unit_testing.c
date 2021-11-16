@@ -476,7 +476,7 @@ void sendme(uint term, const char* pattern)
    has not finished already.
 */
 
-int execute_fork(void (*procfunc)(void), unsigned int timeout)
+int execute_fork(void (*procfunc)(void*), void* arg, unsigned int timeout)
 {
 	pid_t pid;
 	sigset_t waitmask, oldmask;
@@ -492,7 +492,7 @@ int execute_fork(void (*procfunc)(void), unsigned int timeout)
 		/* Subprocess */
 		FLAG_FAILURE=0;
 
-		procfunc();
+		procfunc(arg);
 
 		if(FLAG_FAILURE) abort();
 		exit(129);
@@ -529,13 +529,13 @@ int execute_fork(void (*procfunc)(void), unsigned int timeout)
 }
 
 
-int execute_nofork(void (*procfunc)(void), unsigned int timeout)
+int execute_nofork(void (*procfunc)(void*), void* arg, unsigned int timeout)
 {
 	FLAG_FAILURE=0;
 	/* Note: timeout is ignored, we allow the test to run forever!
 	   It is the user's job to interrupt!
 	 */
-	procfunc();
+	procfunc(arg);
 	/* Here, we could allow tests to continue */
 	if(FLAG_FAILURE) {
 		/* Here, we could allow tests to continue, still reporting
@@ -550,30 +550,46 @@ int execute_nofork(void (*procfunc)(void), unsigned int timeout)
 
 
 
-int execute(void (*procfunc)(void), unsigned int timeout)
+int execute(void (*procfunc)(void*), void* arg, unsigned int timeout)
 {
 	if(ARGS.fork)
-		return execute_fork(procfunc, timeout);
+		return execute_fork(procfunc, arg, timeout);
 	else
-		return execute_nofork(procfunc, timeout);
+		return execute_nofork(procfunc, arg, timeout);
 }
 
 
 
+struct  boot_test_descriptor 
+{
+	int ncores;
+	int nterm;
+	Task bootfunc;
+	int argl;
+	void* args;
+};
+
+
+void boot_test_wrapper(void* arg) 
+{
+	struct boot_test_descriptor* d = arg;
+
+	for(uint i=0;i<d->nterm; i++)
+		term_proxy_init(&PROXY[i], i);
+
+	boot(d->ncores, d->nterm, d->bootfunc, d->argl, d->args);
+
+	for(uint i=0;i<d->nterm; i++)
+		term_proxy_close(&PROXY[i]);
+}
+
+
 int execute_boot(int ncores, int nterm, Task bootfunc, int argl, void* args, unsigned int timeout)
 {
-	void run_boot() 
-	{
-		for(uint i=0;i<nterm; i++)
-			term_proxy_init(&PROXY[i], i);
-
-		boot(ncores, nterm, bootfunc, argl, args);		
-
-
-		for(uint i=0;i<nterm; i++)
-			term_proxy_close(&PROXY[i]);
-	}
-	return execute(run_boot, timeout);
+	struct boot_test_descriptor d = { 
+		.ncores=ncores, .nterm=nterm, .bootfunc=bootfunc, .argl=argl, .args=args
+	};
+	return execute(boot_test_wrapper, &d, timeout);
 }
 
 /* Fill in memory with a weird value:  10101010 or 0xAA */
@@ -636,7 +652,7 @@ int run_test(const Test* test)
 					result &= run_boot_test(test, ARGS.core_list[i], ARGS.term_list[j], 0, NULL);
 			break;
 		case BARE_FUNC:
-			status = execute(test->bare, test->timeout);
+			status = execute(test->bare, NULL, test->timeout);
 
 			result = WIFEXITED(status) && WEXITSTATUS(status)==129  ? 1 : 0;
 			if(WIFSIGNALED(status))
@@ -837,6 +853,13 @@ static const struct Test* find_test(const char* name, const struct Test* test)
 	return NULL;
 }
 
+
+/* use this comparator for sorting the numbers */
+static int cmpint(const void* ap, const void* bp) {
+	return *(int*)bp < *(int*)ap;
+}
+
+
 /* 
 	Parse a comma-separated list of small integers, such that 
   	each integer n is n>=from and n<=to. 
@@ -875,10 +898,6 @@ static int parse_int_list(char* arg, int* nlen, int* nlist, int from, int to)
 	}
 
 
-	/* use this comparator for sorting the numbers */
-	int cmpint(const void* ap, const void* bp) {
-		return *(int*)bp < *(int*)ap;
-	}
 
 	/*  Now sort, copy and exit */
 	qsort(args, i, sizeof(int), cmpint);

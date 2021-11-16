@@ -55,7 +55,7 @@ EXAMPLE_PROG= $(wildcard *_example*.c)
 #
 #  Add kernel source files here
 #
-C_SRC= bios.c $(wildcard kernel_*.c) tinyoslib.c symposium.c util.c unit_testing.c console.c
+C_SRC= bios.c $(wildcard kernel_*.c) tinyoslib.c symposium.c unit_testing.c console.c
 C_OBJ=$(C_SRC:.c=.o)
 
 C_SOURCES= $(C_PROG) $(C_SRC)
@@ -89,13 +89,13 @@ terminal: terminal.o
 # Tests
 # 
 
-test_util: test_util.o util.o unit_testing.o $(C_OBJ)
+test_util: test_util.o unit_testing.o $(C_OBJ)
 	$(CC) $(LDFLAGS) -o $@ $^ $(LIBS)
 
-test_example: test_example.o util.o unit_testing.o $(C_OBJ)
+test_example: test_example.o unit_testing.o $(C_OBJ)
 	$(CC) $(LDFLAGS) -o $@ $^ $(LIBS)
 
-test_kernel: test_kernel.o util.o unit_testing.o $(C_OBJ)
+test_kernel: test_kernel.o unit_testing.o $(C_OBJ)
 	$(CC) $(LDFLAGS) -o $@ $^ $(LIBS)
 
 validate_api: validate_api.o $(C_OBJ)
