@@ -1856,6 +1856,16 @@ BOOT_TEST(test_accept_reusable,
 }
 
 
+/* Helper for test_accept_fails_on_exhausted_fid */
+static int accept_connection_assert_fail(int argl, void* args) 
+{
+	ASSERT(argl==sizeof(Fid_t));
+	Fid_t lsock = * (Fid_t*) args;
+	ASSERT(Accept(lsock)==NOFILE);
+	return 0;
+}
+
+
 BOOT_TEST(test_accept_fails_on_exhausted_fid,
 	"Test that Accept will fail if the fids of the process are exhausted."
 	)
@@ -1878,13 +1888,15 @@ BOOT_TEST(test_accept_fails_on_exhausted_fid,
 	/* Ok, we should be able to get another client */
 	Fid_t cli = Socket(NOPORT); ASSERT(cli!=NOFILE);
 
-	/* Now, if we try a connection we should fail! */
-	ASSERT(Accept(lsock)==NOFILE);
-	ASSERT(Connect(cli, 100, 1000)==-1);
+	/* Call accept on another process and verify it fails */
+	Pid_t pid = Exec(accept_connection_assert_fail, sizeof(lsock), &lsock);
+	ASSERT(pid!=NOPROC);
 
+	/* Now, if we try a connection we should fail! */
+	ASSERT(Connect(cli, 100, 1000)==-1);
+	ASSERT(WaitChild(pid, NULL)==pid);
 	return 0;
 }
-
 
 
 static int unblocking_accept_connection(int argl, void* args) 
@@ -1893,6 +1905,7 @@ static int unblocking_accept_connection(int argl, void* args)
 	ASSERT(Accept(lsock)==NOFILE);
 	return 0;
 }
+
 
 
 BOOT_TEST(test_accept_unblocks_on_close,
