@@ -1014,8 +1014,8 @@ void cpu_core_halt()
 	struct timespec halt_time = {.tv_sec=0l, .tv_nsec=10000000l};
 
 	/* Sleep for 10 msec */
-	int rc = sigtimedwait(&sigusr1_set, &info, &halt_time);
-		
+	//int rc = sigtimedwait(&sigusr1_set, &info, &halt_time);
+	int rc = sigwaitinfo(&sigusr1_set, &info);
 
 	if(rc>0) {
 		/* Got signal, dispatch */
