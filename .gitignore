@@ -1,6 +1,7 @@
 *~
 *.o
 .depend
+.vscode
 mtask
 terminal
 bios_example*
