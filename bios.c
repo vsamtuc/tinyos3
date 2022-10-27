@@ -437,7 +437,9 @@ static int io_device_check(io_device* dev)
 {
 	struct pollfd fds = { .fd=dev->fd, .events=POLLIN };
 	int rc;
-	while( (rc=poll(&fds, 1, 0)) == -1 && errno==EINTR );
+	do {
+		rc=poll(&fds, 1, 0);
+	} while( rc == -1 && errno==EINTR );
 	CHECK(rc);
 	rc = (fds.revents & (POLLHUP|POLLERR))==0;
 	assert(rc);
@@ -1011,9 +1013,9 @@ void cpu_core_halt()
 #endif
 
 	siginfo_t info;
-	struct timespec halt_time = {.tv_sec=0l, .tv_nsec=10000000l};
 
 	/* Sleep for 10 msec */
+	//struct timespec halt_time = {.tv_sec=0l, .tv_nsec=10000000l};
 	//int rc = sigtimedwait(&sigusr1_set, &info, &halt_time);
 	int rc = sigwaitinfo(&sigusr1_set, &info);
 

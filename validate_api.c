@@ -860,8 +860,13 @@ BOOT_TEST(test_write_error_on_bad_fid,
 	"Test that Write will return an error when called on a bad fid"
 	)
 {
+	/* The compiler is a bit overzealous here, so we are forced to suppress the
+	warning */
+#pragma GCC diagnostic push                             // save the actual diag context
+#pragma GCC diagnostic ignored "-Wmaybe-uninitialized" 	
 	char buffer[10];
 	ASSERT(Write(0, buffer, 10)==-1);
+#pragma GCC diagnostic pop
 	return 0;
 }
 
