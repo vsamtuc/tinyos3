@@ -241,7 +241,7 @@ int sys_Dup2(int oldfd, int newfd)
 
 unsigned int sys_GetTerminalDevices()
 {
-  return device_no(DEV_SERIAL);
+  return device_no(DEV_TERMINAL);
 }
 
 
@@ -278,6 +278,6 @@ int sys_OpenNull()
 
 Fid_t sys_OpenTerminal(unsigned int termno)
 {
-  return open_stream(DEV_SERIAL, termno);
+  return open_stream(DEV_TERMINAL, termno);
 }
 

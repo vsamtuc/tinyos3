@@ -392,10 +392,13 @@ unsigned int GetTerminalDevices();
 
   @param termno the terminal number to open
   @return the file ID of the new descriptor
-    On success, OpenTerminal returns the file id for a new file for this 
+    On success, OpenTerminal returns the file id for a new file for this
    terminal. On error, it returns @c NOFILE. Possible errors are:
    - The terminal device does not exist.
    - The maximum number of file descriptors has been reached.
+
+   The terminal device translates the @c ^D character (ASCII 4) into an end of
+   stream indication, matching standard Unix terminal behaviour.
  */
 Fid_t OpenTerminal(unsigned int termno);
 

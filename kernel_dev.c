@@ -1,5 +1,7 @@
 
 #include <assert.h>
+#include <stdlib.h>
+
 #include "kernel_cc.h"
 #include "kernel_dev.h"
 #include "kernel_sched.h"
@@ -184,6 +186,85 @@ file_ops serial_fops = {
 };
 
 
+/*============================================
+
+  The terminal device driver
+
+ ============================================*/
+
+typedef struct terminal_device_stream {
+  void* serial_stream;
+  file_ops* serial_ops;
+  int pending_eof;
+} terminal_stream_t;
+
+static void* terminal_open(uint term)
+{
+  terminal_stream_t* stream = xmalloc(sizeof(*stream));
+  stream->serial_stream = serial_open(term);
+  stream->serial_ops = &serial_fops;
+  stream->pending_eof = 0;
+  return stream;
+}
+
+static int terminal_read(void* dev, char *buf, unsigned int size)
+{
+  terminal_stream_t* stream = (terminal_stream_t*)dev;
+
+  if(stream->pending_eof) {
+    stream->pending_eof = 0;
+    return 0;
+  }
+
+  unsigned int count = 0;
+  while(count < size) {
+    char ch;
+    int rc = stream->serial_ops->Read(stream->serial_stream, &ch, 1);
+
+    if(rc < 0)
+      return rc;
+
+    if(rc == 0) {
+      if(count == 0)
+        return 0;
+      break;
+    }
+
+    if(ch == 4) {
+      if(count == 0) {
+        return 0;
+      }
+      stream->pending_eof = 1;
+      break;
+    }
+
+    buf[count++] = ch;
+  }
+
+  return count;
+}
+
+static int terminal_write(void* dev, const char* buf, unsigned int size)
+{
+  terminal_stream_t* stream = (terminal_stream_t*)dev;
+  return stream->serial_ops->Write(stream->serial_stream, buf, size);
+}
+
+static int terminal_close(void* dev)
+{
+  terminal_stream_t* stream = (terminal_stream_t*)dev;
+  stream->serial_ops->Close(stream->serial_stream);
+  free(stream);
+  return 0;
+}
+
+static file_ops terminal_fops = {
+  .Open = terminal_open,
+  .Read = terminal_read,
+  .Write = terminal_write,
+  .Close = terminal_close
+};
+
 
 /***********************************
 
@@ -205,6 +286,10 @@ void initialize_devices()
   devtable[DEV_SERIAL].type = DEV_SERIAL;
   devtable[DEV_SERIAL].devnum = bios_serial_ports();
   devtable[DEV_SERIAL].dev_fops = serial_fops;
+
+  devtable[DEV_TERMINAL].type = DEV_TERMINAL;
+  devtable[DEV_TERMINAL].devnum = bios_serial_ports();
+  devtable[DEV_TERMINAL].dev_fops = terminal_fops;
 
   /* Initialize the serial devices */
   for(int i=0; i<bios_serial_ports(); i++) {
