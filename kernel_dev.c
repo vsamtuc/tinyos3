@@ -62,6 +62,10 @@ static file_ops nulldev_fops = {
  ============================================*/
 
 
+#define EOT (0x04)
+
+
+
 /* forward */
 void serial_rx_handler();
 void serial_tx_handler();
@@ -110,6 +114,14 @@ int serial_read(void* dev, char *buf, unsigned int size)
     int valid = bios_read_serial(dcb->devno, &buf[count]);
     
     if (valid) {
+      /* 
+        The control character EOT (x04) means END-OF-TRANSMISSION. 
+        When we encounter it, we return even if count is 0.
+      */
+      if (buf[count] == EOT)
+        break;
+
+      /* Non-control character, count it */
       count++;
     }
     else if(count==0) {
