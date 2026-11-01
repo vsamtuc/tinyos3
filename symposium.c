@@ -52,7 +52,7 @@ int RIGHT(int i, int N) { return (i+N-1) % N; }
 
 
 /* Prints the current state given a change (described by fmt) for
- philosopher ph */
+   philosopher ph */
 void print_state(int N, PHIL* state, const char* fmt, int ph)
 {
 #if QUIET==0
@@ -73,7 +73,7 @@ void think(int fmin, int fmax) { fibo(fiborand(fmin, fmax)); }
 void eat(int fmin, int fmax)  { think(fmin, fmax); }
 
 /* Attempt to make a (hungry) philosopher i to start eating */
-void trytoeat(SymposiumTable* S, int i)
+int trytoeat(SymposiumTable* S, int i)
 {
   int N = S->symp->N;
   PHIL* state = S->state;
@@ -81,11 +81,14 @@ void trytoeat(SymposiumTable* S, int i)
   if(state[i]==HUNGRY && state[LEFT(i,N)]!=EATING && state[RIGHT(i,N)]!=EATING) {
     state[i] = EATING;
     print_state(N, state, "     %d is eating\n",i);
-    Cond_Signal(&(S->hungry[i]));
   }
+
+  return state[i] == EATING;
 }
 
-
+/*
+  Implements the Philosopher process.
+*/
 void SymposiumTable_philosopher(SymposiumTable* S, int i)
 {
   /* cache locally for convenience */
@@ -101,25 +104,31 @@ void SymposiumTable_philosopher(SymposiumTable* S, int i)
   Mutex_Unlock(& S->mx);
 
   for(int j=0; j<bites; j++) {	/* Number of bites (mpoykies) */
-    think(fmin, fmax);
+    
+    
+    think(fmin, fmax);          /* Philosopher is thinking */
 
     Mutex_Lock(& S->mx);
     state[i] = HUNGRY;
-    trytoeat(S,i);		/* This may not succeed */
-    while(state[i]==HUNGRY) {
+    
+    while(! trytoeat(S, i)) {
+      assert(state[i] == HUNGRY);
       print_state(N, state, "     %d waits hungry\n",i);
       Cond_Wait(& S->mx, &(S->hungry[i])); /* If hungry we sleep. trytoeat(i) will wake us. */
     }
-    assert(state[i]==EATING); 
+    assert(state[i]==EATING);
     Mutex_Unlock(& S->mx);
     
-    eat(fmin, fmax);
+    eat(fmin, fmax);          /* Philosopher is eating */
 
     Mutex_Lock(& S->mx);
     state[i] = THINKING;	/* We are done eating, think again */
     print_state(N, state, "     %d is thinking\n",i);
-    trytoeat(S, LEFT(i,N));		/* Check if our left and right can eat NOW. */
-    trytoeat(S, RIGHT(i,N));
+    /* Check if our left and right can eat NOW. */
+    if(trytoeat(S, LEFT(i,N)))
+      Cond_Signal(&(S->hungry[LEFT(i,N)]));
+    if(trytoeat(S, RIGHT(i,N)))
+      Cond_Signal(&(S->hungry[RIGHT(i,N)]));
     Mutex_Unlock(& S->mx);
   }
 
@@ -178,9 +187,7 @@ int SymposiumOfProcesses(int argl, void* args)
   
   /* Execute philosophers */
   for(int i=0;i<N;i++) {
-    philosopher_args Args;
-    Args.i = i;
-    Args.S = &S;
+    philosopher_args Args = {.i= i, .S= &S};
     Exec(PhilosopherProcess, sizeof(Args), &Args);
   }  
 
