@@ -23,7 +23,7 @@
   The Major number determines the driver routines related to
   the device. The Minor number is used to specify one among
   several devices of the same Major number. For example,
-  device (DEV_SERIAL,2) is the 3rd serial terminal.
+  device (DEV_TERMINAL,2) is the 3rd terminal.
 
   The device table lists the devices by major number, and gives
   the number of devices for this type. It also contains 
@@ -102,9 +102,10 @@ typedef struct file_operations {
   The device type of a device determines the driver used.
 */
 typedef enum { 
-	DEV_NULL,    /**< @brief Null device */
-	DEV_SERIAL,  /**< @brief Serial device */
-	DEV_MAX      /**< @brief placeholder for maximum device number */
+        DEV_NULL,      /**< @brief Null device */
+        DEV_SERIAL,    /**< @brief Serial device */
+        DEV_TERMINAL,  /**< @brief Terminal device */
+        DEV_MAX        /**< @brief placeholder for maximum device number */
 }  Device_type;
 
 

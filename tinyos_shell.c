@@ -167,7 +167,7 @@ int RunTerm(size_t argc, const char** argv)
 int SystemInfo(size_t argc, const char** argv)
 {
 	printf("Number of cores         = %d\n", cpu_cores());
-	printf("Number of serial devices= %d\n", bios_serial_ports());
+        printf("Number of terminal devices= %d\n", GetTerminalDevices());
 	Fid_t finfo = OpenInfo();
 	if(finfo!=NOFILE) {
 		/* Print per-process info */
